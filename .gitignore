@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Python virtual environment
+.venv/
+
+# Contains secrets
+.env
+
+# Google API credentials
+credentials.json
+token.json
+
+# Mail configuration (contains sensitive data)
+config/mailboxes.yaml
+
+# Database
+sentinel.db
+
+# Logs
+logs/
+*.log
+
+
+# I think it's useful to keep vscode settings.
+# .vscode/
+
+# vim crap
+# `undofile`s
+*.un~
+*.swp
+*.swo
+
+# macOS crap
+.DS_Store

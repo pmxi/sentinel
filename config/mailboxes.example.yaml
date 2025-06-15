@@ -1,0 +1,46 @@
+# Example mailboxes configuration
+# Copy this file to mailboxes.yaml and update with your settings
+
+accounts:
+  # Personal Gmail using Gmail API
+  personal:
+    provider: gmail_api
+    auth:
+      method: oauth2
+      credentials_file: credentials/gmail.json
+      token_file: tokens/gmail_token.json
+    settings:
+      process_only_unread: true
+      max_lookback_hours: 24
+      folders: ["INBOX"]
+      junk_folder_name: "Junk"  # Gmail uses labels, will create if doesn't exist
+
+  # Purdue email using IMAP with OAuth2
+  purdue:
+    provider: imap
+    server: outlook.office365.com
+    port: 993
+    auth:
+      method: oauth2
+      client_id: your-client-id-here
+      tenant_id: your-tenant-id-here
+      token_file: tokens/purdue_token.json
+    settings:
+      process_only_unread: true
+      max_lookback_hours: 24
+      folders: ["INBOX"]
+      junk_folder_name: "Spam"  # Common IMAP folder name, must exist
+
+  # Example of IMAP with password auth (less secure)
+  # legacy:
+  #   provider: imap
+  #   server: mail.example.com
+  #   port: 993
+  #   auth:
+  #     method: password
+  #     username: your-email@example.com
+  #     password: your-password-here
+  #   settings:
+  #     folders: ["INBOX", "Important"]
+  #     junk_folder_name: "Junk"  # Folder to move junk emails to
+  #   enabled: false  # Set to true to enable
