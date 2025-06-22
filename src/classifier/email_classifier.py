@@ -101,7 +101,8 @@ You are an email classification assistant. Analyze the following email and class
 
 IMPORTANT:
 - Addressed to me personally
-- Job interview offer- Legal matter
+- Job interview offer
+- Legal matter
 - Urgent
 
 JUNK:
