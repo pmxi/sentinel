@@ -1,188 +1,35 @@
 {
-  "name": "Email Sentinel Development Environment",
-  "dockerComposeFile": "../docker-compose.yml",
-  "service": "sentinel",
-  "workspaceFolder": "/app",
-  
-  // Use Python 3.13 as per Dockerfile
-  "image": "mcr.microsoft.com/devcontainers/python:1-3.13",
-  
-  // Features to add to the dev container
-  "features": {
-    "ghcr.io/devcontainers/features/python:1": {
-      "version": "3.13",
-      "installJupyterlab": false,
-      "configureJupyterlabAllowOrigin": "",
-      "installTools": true
-    },
-    "ghcr.io/devcontainers/features/git:1": {},
-    "ghcr.io/devcontainers/features/github-cli:1": {},
-    "ghcr.io/devcontainers/features/common-utils:2": {
-      "installZsh": true,
-      "configureZshAsDefaultShell": true,
-      "installOhMyZsh": true,
-      "upgradePackages": true,
-      "username": "vscode",
-      "uid": "1000",
-      "gid": "1000"
-    }
-  },
-  
-  // Configure tool-specific properties
+  "name": "Email Sentinel",
+  "image": "mcr.microsoft.com/devcontainers/python:3.13",
   "customizations": {
     "vscode": {
       "extensions": [
-        // Python extensions
         "ms-python.python",
         "ms-python.vscode-pylance",
-        "ms-python.debugpy",
-        "ms-python.black-formatter",
-        "ms-python.pylint",
-        "ms-python.isort",
-        "ms-python.flake8",
-        
-        // Code quality and formatting
-        "esbenp.prettier-vscode",
-        "EditorConfig.EditorConfig",
-        "streetsidesoftware.code-spell-checker",
-        
-        // Git extensions
-        "eamodio.gitlens",
-        "mhutchie.git-graph",
-        "donjayamanne.githistory",
-        
-        // Docker support
-        "ms-azuretools.vscode-docker",
-        
-        // YAML support for config files
-        "redhat.vscode-yaml",
-        
-        // Database support for SQLite
-        "mtxr.sqltools",
-        "mtxr.sqltools-driver-sqlite",
-        
-        // Markdown support
-        "yzhang.markdown-all-in-one",
-        "davidanson.vscode-markdownlint",
-        
-        // Environment variables
-        "mikestead.dotenv",
-        
-        // AI/ML related
-        "ms-toolsai.jupyter",
-        "ms-toolsai.vscode-jupyter-cell-tags",
-        "ms-toolsai.vscode-jupyter-slideshow",
-        
-        // General productivity
-        "christian-kohler.path-intellisense",
-        "formulahendry.auto-rename-tag",
-        "aaron-bond.better-comments",
-        "wayou.vscode-todo-highlight",
-        "gruntfuggly.todo-tree",
-        "PKief.material-icon-theme",
-        "zhuangtongfa.material-theme"
+        "ms-python.black-formatter"
       ],
-      
       "settings": {
-        // Python settings
         "python.defaultInterpreterPath": "/usr/local/bin/python",
-        "python.linting.enabled": true,
-        "python.linting.pylintEnabled": true,
-        "python.linting.flake8Enabled": true,
         "python.formatting.provider": "black",
-        "python.formatting.blackPath": "/usr/local/bin/black",
-        "python.linting.pylintPath": "/usr/local/bin/pylint",
-        "python.linting.flake8Path": "/usr/local/bin/flake8",
-        "python.sortImports.path": "/usr/local/bin/isort",
-        "python.testing.pytestEnabled": true,
-        "python.testing.unittestEnabled": false,
-        "python.terminal.activateEnvironment": true,
-        
-        // Editor settings
         "editor.formatOnSave": true,
-        "editor.codeActionsOnSave": {
-          "source.organizeImports": "explicit",
-          "source.fixAll": "explicit"
-        },
-        "editor.rulers": [88, 120],
-        "editor.wordWrap": "on",
-        
-        // File associations
-        "files.associations": {
-          "*.yaml": "yaml",
-          "*.yml": "yaml",
-          ".env*": "dotenv"
-        },
-        
-        // Terminal settings
-        "terminal.integrated.defaultProfile.linux": "zsh",
-        "terminal.integrated.profiles.linux": {
-          "zsh": {
-            "path": "/bin/zsh"
-          }
-        },
-        
-        // Git settings
-        "git.autofetch": true,
-        "git.confirmSync": false,
-        
-        // Python specific
         "[python]": {
-          "editor.defaultFormatter": "ms-python.black-formatter",
-          "editor.formatOnSave": true,
-          "editor.codeActionsOnSave": {
-            "source.organizeImports": "explicit"
-          }
-        },
-        
-        // YAML specific
-        "[yaml]": {
-          "editor.defaultFormatter": "esbenp.prettier-vscode",
-          "editor.tabSize": 2
-        },
-        
-        // Markdown specific
-        "[markdown]": {
-          "editor.defaultFormatter": "esbenp.prettier-vscode",
-          "editor.wordWrap": "on"
+          "editor.defaultFormatter": "ms-python.black-formatter"
         }
       }
     }
   },
-  
-  // Forward ports for development
-  "forwardPorts": [],
-  
-  // Post-create command to install dependencies and set up environment
-  "postCreateCommand": "pip install --upgrade pip && pip install -r requirements.txt && pip install pytest pytest-cov black flake8 pylint isort mypy types-requests types-PyYAML",
-  
-  // Post-start command to ensure proper permissions
-  "postStartCommand": "sudo chown -R vscode:vscode /app && mkdir -p /app/logs /app/config",
-  
-  // Post-attach command for final setup
-  "postAttachCommand": "echo '🚀 Email Sentinel dev environment ready!'",
-  
-  // Environment variables
+  // Install dependencies
+  "postCreateCommand": "pip install -r requirements.txt",
+  // Create credential files from Codespace secrets (if they exist)
+  "postStartCommand": "mkdir -p /workspace/.config && if [ ! -z \"$GOOGLE_CREDENTIALS\" ]; then echo \"$GOOGLE_CREDENTIALS\" > credentials.json; fi && if [ ! -z \"$GOOGLE_TOKEN\" ]; then echo \"$GOOGLE_TOKEN\" > token.json; fi && if [ ! -z \"$ENV_FILE\" ]; then echo \"$ENV_FILE\" > .env; fi",
+  // Set up environment variables that your app might expect
   "containerEnv": {
-    "PYTHONPATH": "/app",
-    "PYTHONDONTWRITEBYTECODE": "1",
-    "PYTHONUNBUFFERED": "1"
+    "PYTHONPATH": "/workspace"
   },
-  
-  // Mounts - ensure we have access to local config files
-  "mounts": [
-    "source=${localWorkspaceFolder}/config,target=/app/config,type=bind",
-    "source=${localWorkspaceFolder}/.env,target=/app/.env,type=bind",
-    "source=${localWorkspaceFolder}/credentials.json,target=/app/credentials.json,type=bind,readonly",
-    "source=${localWorkspaceFolder}/token.json,target=/app/token.json,type=bind"
-  ],
-  
-  // Run as non-root user
-  "remoteUser": "vscode",
-  
-  // Uncomment to connect as root instead
-  // "remoteUser": "root",
-  
-  // Additional features for development
-  "updateContentCommand": "pip install -r requirements.txt"
+  // Codespaces-specific settings
+  "hostRequirements": {
+    "cpus": 2,
+    "memory": "4gb",
+    "storage": "32gb"
+  }
 }
