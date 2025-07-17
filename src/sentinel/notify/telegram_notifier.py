@@ -2,8 +2,8 @@ from typing import Optional
 
 import requests
 
-from src.notify.notifier import Notifier
-from src.logging_config import get_logger
+from sentinel.notify.notifier import Notifier
+from sentinel.logging_config import get_logger
 
 logger = get_logger(__name__)
 
@@ -13,7 +13,7 @@ class TelegramNotifier(Notifier):
 
     def __init__(self, bot_token: str, chat_id: str):
         """Initialize the notifier with Telegram credentials.
-        
+
         Args:
             bot_token: Telegram bot token
             chat_id: Telegram chat ID to send messages to
@@ -29,10 +29,10 @@ class TelegramNotifier(Notifier):
 
     def send(self, text: str) -> Optional[str]:
         """Send a text message via Telegram.
-        
+
         Args:
             text: The message to send
-            
+
         Returns:
             The message ID if successful, None if failed
         """

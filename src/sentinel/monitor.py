@@ -6,15 +6,16 @@ from datetime import datetime, timedelta
 from types import FrameType
 from typing import List, Optional
 
-from src.classifier.email_classifier import ClassificationResult, EmailClassifier
-from src.config import settings
-from src.database import EmailDatabase
-from src.email.email_client_base import EmailClient
-from src.email.email_client_factory import EmailClientFactory
-from src.email.gmail.models import EmailData
-from src.email.mail_config import MailAccountConfig, MailboxesConfig
-from src.logging_config import get_logger
-from src.notify.email_notifier import EmailNotifier
+from sentinel.classifier.email_classifier import ClassificationResult, EmailClassifier
+from sentinel.config import settings
+from sentinel.database import EmailDatabase
+from sentinel.email.email_client_base import EmailClient
+from sentinel.email.email_client_factory import EmailClientFactory
+from sentinel.email.gmail.models import EmailData
+from sentinel.email.mail_config import MailAccountConfig, MailboxesConfig
+from sentinel.logging_config import get_logger
+from sentinel.notify.email_notifier import EmailNotifier
+
 
 # Set up logger for this module
 logger = get_logger("sentinel.monitor")

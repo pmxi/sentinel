@@ -2,7 +2,7 @@
 
 import base64
 
-from src.email.models import EmailData
+from sentinel.email.models import EmailData
 
 
 def extract_gmail_body(payload: dict) -> str:

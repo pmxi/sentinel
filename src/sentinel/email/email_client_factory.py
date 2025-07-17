@@ -1,10 +1,10 @@
 from typing import Dict, Type
 
-from src.email.email_client_base import EmailClient
-from src.email.gmail.client import GmailClient
-from src.email.imap_client import IMAPClient
-from src.email.mail_config import AuthMethod, MailAccountConfig, MailProvider
-from src.logging_config import get_logger
+from sentinel.email.email_client_base import EmailClient
+from sentinel.email.gmail.client import GmailClient
+from sentinel.email.imap_client import IMAPClient
+from sentinel.email.mail_config import AuthMethod, MailAccountConfig, MailProvider
+from sentinel.logging_config import get_logger
 
 logger = get_logger(__name__)
 

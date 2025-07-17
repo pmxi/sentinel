@@ -1,13 +1,13 @@
 import sys
 
-from src.monitor import EmailMonitor
-from src.classifier.email_classifier import EmailClassifier
-from src.config import settings
-from src.database import EmailDatabase
-from src.logging_config import get_logger
-from src.email.mail_config import MailboxesConfig
-from src.notify.telegram_notifier import TelegramNotifier
-from src.notify.telegram_email_notifier import TelegramEmailNotifier
+from sentinel.monitor import EmailMonitor
+from sentinel.classifier.email_classifier import EmailClassifier
+from sentinel.config import settings
+from sentinel.database import EmailDatabase
+from sentinel.logging_config import get_logger
+from sentinel.email.mail_config import MailboxesConfig
+from sentinel.notify.telegram_notifier import TelegramNotifier
+from sentinel.notify.telegram_email_notifier import TelegramEmailNotifier
 
 logger = get_logger(__name__)
 

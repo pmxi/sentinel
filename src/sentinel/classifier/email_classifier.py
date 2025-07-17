@@ -7,8 +7,8 @@ from typing import Optional
 from google import genai  # type: ignore
 from pydantic import BaseModel, Field
 
-from src.config import settings
-from src.email.gmail.models import EmailData
+from sentinel.config import settings
+from sentinel.email.gmail.models import EmailData
 
 
 class EmailPriority(str, Enum):

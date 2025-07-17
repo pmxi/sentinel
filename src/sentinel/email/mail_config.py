@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 import yaml
 from pydantic import BaseModel, field_validator, model_validator
 
-from src.logging_config import get_logger
+from sentinel.logging_config import get_logger
 
 logger = get_logger(__name__)
 
