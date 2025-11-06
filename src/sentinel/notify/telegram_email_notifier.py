@@ -60,9 +60,9 @@ class TelegramEmailNotifier(EmailNotifier):
         # Format the message with emojis and markdown
         message = (
             f"📧 *Important Email Alert*\n\n"
-            f"*From:* {self.notifier._escape_markdown(email.sender)}\n"
-            f"*Subject:* {self.notifier._escape_markdown(email.subject)}\n\n"
-            f"*Summary:* {self.notifier._escape_markdown(summary)}"
+            f"*From:* {self.notifier.escape_markdown(email.sender)}\n"
+            f"*Subject:* {self.notifier.escape_markdown(email.subject)}\n\n"
+            f"*Summary:* {self.notifier.escape_markdown(summary)}"
         )
 
         return message
