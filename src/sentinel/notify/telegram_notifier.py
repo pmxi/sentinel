@@ -61,8 +61,15 @@ class TelegramNotifier(Notifier):
             logger.error(f"Failed to send notification: {e}")
             return None
 
-    def _escape_markdown(self, text: str) -> str:
-        """Escape special characters for Telegram MarkdownV2."""
+    def escape_markdown(self, text: str) -> str:
+        """Escape special characters for Telegram MarkdownV2.
+
+        Args:
+            text: Text to escape
+
+        Returns:
+            Escaped text safe for MarkdownV2
+        """
         special_chars = [
             "_",
             "*",

@@ -60,42 +60,9 @@ class TelegramEmailNotifier(EmailNotifier):
         # Format the message with emojis and markdown
         message = (
             f"📧 *Important Email Alert*\n\n"
-            f"*From:* {self._escape_markdown(email.sender)}\n"
-            f"*Subject:* {self._escape_markdown(email.subject)}\n\n"
-            f"*Summary:* {self._escape_markdown(summary)}"
+            f"*From:* {self.notifier.escape_markdown(email.sender)}\n"
+            f"*Subject:* {self.notifier.escape_markdown(email.subject)}\n\n"
+            f"*Summary:* {self.notifier.escape_markdown(summary)}"
         )
 
         return message
-
-    def _escape_markdown(self, text: str) -> str:
-        """Escape special characters for Telegram MarkdownV2.
-
-        Args:
-            text: Text to escape
-
-        Returns:
-            Escaped text safe for MarkdownV2
-        """
-        special_chars = [
-            "_",
-            "*",
-            "[",
-            "]",
-            "(",
-            ")",
-            "~",
-            "`",
-            ">",
-            "#",
-            "+",
-            "-",
-            "=",
-            "|",
-            "{",
-            "}",
-            ".",
-            "!",
-        ]
-        for char in special_chars:
-            text = text.replace(char, f"\\{char}")
-        return text
