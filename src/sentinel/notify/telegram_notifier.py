@@ -62,7 +62,14 @@ class TelegramNotifier(Notifier):
             return None
 
     def escape_markdown(self, text: str) -> str:
-        """Escape special characters for Telegram MarkdownV2."""
+        """Escape special characters for Telegram MarkdownV2.
+
+        Args:
+            text: Text to escape
+
+        Returns:
+            Escaped text safe for MarkdownV2
+        """
         special_chars = [
             "_",
             "*",
