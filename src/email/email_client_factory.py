@@ -4,6 +4,7 @@ from src.email.email_client_base import EmailClient
 from src.email.gmail.client import GmailClient
 from src.email.imap_client import IMAPClient
 from src.email.mail_config import AuthMethod, MailAccountConfig, MailProvider
+from src.email.msgraph_client import MSGraphClient
 from src.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -15,6 +16,7 @@ class EmailClientFactory:
     _provider_map: Dict[MailProvider, Type[EmailClient]] = {
         MailProvider.GMAIL_API: GmailClient,
         MailProvider.IMAP: IMAPClient,
+        MailProvider.MSGRAPH: MSGraphClient,
     }
 
     @classmethod
@@ -35,6 +37,8 @@ class EmailClientFactory:
             return cls._create_gmail_client(account_name, config)
         elif config.provider == MailProvider.IMAP:
             return cls._create_imap_client(account_name, config)
+        elif config.provider == MailProvider.MSGRAPH:
+            return cls._create_msgraph_client(account_name, config)
         else:
             raise ValueError(f"No factory method for provider: {config.provider}")
 
@@ -61,3 +65,19 @@ class EmailClientFactory:
             raise ValueError("IMAP provider requires server configuration")
 
         return IMAPClient(account_name, config)
+
+    @classmethod
+    def _create_msgraph_client(
+        cls, account_name: str, config: MailAccountConfig
+    ) -> MSGraphClient:
+        """Create Microsoft Graph API client"""
+        if config.auth.method != AuthMethod.OAUTH2:
+            raise ValueError("Microsoft Graph API only supports OAuth2 authentication")
+
+        if not config.auth.client_id or not config.auth.tenant_id:
+            raise ValueError("Microsoft Graph API requires client_id and tenant_id")
+
+        if not config.auth.token_file:
+            raise ValueError("Microsoft Graph API requires token_file for token caching")
+
+        return MSGraphClient(account_name, config)

@@ -15,21 +15,19 @@ accounts:
       folders: ["INBOX"]
       junk_folder_name: "Junk"  # Gmail uses labels, will create if doesn't exist
 
-  # Purdue email using IMAP with OAuth2
+  # Microsoft 365 / Outlook using Graph API (e.g., Purdue, work accounts)
   purdue:
-    provider: imap
-    server: outlook.office365.com
-    port: 993
+    provider: msgraph
     auth:
       method: oauth2
-      client_id: your-client-id-here
-      tenant_id: your-tenant-id-here
+      client_id: your-azure-client-id  # From Azure App Registration
+      tenant_id: purdue.edu            # Your organization's tenant ID or domain
       token_file: tokens/purdue_token.json
     settings:
       process_only_unread: true
       max_lookback_hours: 24
       folders: ["INBOX"]
-      junk_folder_name: "Spam"  # Common IMAP folder name, must exist
+      junk_folder_name: "junkemail"  # Graph API well-known folder name
 
   # Example of IMAP with password auth (less secure)
   # legacy:

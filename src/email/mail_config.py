@@ -13,6 +13,7 @@ logger = get_logger(__name__)
 class MailProvider(str, Enum):
     GMAIL_API = "gmail_api"
     IMAP = "imap"
+    MSGRAPH = "msgraph"
 
 
 class AuthMethod(str, Enum):
