@@ -45,15 +45,13 @@ SQLite database tracks which emails have been processed to avoid duplicates.
 
 ## Installation
 
-I recommend creating a Python virtual environment. This project was developed
-and tested with Python 3.13.2 on macOS Sonoma with a M3 MacBook. No guarantees
-are made for other environments. Then, install dependencies from the
-requirements.txt file.
+This project was developed and tested with Python 3.13.2 on macOS Sonoma with a
+M3 MacBook. No guarantees are made for other environments. Install
+[uv](https://docs.astral.sh/uv/getting-started/installation/), then sync
+dependencies:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+uv sync
 ```
 
 ## Configuration

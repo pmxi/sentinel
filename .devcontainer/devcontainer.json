@@ -19,7 +19,7 @@
     }
   },
   // Install dependencies
-  "postCreateCommand": "pip install -r requirements.txt",
+  "postCreateCommand": "pip install uv && uv sync",
   // Create credential files from Codespace secrets (if they exist)
   "postStartCommand": "mkdir -p /workspace/.config && if [ ! -z \"$GOOGLE_CREDENTIALS\" ]; then echo \"$GOOGLE_CREDENTIALS\" > credentials.json; fi && if [ ! -z \"$GOOGLE_TOKEN\" ]; then echo \"$GOOGLE_TOKEN\" > token.json; fi && if [ ! -z \"$ENV_FILE\" ]; then echo \"$ENV_FILE\" > .env; fi",
   // Set up environment variables that your app might expect
