@@ -3,7 +3,7 @@
 {% block content %}
 <section>
   <h2>Your mail accounts</h2>
-  <p class="hint">Adding a mail account opens the provider's OAuth flow (Gmail via IMAP with app password coming soon — currently CLI-only).</p>
+  <p><a class="button" href="{{ url_for('new_account_page') }}">Add account</a></p>
   {% if accounts %}
     <table>
       <thead><tr><th>Name</th><th>Provider</th><th>Enabled</th><th></th></tr></thead>

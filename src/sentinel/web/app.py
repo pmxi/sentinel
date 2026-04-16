@@ -32,8 +32,15 @@ from flask import (
 
 from sentinel.config import Settings, settings
 from sentinel.database import EmailDatabase
-from sentinel.email.mail_config import MailAccountConfig
+from sentinel.email.mail_config import (
+    AccountSettings,
+    AuthConfig,
+    AuthMethod,
+    MailAccountConfig,
+    MailProvider,
+)
 from sentinel.user_settings import UserSettings
+from sentinel.web.imap_probe import probe_imap
 
 
 GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
@@ -228,6 +235,80 @@ def create_app(db_path: Optional[str] = None) -> Flask:
 
     # ------------------------------------------------------------------ accounts (per-user)
 
+    @app.route("/accounts/new", methods=["GET", "POST"])
+    @login_required
+    def new_account_page():
+        uid = current_user_id()
+        providers = _imap_provider_presets()
+
+        if request.method == "POST":
+            form = request.form
+            preset_key = form.get("preset", "custom")
+            preset = providers.get(preset_key) or providers["custom"]
+
+            name = form.get("name", "").strip()
+            username = form.get("username", "").strip()
+            password = form.get("password", "")
+            server = (form.get("server", "").strip() or preset["server"]).strip()
+            port_str = form.get("port", "").strip() or str(preset["port"])
+
+            errors: List[str] = []
+            if not name:
+                errors.append("Pick a friendly name for this account.")
+            if not username:
+                errors.append("Email address is required.")
+            if not password:
+                errors.append("App password is required.")
+            if not server:
+                errors.append("IMAP server is required.")
+            try:
+                port = int(port_str)
+            except ValueError:
+                errors.append(f"Port must be a number (got {port_str!r}).")
+                port = 993
+
+            db = open_db()
+            try:
+                if name and db.get_account(uid, name):
+                    errors.append(f"You already have an account named {name!r}. Pick a different name.")
+
+                if not errors:
+                    probe = probe_imap(server, port, username, password)
+                    if not probe.ok:
+                        errors.append(probe.error or "Connection failed.")
+
+                if errors:
+                    return render_template(
+                        "new_account.html",
+                        providers=providers,
+                        errors=errors,
+                        form={"preset": preset_key, "name": name, "username": username,
+                              "server": server, "port": port_str},
+                    )
+
+                config = MailAccountConfig(
+                    provider=MailProvider.IMAP,
+                    server=server,
+                    port=port,
+                    auth=AuthConfig(
+                        method=AuthMethod.PASSWORD,
+                        username=username,
+                        password=password,
+                    ),
+                    settings=AccountSettings(),
+                )
+                db.upsert_account(uid, name, config.model_dump_json())
+            finally:
+                db.close()
+            return redirect(url_for("accounts_page"))
+
+        return render_template(
+            "new_account.html",
+            providers=providers,
+            errors=[],
+            form={"preset": "gmail", "name": "", "username": "", "server": "", "port": ""},
+        )
+
     @app.route("/accounts")
     @login_required
     def accounts_page():
@@ -323,6 +404,54 @@ def _fetch_recent_processed(db: EmailDatabase, user_id: int, limit: int = 25) ->
         (user_id, limit),
     )
     return [dict(row) for row in cursor.fetchall()]
+
+
+def _imap_provider_presets() -> Dict[str, Dict[str, Any]]:
+    """Per-provider IMAP defaults + where the user gets their app password."""
+    return {
+        "gmail": {
+            "label": "Gmail",
+            "server": "imap.gmail.com",
+            "port": 993,
+            "app_password_url": "https://myaccount.google.com/apppasswords",
+            "note": "2-Step Verification must be enabled on your Google account before app passwords are available.",
+        },
+        "icloud": {
+            "label": "iCloud",
+            "server": "imap.mail.me.com",
+            "port": 993,
+            "app_password_url": "https://appleid.apple.com",
+            "note": "Apple ID → Sign-In and Security → App-Specific Passwords.",
+        },
+        "fastmail": {
+            "label": "Fastmail",
+            "server": "imap.fastmail.com",
+            "port": 993,
+            "app_password_url": "https://app.fastmail.com/settings/security",
+            "note": "Settings → Password & Security → New app password.",
+        },
+        "outlook": {
+            "label": "Outlook.com",
+            "server": "outlook.office365.com",
+            "port": 993,
+            "app_password_url": "https://account.microsoft.com/security",
+            "note": "Consumer outlook.com accounts only. Enterprise Microsoft 365 tenants require OAuth, which isn't supported yet.",
+        },
+        "yahoo": {
+            "label": "Yahoo",
+            "server": "imap.mail.yahoo.com",
+            "port": 993,
+            "app_password_url": "https://login.yahoo.com/account/security",
+            "note": "Account security → Generate app password.",
+        },
+        "custom": {
+            "label": "Custom IMAP server",
+            "server": "",
+            "port": 993,
+            "app_password_url": "",
+            "note": "Enter the IMAP server hostname and port yourself.",
+        },
+    }
 
 
 def _base_prompt_preview() -> str:

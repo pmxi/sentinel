@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Add account — Sentinel{% endblock %}
+{% block content %}
+<section class="new-account">
+  <h2>Add a mail account</h2>
+  <p class="hint">Sentinel connects to your mailbox over IMAP with an <em>app password</em> (not your regular login password). Most providers require you to enable 2-factor auth first, then generate a dedicated password for Sentinel from your account security settings.</p>
+
+  {% if errors %}
+    <div class="errors" role="alert">
+      <strong>Couldn't save:</strong>
+      <ul>{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+    </div>
+  {% endif %}
+
+  <form method="post">
+    <p>
+      <label for="preset">Provider</label>
+      <select id="preset" name="preset" onchange="this.form.submit.disabled=false">
+        {% for key, p in providers.items() %}
+          <option value="{{ key }}" {% if form.preset == key %}selected{% endif %}>{{ p.label }}</option>
+        {% endfor %}
+      </select>
+    </p>
+
+    <p>
+      <label for="name">Account name</label>
+      <input id="name" name="name" type="text" value="{{ form.name }}" placeholder="e.g. 'personal', 'work'" required spellcheck="false">
+      <span class="hint">Any short label — shown in dashboards and logs.</span>
+    </p>
+
+    <p>
+      <label for="username">Email address</label>
+      <input id="username" name="username" type="email" value="{{ form.username }}" required autocomplete="username" spellcheck="false">
+    </p>
+
+    <p>
+      <label for="password">App password</label>
+      <input id="password" name="password" type="password" required autocomplete="new-password">
+      <span class="hint">
+        {% for key, p in providers.items() %}
+          <span class="provider-note provider-{{ key }}" {% if form.preset != key %}hidden{% endif %}>
+            {% if p.app_password_url %}<a href="{{ p.app_password_url }}" target="_blank" rel="noopener">Generate one →</a>{% endif %}
+            {{ p.note }}
+          </span>
+        {% endfor %}
+      </span>
+    </p>
+
+    <details {% if form.preset == 'custom' or form.server %}open{% endif %}>
+      <summary>Advanced (server &amp; port)</summary>
+      <p>
+        <label for="server">IMAP server</label>
+        <input id="server" name="server" type="text" value="{{ form.server }}" placeholder="e.g. imap.example.com" spellcheck="false">
+        <span class="hint">Leave blank to use the provider default.</span>
+      </p>
+      <p>
+        <label for="port">Port</label>
+        <input id="port" name="port" type="number" value="{{ form.port }}" placeholder="993" min="1" max="65535">
+      </p>
+    </details>
+
+    <button type="submit">Test &amp; save</button>
+    <a href="{{ url_for('accounts_page') }}">Cancel</a>
+  </form>
+</section>
+
+<script>
+  // Swap the "how to get an app password" hint based on the provider dropdown.
+  const preset = document.getElementById("preset");
+  function refreshNotes() {
+    document.querySelectorAll(".provider-note").forEach(el => el.hidden = true);
+    const active = document.querySelector(".provider-" + preset.value);
+    if (active) active.hidden = false;
+  }
+  preset.addEventListener("change", refreshNotes);
+  refreshNotes();
+</script>
+{% endblock %}

@@ -149,3 +149,32 @@ code { font-family: var(--mono); font-size: 0.9em; }
   white-space: nowrap;
   border: 0;
 }
+
+select {
+  width: 100%;
+  font: inherit;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: white;
+}
+
+details summary {
+  cursor: pointer;
+  color: var(--muted);
+  padding: 0.25rem 0;
+  user-select: none;
+}
+details[open] summary { margin-bottom: 0.5rem; }
+
+.new-account { max-width: 36rem; }
+.new-account form p .hint { display: block; margin-top: 0.25rem; }
+.errors {
+  background: #fdebea;
+  border: 1px solid #f5b7b1;
+  color: #922;
+  padding: 0.6rem 0.9rem;
+  border-radius: 3px;
+  margin-bottom: 1.5rem;
+}
+.errors ul { margin: 0.25rem 0 0 1.25rem; padding: 0; }
