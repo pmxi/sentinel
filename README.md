@@ -75,7 +75,7 @@ All setup happens through the `sentinel` CLI — no YAML or `.env` files.
 ### 2. First-time app setup
 
 ```bash
-uv run sentinel.py init
+uv run sentinel init
 ```
 
 You'll be prompted for the Gemini key, Telegram credentials, and a few
@@ -86,7 +86,7 @@ monitoring preferences. Everything is stored in `sentinel.db`.
 Run this once per mailbox you want to monitor:
 
 ```bash
-uv run sentinel.py account add
+uv run sentinel account add
 ```
 
 Pick a provider and follow the prompts. For Gmail you'll be asked for the
@@ -97,14 +97,14 @@ client/tenant IDs. For IMAP you'll provide the server details and password.
 Other account commands:
 
 ```bash
-uv run sentinel.py account list
-uv run sentinel.py account remove <name>
+uv run sentinel account list
+uv run sentinel account remove <name>
 ```
 
 ### 4. Run the monitor
 
 ```bash
-uv run sentinel.py run
+uv run sentinel run
 ```
 
 The first run will complete any outstanding OAuth flows (Gmail / MS Graph

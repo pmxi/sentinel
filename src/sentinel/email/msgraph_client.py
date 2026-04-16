@@ -13,10 +13,10 @@ from azure.identity import (
 from msgraph import GraphServiceClient
 from msgraph.generated.models.message import Message
 
-from src.email.email_client_base import EmailClient
-from src.email.mail_config import MailAccountConfig
-from src.email.models import EmailData
-from src.logging_config import get_logger
+from sentinel.email.email_client_base import EmailClient
+from sentinel.email.mail_config import MailAccountConfig
+from sentinel.email.models import EmailData
+from sentinel.logging_config import get_logger
 
 logger = get_logger(__name__)
 

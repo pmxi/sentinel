@@ -348,7 +348,7 @@ wheels = [
 [[package]]
 name = "email-sentinel"
 version = "0.1.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "azure-identity" },
     { name = "google-api-python-client" },

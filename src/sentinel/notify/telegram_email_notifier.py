@@ -1,10 +1,10 @@
 from typing import Optional
 
-from src.notify.email_notifier import EmailNotifier
-from src.notify.telegram_notifier import TelegramNotifier
-from src.classifier.email_classifier import ClassificationResult
-from src.email.gmail.models import EmailData
-from src.logging_config import get_logger
+from sentinel.notify.email_notifier import EmailNotifier
+from sentinel.notify.telegram_notifier import TelegramNotifier
+from sentinel.classifier.email_classifier import ClassificationResult
+from sentinel.email.gmail.models import EmailData
+from sentinel.logging_config import get_logger
 
 logger = get_logger(__name__)
 

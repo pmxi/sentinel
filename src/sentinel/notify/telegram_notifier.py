@@ -2,8 +2,8 @@ from typing import Optional
 
 import requests
 
-from src.notify.notifier import Notifier
-from src.logging_config import get_logger
+from sentinel.notify.notifier import Notifier
+from sentinel.logging_config import get_logger
 
 logger = get_logger(__name__)
 

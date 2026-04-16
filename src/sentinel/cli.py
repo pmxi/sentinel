@@ -17,9 +17,9 @@ from getpass import getpass
 from pathlib import Path
 from typing import Optional
 
-from src.config import settings
-from src.database import EmailDatabase
-from src.email.mail_config import (
+from sentinel.config import settings
+from sentinel.database import EmailDatabase
+from sentinel.email.mail_config import (
     AccountSettings,
     AuthConfig,
     AuthMethod,
@@ -227,7 +227,7 @@ def _prompt_account_settings() -> AccountSettings:
 # ------------------------------------------------------------------ run
 
 def cmd_run(_args: argparse.Namespace) -> None:
-    from src.main import main as run_main
+    from sentinel.main import main as run_main
     run_main()
 
 
