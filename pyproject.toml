@@ -12,6 +12,7 @@ dependencies = [
     "twilio",
     "msgraph-sdk",
     "azure-identity",
+    "flask>=3.0.0",
 ]
 
 [project.scripts]

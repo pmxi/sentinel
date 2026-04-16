@@ -231,6 +231,13 @@ def cmd_run(_args: argparse.Namespace) -> None:
     run_main()
 
 
+# ------------------------------------------------------------------ web
+
+def cmd_web(args: argparse.Namespace) -> None:
+    from sentinel.web.app import run as run_web
+    run_web(host=args.host, port=args.port, debug=args.debug)
+
+
 # ------------------------------------------------------------------ entrypoint
 
 def build_parser() -> argparse.ArgumentParser:
@@ -239,6 +246,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("init", help="First-time app setup").set_defaults(func=cmd_init)
     sub.add_parser("run", help="Start the monitor daemon").set_defaults(func=cmd_run)
+
+    web = sub.add_parser("web", help="Start the configuration / monitoring web UI")
+    web.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
+    web.add_argument("--port", type=int, default=8765, help="Port (default: 8765)")
+    web.add_argument("--debug", action="store_true", help="Enable Flask debug mode")
+    web.set_defaults(func=cmd_web)
 
     account = sub.add_parser("account", help="Manage mail accounts")
     account_sub = account.add_subparsers(dest="account_cmd", required=True)

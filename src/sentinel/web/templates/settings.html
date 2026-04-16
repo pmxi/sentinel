@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Settings — Sentinel{% endblock %}
+{% block content %}
+<section>
+  <h2>App settings</h2>
+  {% if saved %}<p role="status" class="flash">Saved.</p>{% endif %}
+  <p class="hint">Secrets show masked. Leave the field blank to keep the stored value.</p>
+  <form method="post">
+    {% for row in rows %}
+      <p>
+        <label for="{{ row.key }}">{{ row.label }}</label>
+        <input
+          id="{{ row.key }}"
+          name="{{ row.key }}"
+          type="{{ row.type }}"
+          value="{{ row.value }}"
+          {% if row.is_secret and row.is_set %}placeholder="{{ row.display }}"{% endif %}
+          autocomplete="off"
+          spellcheck="false">
+      </p>
+    {% endfor %}
+    <button type="submit">Save</button>
+  </form>
+</section>
+{% endblock %}

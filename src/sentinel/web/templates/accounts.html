@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Accounts — Sentinel{% endblock %}
+{% block content %}
+<section>
+  <h2>Mail accounts</h2>
+  <p class="hint">To add or remove accounts, use <code>uv run sentinel account add</code> or <code>uv run sentinel account remove &lt;name&gt;</code>.</p>
+  {% if accounts %}
+    <table>
+      <thead><tr><th>Name</th><th>Provider</th><th>Enabled</th><th></th></tr></thead>
+      <tbody>
+      {% for a in accounts %}
+        <tr>
+          <td>{{ a.name }}</td>
+          <td>{{ a.provider }}</td>
+          <td>{{ "yes" if a.enabled else "no" }}</td>
+          <td>
+            <form method="post" action="{{ url_for('toggle_account', name=a.name) }}">
+              <button type="submit">{{ "Disable" if a.enabled else "Enable" }}</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No accounts configured. Run <code>uv run sentinel account add</code>.</p>
+  {% endif %}
+</section>
+{% endblock %}

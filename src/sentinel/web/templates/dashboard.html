@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Sentinel{% endblock %}
+{% block content %}
+<section>
+  <h2>Status</h2>
+  <dl>
+    <dt>Daemon</dt>
+    <dd class="{{ 'ok' if health.ok else 'warn' }}">{{ health.status }}</dd>
+    <dt>Monitoring since</dt>
+    <dd>{{ monitoring_start or '—' }}</dd>
+    <dt>Last check</dt>
+    <dd>{{ last_check or '—' }}</dd>
+    <dt>Emails processed</dt>
+    <dd>{{ processed_count }}</dd>
+    <dt>Accounts configured</dt>
+    <dd>{{ accounts_count }}</dd>
+  </dl>
+</section>
+
+<section>
+  <h2>Recent processed emails</h2>
+  {% if recent %}
+    <table>
+      <thead>
+        <tr><th>Time</th><th>Provider</th><th>Sender</th><th>Subject</th></tr>
+      </thead>
+      <tbody>
+      {% for row in recent %}
+        <tr>
+          <td><time>{{ row.processed_at }}</time></td>
+          <td>{{ row.provider }}</td>
+          <td>{{ row.sender }}</td>
+          <td>{{ row.subject }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No emails processed yet.</p>
+  {% endif %}
+</section>
+{% endblock %}
