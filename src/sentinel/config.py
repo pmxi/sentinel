@@ -41,6 +41,10 @@ class Settings:
     GOOGLE_CLIENT_ID: Optional[str] = None
     GOOGLE_CLIENT_SECRET: Optional[str] = None
 
+    # ----- Telegram (shared operator bot; each user links themselves to it) -----
+    TELEGRAM_BOT_TOKEN: Optional[str] = None
+    TELEGRAM_BOT_USERNAME: Optional[str] = None
+
     # ----- Flask sessions -----
     SESSION_SECRET: Optional[str] = None
 

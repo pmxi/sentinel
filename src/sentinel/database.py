@@ -19,10 +19,11 @@ from types import TracebackType
 from typing import Any, Dict, List, Optional, Set, Type
 
 
-# Keys that used to live in app_settings pre-multitenancy but have since
-# moved to per-user user_settings. Cleared on first run under the new schema.
-_LEGACY_APP_KEYS_NOW_USER_SCOPED = (
-    "TELEGRAM_BOT_TOKEN",
+# Keys that only belong in user_settings — if they ever show up in
+# app_settings (e.g. from a pre-multitenancy dump), the migration clears
+# them. TELEGRAM_BOT_TOKEN is intentionally NOT in this list: under the
+# shared-operator-bot model it lives in app_settings.
+_USER_SCOPED_KEYS_WRONGLY_IN_APP_SETTINGS = (
     "TELEGRAM_CHAT_ID",
     "CLASSIFICATION_NOTES",
 )
@@ -123,12 +124,27 @@ class EmailDatabase:
                 """
             )
 
-            # Clear any legacy per-user keys that were previously kept in
-            # app_settings; they belong in user_settings now.
-            placeholders = ",".join("?" for _ in _LEGACY_APP_KEYS_NOW_USER_SCOPED)
+            # Short-lived tokens issued when a user clicks "Link Telegram".
+            # The bot poller consumes them on /start <token> and writes the
+            # resulting chat_id to user_settings.
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS telegram_link_tokens (
+                    token TEXT PRIMARY KEY,
+                    user_id INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    expires_at TIMESTAMP NOT NULL,
+                    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+                )
+                """
+            )
+
+            # Defensive: if any user-scoped keys ended up in app_settings
+            # (e.g. from legacy state), remove them.
+            placeholders = ",".join("?" for _ in _USER_SCOPED_KEYS_WRONGLY_IN_APP_SETTINGS)
             self.conn.execute(
                 f"DELETE FROM app_settings WHERE key IN ({placeholders})",
-                _LEGACY_APP_KEYS_NOW_USER_SCOPED,
+                _USER_SCOPED_KEYS_WRONGLY_IN_APP_SETTINGS,
             )
 
     def _drop_legacy_tables(self) -> None:
@@ -359,6 +375,45 @@ class EmailDatabase:
                        updated_at = CURRENT_TIMESTAMP""",
                 (user_id, timestamp.isoformat()),
             )
+
+    # ------------------------------------------------------------------ telegram_link_tokens
+
+    def create_telegram_link_token(
+        self, user_id: int, token: str, expires_at: datetime
+    ) -> None:
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO telegram_link_tokens (token, user_id, expires_at)
+                   VALUES (?, ?, ?)""",
+                (token, user_id, expires_at.isoformat()),
+            )
+
+    def consume_telegram_link_token(self, token: str) -> Optional[int]:
+        """If the token exists and hasn't expired, delete it and return the
+        user_id it was for. Otherwise return None."""
+        with self.conn:
+            row = self.conn.execute(
+                "SELECT user_id, expires_at FROM telegram_link_tokens WHERE token = ?",
+                (token,),
+            ).fetchone()
+            if row is None:
+                return None
+            # Single delete regardless — expired tokens are garbage.
+            self.conn.execute(
+                "DELETE FROM telegram_link_tokens WHERE token = ?", (token,)
+            )
+            if datetime.fromisoformat(row["expires_at"]) < datetime.now():
+                return None
+            return int(row["user_id"])
+
+    def purge_expired_telegram_link_tokens(self) -> int:
+        """Delete any tokens past expiry. Called periodically by the bot poller."""
+        with self.conn:
+            cursor = self.conn.execute(
+                "DELETE FROM telegram_link_tokens WHERE expires_at < ?",
+                (datetime.now().isoformat(),),
+            )
+            return cursor.rowcount
 
     # ------------------------------------------------------------------ lifecycle
 

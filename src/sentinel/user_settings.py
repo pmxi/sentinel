@@ -4,7 +4,7 @@ These live outside the global Settings class because each user has their own
 values. Use UserSettings.load(db, user_id) to get a snapshot for one user.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -13,9 +13,13 @@ if TYPE_CHECKING:
 
 @dataclass
 class UserSettings:
-    """Snapshot of one user's preferences."""
+    """Snapshot of one user's preferences.
 
-    TELEGRAM_BOT_TOKEN: str = ""
+    Only chat_id is stored here — the Telegram bot itself is operator-shared
+    (see Settings.TELEGRAM_BOT_TOKEN). A user populates chat_id by clicking
+    "Link Telegram" in the UI, which walks them through /start <token>.
+    """
+
     TELEGRAM_CHAT_ID: str = ""
     CLASSIFICATION_NOTES: str = ""
     EMAIL_NOTIFICATION_TO: str = ""  # optional: send notifications via Resend to this address
@@ -30,7 +34,7 @@ class UserSettings:
         return cls(**kwargs)
 
     def has_telegram(self) -> bool:
-        return bool(self.TELEGRAM_BOT_TOKEN and self.TELEGRAM_CHAT_ID)
+        return bool(self.TELEGRAM_CHAT_ID)
 
     def has_email_notifications(self) -> bool:
         return bool(self.EMAIL_NOTIFICATION_TO)

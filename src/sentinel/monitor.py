@@ -32,6 +32,7 @@ from sentinel.logging_config import get_logger
 from sentinel.notify.email_notifier import EmailNotifier
 from sentinel.notify.telegram_email_notifier import TelegramEmailNotifier
 from sentinel.notify.telegram_notifier import TelegramNotifier
+from sentinel.telegram_bot import start_in_thread as start_telegram_listener
 from sentinel.user_settings import UserSettings
 
 logger = get_logger("sentinel.monitor")
@@ -61,6 +62,16 @@ class EmailMonitor:
             settings.POLL_INTERVAL_SECONDS,
             settings.MAX_LOOKBACK_HOURS,
         )
+
+        # Spawn the Telegram bot listener so /start <token> links land in
+        # user_settings without a separate long-running process.
+        if settings.TELEGRAM_BOT_TOKEN:
+            start_telegram_listener(settings.DATABASE_PATH)
+        else:
+            logger.info(
+                "TELEGRAM_BOT_TOKEN not set — skipping bot listener; "
+                "Telegram linking will not work until it's configured"
+            )
 
         while self.running:
             try:
@@ -132,10 +143,10 @@ class EmailMonitor:
         self.db.update_last_check_time(user_id, datetime.now())
 
     def _build_notifier(self, user_settings: UserSettings) -> Optional[EmailNotifier]:
-        if user_settings.has_telegram():
+        if user_settings.has_telegram() and settings.TELEGRAM_BOT_TOKEN:
             return TelegramEmailNotifier(
                 TelegramNotifier(
-                    bot_token=user_settings.TELEGRAM_BOT_TOKEN,
+                    bot_token=settings.TELEGRAM_BOT_TOKEN,  # operator-shared bot
                     chat_id=user_settings.TELEGRAM_CHAT_ID,
                 )
             )

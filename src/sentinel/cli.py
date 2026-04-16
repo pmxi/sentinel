@@ -65,6 +65,14 @@ def cmd_init(_args: argparse.Namespace) -> None:
         db.set_app_setting("SESSION_SECRET", secrets.token_hex(32))
         print("  Generated SESSION_SECRET (persisted; keep across restarts)")
 
+    print("\nTelegram shared bot (optional — users opt-in via /preferences → Link Telegram):")
+    tg_token = _prompt_secret("  Bot token (or blank to skip)")
+    if tg_token:
+        db.set_app_setting("TELEGRAM_BOT_TOKEN", tg_token)
+        tg_user = _prompt("  Bot username (without @; used in t.me/<user> deep link)")
+        if tg_user:
+            db.set_app_setting("TELEGRAM_BOT_USERNAME", tg_user.lstrip("@"))
+
     print("\nResend (transactional email — optional, skip with blank):")
     resend_key = _prompt_secret("  Resend API key (or blank)")
     if resend_key:

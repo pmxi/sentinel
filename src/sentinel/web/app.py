@@ -13,7 +13,8 @@ time. End users only see their own preferences.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+import secrets
+from datetime import datetime, timedelta
 from functools import wraps
 from typing import Any, Callable, Dict, List, Optional
 
@@ -149,37 +150,55 @@ def create_app(db_path: Optional[str] = None) -> Flask:
         db = open_db()
         try:
             if request.method == "POST":
-                for key in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "EMAIL_NOTIFICATION_TO"):
-                    raw = request.form.get(key, "").strip()
-                    # For secret-shaped values (bot token) a blank field means "keep the stored value".
-                    is_secret = key == "TELEGRAM_BOT_TOKEN"
-                    if not raw and is_secret:
-                        continue
-                    if raw:
-                        db.set_user_setting(uid, key, raw)
-                    else:
-                        db.delete_user_setting(uid, key)
+                # Only EMAIL_NOTIFICATION_TO is edited via this form now.
+                # TELEGRAM_CHAT_ID is populated by the bot linking flow.
+                raw = request.form.get("EMAIL_NOTIFICATION_TO", "").strip()
+                if raw:
+                    db.set_user_setting(uid, "EMAIL_NOTIFICATION_TO", raw)
+                else:
+                    db.delete_user_setting(uid, "EMAIL_NOTIFICATION_TO")
                 return redirect(url_for("preferences_page", saved=1))
 
             stored = db.get_all_user_settings(uid)
-            rows = [
-                {"key": "TELEGRAM_BOT_TOKEN", "label": "Telegram bot token", "type": "password",
-                 "value": "", "display": _mask(stored.get("TELEGRAM_BOT_TOKEN", "")),
-                 "is_secret": True, "is_set": bool(stored.get("TELEGRAM_BOT_TOKEN"))},
-                {"key": "TELEGRAM_CHAT_ID", "label": "Telegram chat ID", "type": "text",
-                 "value": stored.get("TELEGRAM_CHAT_ID", ""), "display": stored.get("TELEGRAM_CHAT_ID", ""),
-                 "is_secret": False, "is_set": bool(stored.get("TELEGRAM_CHAT_ID"))},
-                {"key": "EMAIL_NOTIFICATION_TO", "label": "Notification email (optional, via Resend)", "type": "email",
-                 "value": stored.get("EMAIL_NOTIFICATION_TO", ""), "display": stored.get("EMAIL_NOTIFICATION_TO", ""),
-                 "is_secret": False, "is_set": bool(stored.get("EMAIL_NOTIFICATION_TO"))},
-            ]
+            telegram_chat_id = stored.get("TELEGRAM_CHAT_ID", "")
             return render_template(
                 "preferences.html",
-                rows=rows,
+                telegram_chat_id=telegram_chat_id,
+                telegram_bot_username=Settings.TELEGRAM_BOT_USERNAME,
+                email_notification_to=stored.get("EMAIL_NOTIFICATION_TO", ""),
                 saved=request.args.get("saved") == "1",
             )
         finally:
             db.close()
+
+    @app.route("/preferences/telegram/link", methods=["POST"])
+    @login_required
+    def telegram_link_start():
+        """Generate a one-shot linking token and redirect to the bot's deep link."""
+        uid = current_user_id()
+        if not Settings.TELEGRAM_BOT_USERNAME:
+            abort(500, "TELEGRAM_BOT_USERNAME not configured")
+        token = secrets.token_urlsafe(24)
+        expires = datetime.now() + timedelta(minutes=10)
+        db = open_db()
+        try:
+            db.create_telegram_link_token(uid, token, expires)
+        finally:
+            db.close()
+        return redirect(
+            f"https://t.me/{Settings.TELEGRAM_BOT_USERNAME}?start={token}"
+        )
+
+    @app.route("/preferences/telegram/unlink", methods=["POST"])
+    @login_required
+    def telegram_unlink():
+        uid = current_user_id()
+        db = open_db()
+        try:
+            db.delete_user_setting(uid, "TELEGRAM_CHAT_ID")
+        finally:
+            db.close()
+        return redirect(url_for("preferences_page"))
 
     # ------------------------------------------------------------------ prompt (per-user)
 
