@@ -1,72 +1,76 @@
+"""Application settings.
+
+Only DATABASE_PATH is bootstrapped from the environment (so the daemon knows
+where to look). Everything else lives in the `app_settings` table and is
+populated via `settings.load(db)` during startup.
+"""
+
 import os
-from pathlib import Path
+from typing import TYPE_CHECKING, Any, Optional
 
-# Load environment variables from .env file if it exists
-try:
-    from dotenv import load_dotenv
-
-    # Look for .env file in the project root
-    env_path = Path(__file__).parent.parent / ".env"
-    load_dotenv(env_path)
-except ImportError:
-    # python-dotenv not installed, environment variables must be set manually
-    pass
+if TYPE_CHECKING:
+    from src.database import EmailDatabase
 
 
 class Settings:
-    """Configuration settings for the application"""
+    """Application-level settings. Values are populated from the DB on load()."""
 
-    # Gmail API settings
+    # ----- bootstrap (env only) -----
+    DATABASE_PATH: str = os.getenv("DATABASE_PATH", "sentinel.db")
+
+    # ----- LLM -----
+    LLM_PROVIDER: str = "google"
+    LLM_API_KEY: Optional[str] = None
+    LLM_MODEL: str = "gemini-2.5-flash-preview-05-20"
+
+    # ----- Telegram -----
+    TELEGRAM_BOT_TOKEN: Optional[str] = None
+    TELEGRAM_CHAT_ID: Optional[str] = None
+
+    # ----- Twilio (optional) -----
+    TWILIO_ACCOUNT_SID: Optional[str] = None
+    TWILIO_AUTH_TOKEN: Optional[str] = None
+    TWILIO_PHONE_NUMBER: Optional[str] = None
+    NOTIFICATION_PHONE_NUMBER: Optional[str] = None
+
+    # ----- Monitoring -----
+    POLL_INTERVAL_SECONDS: int = 30
+    PROCESS_ONLY_UNREAD: bool = True
+    MAX_LOOKBACK_HOURS: int = 24
+
+    # ----- Logging -----
+    LOG_LEVEL: str = "INFO"
+    LOG_DIR: str = "logs"
+    DISABLE_FILE_LOGGING: bool = False
+
+    # ----- Gmail OAuth scopes (code-level default) -----
     GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
-    GMAIL_CREDENTIALS_FILE = os.path.join(
-        os.path.dirname(__file__), "..", "credentials.json"
-    )
-    GMAIL_TOKEN_FILE = os.path.join(os.path.dirname(__file__), "..", "token.json")
-
-    # LLM Configuration
-    LLM_PROVIDER = os.getenv(
-        "LLM_PROVIDER", "google"
-    )  # google, openai, anthropic, local
-    LLM_API_KEY = os.getenv("LLM_API_KEY")
-    LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.5-flash-preview-05-20")
-
-    # Twilio settings
-    TWILIO_ACCOUNT_SID = os.getenv("TWILIO_ACCOUNT_SID")
-    TWILIO_AUTH_TOKEN = os.getenv("TWILIO_AUTH_TOKEN")
-    TWILIO_PHONE_NUMBER = os.getenv("TWILIO_PHONE_NUMBER")
-    NOTIFICATION_PHONE_NUMBER = os.getenv("NOTIFICATION_PHONE_NUMBER")
-    
-    # Telegram settings
-    TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-    TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-    
-    # Purdue email settings
-    PURDUE_EMAIL = os.getenv("PURDUE_EMAIL")
-    PURDUE_IMAP_SERVER = os.getenv("PURDUE_IMAP_SERVER", "outlook.office365.com")
-    PURDUE_IMAP_PORT = int(os.getenv("PURDUE_IMAP_PORT", "993"))
-    
-    # Microsoft OAuth settings for Purdue
-    PURDUE_CLIENT_ID = os.getenv("PURDUE_CLIENT_ID")
-    PURDUE_CLIENT_SECRET = os.getenv("PURDUE_CLIENT_SECRET")  # Optional for public client
-    PURDUE_TENANT_ID = os.getenv("PURDUE_TENANT_ID", "common")
-    
-    # Monitoring settings
-    POLL_INTERVAL_SECONDS = int(os.getenv("POLL_INTERVAL_SECONDS", "30"))
-    PROCESS_ONLY_UNREAD = os.getenv("PROCESS_ONLY_UNREAD", "true").lower() == "true"
-    MAX_LOOKBACK_HOURS = int(os.getenv("MAX_LOOKBACK_HOURS", "24"))
-    DATABASE_PATH = os.getenv("DATABASE_PATH", "sentinel.db")
-    
-    # Logging settings
-    LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")  # DEBUG, INFO, WARNING, ERROR, CRITICAL
-    LOG_DIR = os.getenv("LOG_DIR", "logs")
-    DISABLE_FILE_LOGGING = os.getenv("DISABLE_FILE_LOGGING", "false").lower() == "true"
 
     @classmethod
-    def validate(cls):
-        """Validate that required configuration is present"""
+    def load(cls, db: "EmailDatabase") -> None:
+        """Populate class attributes from the app_settings table."""
+        for key, raw in db.get_all_app_settings().items():
+            if not hasattr(cls, key):
+                continue
+            default = getattr(cls, key)
+            target = type(default) if default is not None else str
+            setattr(cls, key, _coerce(raw, target))
+
+    @classmethod
+    def validate(cls) -> bool:
         if not cls.LLM_API_KEY:
-            raise ValueError("LLM_API_KEY environment variable is required")
+            raise ValueError(
+                "LLM_API_KEY not configured. Run 'sentinel init' or 'sentinel migrate'."
+            )
         return True
+
+
+def _coerce(raw: str, target: type) -> Any:
+    if target is bool:
+        return str(raw).strip().lower() in ("true", "1", "yes", "on")
+    if target is int:
+        return int(raw)
+    return raw
 
 
 settings = Settings()

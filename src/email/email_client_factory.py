@@ -1,4 +1,4 @@
-from typing import Dict, Type
+from typing import TYPE_CHECKING, Callable, Dict, Optional, Type
 
 from src.email.email_client_base import EmailClient
 from src.email.gmail.client import GmailClient
@@ -7,11 +7,14 @@ from src.email.mail_config import AuthMethod, MailAccountConfig, MailProvider
 from src.email.msgraph_client import MSGraphClient
 from src.logging_config import get_logger
 
+if TYPE_CHECKING:
+    from src.database import EmailDatabase
+
 logger = get_logger(__name__)
 
 
 class EmailClientFactory:
-    """Factory for creating email clients based on configuration"""
+    """Factory for creating email clients based on configuration."""
 
     _provider_map: Dict[MailProvider, Type[EmailClient]] = {
         MailProvider.GMAIL_API: GmailClient,
@@ -20,8 +23,14 @@ class EmailClientFactory:
     }
 
     @classmethod
-    def create(cls, account_name: str, config: MailAccountConfig) -> EmailClient:
-        """Create an email client instance from configuration"""
+    def create(
+        cls,
+        account_name: str,
+        config: MailAccountConfig,
+        db: Optional["EmailDatabase"] = None,
+    ) -> EmailClient:
+        """Create an email client. If `db` is provided, OAuth token refreshes
+        are persisted back into the accounts table automatically."""
 
         if not config.enabled:
             raise ValueError(f"Account {account_name} is disabled")
@@ -32,52 +41,63 @@ class EmailClientFactory:
 
         logger.info(f"Creating {config.provider} client for account: {account_name}")
 
-        # Provider-specific initialization
+        on_token_refreshed = (
+            cls._make_token_persister(db, account_name, config) if db else None
+        )
+
         if config.provider == MailProvider.GMAIL_API:
-            return cls._create_gmail_client(account_name, config)
+            return cls._create_gmail_client(account_name, config, on_token_refreshed)
         elif config.provider == MailProvider.IMAP:
             return cls._create_imap_client(account_name, config)
         elif config.provider == MailProvider.MSGRAPH:
-            return cls._create_msgraph_client(account_name, config)
+            return cls._create_msgraph_client(account_name, config, on_token_refreshed)
         else:
             raise ValueError(f"No factory method for provider: {config.provider}")
 
+    @staticmethod
+    def _make_token_persister(
+        db: "EmailDatabase", account_name: str, config: MailAccountConfig
+    ) -> Callable[[str], None]:
+        """Return a callback that updates config.auth.token_json and writes
+        the account row back to the database."""
+
+        def persist(token_json: str) -> None:
+            config.auth.token_json = token_json
+            db.upsert_account(account_name, config.model_dump_json())
+            logger.debug(f"Persisted refreshed token for account '{account_name}'")
+
+        return persist
+
     @classmethod
     def _create_gmail_client(
-        cls, account_name: str, config: MailAccountConfig
+        cls,
+        account_name: str,
+        config: MailAccountConfig,
+        on_token_refreshed: Optional[Callable[[str], None]],
     ) -> GmailClient:
-        """Create Gmail API client"""
         if config.auth.method != AuthMethod.OAUTH2:
             raise ValueError("Gmail API only supports OAuth2 authentication")
-
-        if not config.auth.credentials_file or not config.auth.token_file:
-            raise ValueError("Gmail API requires credentials_file and token_file")
-
-        # Initialize GmailClient with account_name and config for consistent injection
-        return GmailClient(account_name, config)
+        if not config.auth.client_config_json:
+            raise ValueError("Gmail API requires client_config_json")
+        return GmailClient(account_name, config, on_token_refreshed)
 
     @classmethod
     def _create_imap_client(
         cls, account_name: str, config: MailAccountConfig
     ) -> IMAPClient:
-        """Create IMAP client"""
         if not config.server:
             raise ValueError("IMAP provider requires server configuration")
-
         return IMAPClient(account_name, config)
 
     @classmethod
     def _create_msgraph_client(
-        cls, account_name: str, config: MailAccountConfig
+        cls,
+        account_name: str,
+        config: MailAccountConfig,
+        on_token_refreshed: Optional[Callable[[str], None]],
     ) -> MSGraphClient:
-        """Create Microsoft Graph API client"""
         if config.auth.method != AuthMethod.OAUTH2:
             raise ValueError("Microsoft Graph API only supports OAuth2 authentication")
-
         if not config.auth.client_id or not config.auth.tenant_id:
             raise ValueError("Microsoft Graph API requires client_id and tenant_id")
-
-        if not config.auth.token_file:
-            raise ValueError("Microsoft Graph API requires token_file for token caching")
-
-        return MSGraphClient(account_name, config)
+        return MSGraphClient(account_name, config, on_token_refreshed)

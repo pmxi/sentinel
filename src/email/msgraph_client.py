@@ -2,8 +2,7 @@
 
 import asyncio
 from datetime import datetime
-from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 from azure.identity import (
     AuthenticationRecord,
@@ -30,8 +29,17 @@ SCOPES = ["https://graph.microsoft.com/Mail.ReadWrite"]
 class MSGraphClient(EmailClient):
     """Microsoft Graph API email client for Office 365/Outlook."""
 
-    def __init__(self, account_name: str, config: MailAccountConfig):
-        """Initialize MSGraphClient with the account name and its MailAccountConfig."""
+    def __init__(
+        self,
+        account_name: str,
+        config: MailAccountConfig,
+        on_token_refreshed: Optional[Callable[[str], None]] = None,
+    ):
+        """Initialize MSGraphClient.
+
+        `on_token_refreshed` is called with the serialized AuthenticationRecord
+        whenever a new record is minted, so the caller can persist it.
+        """
         logger.debug(f"Initializing MSGraphClient for account '{account_name}'")
         super().__init__(account_name, config)
 
@@ -41,13 +49,11 @@ class MSGraphClient(EmailClient):
         if not config.auth.tenant_id:
             logger.error("tenant_id is required but not provided")
             raise ValueError("tenant_id is required for Microsoft Graph")
-        if not config.auth.token_file:
-            logger.error("token_file is required but not provided")
-            raise ValueError("token_file is required for Microsoft Graph")
 
         self.client_id = config.auth.client_id
         self.tenant_id = config.auth.tenant_id
-        self.token_file = Path(config.auth.token_file)
+        self.auth_record_json = config.auth.token_json
+        self.on_token_refreshed = on_token_refreshed
 
         self.client: Optional[GraphServiceClient] = None
         self._connect()
@@ -103,20 +109,22 @@ class MSGraphClient(EmailClient):
             return credential
 
     def _load_auth_record(self) -> Optional[AuthenticationRecord]:
-        """Load authentication record from token file."""
-        if self.token_file.exists():
+        """Deserialize the stored AuthenticationRecord string, if any."""
+        if self.auth_record_json:
             try:
-                return AuthenticationRecord.deserialize(self.token_file.read_text())
+                return AuthenticationRecord.deserialize(self.auth_record_json)
             except Exception as e:
                 logger.debug(f"Could not load auth record: {e}")
         return None
 
     def _save_auth_record(self, record: AuthenticationRecord):
-        """Save authentication record to token file."""
+        """Persist the AuthenticationRecord via the on_token_refreshed callback."""
         try:
-            self.token_file.parent.mkdir(parents=True, exist_ok=True)
-            self.token_file.write_text(record.serialize())
-            logger.debug(f"Saved auth record to {self.token_file}")
+            serialized = record.serialize()
+            self.auth_record_json = serialized
+            if self.on_token_refreshed:
+                self.on_token_refreshed(serialized)
+            logger.debug("Persisted MSGraph auth record")
         except Exception as e:
             logger.warning(f"Could not save auth record: {e}")
 

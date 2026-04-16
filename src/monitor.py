@@ -62,7 +62,9 @@ class EmailMonitor:
                 account_config,
             ) in self.mail_config.get_enabled_accounts().items():
                 try:
-                    client = EmailClientFactory.create(account_name, account_config)
+                    client = EmailClientFactory.create(
+                        account_name, account_config, db=self.db
+                    )
                     self.email_clients.append(client)
                     logger.info(
                         f"Initialized {account_config.provider} client for account '{account_name}'"

@@ -1,6 +1,5 @@
 from datetime import datetime
-from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 from googleapiclient.discovery import build  # type: ignore
 
@@ -10,30 +9,34 @@ from src.email.models import EmailData
 from src.logging_config import get_logger
 
 from ..email_client_base import EmailClient
-from .auth import GmailAuth  # will now accept injected paths
+from .auth import GmailAuth
 
 logger = get_logger(__name__)
 
 
 class GmailClient(EmailClient):
-    def __init__(self, account_name: str, config: MailAccountConfig):
-        """Initialize GmailClient with the account name and its MailAccountConfig."""
+    def __init__(
+        self,
+        account_name: str,
+        config: MailAccountConfig,
+        on_token_refreshed: Optional[Callable[[str], None]] = None,
+    ):
+        """Initialize GmailClient.
+
+        `on_token_refreshed` is called with the fresh token JSON string whenever
+        the OAuth token is minted or refreshed, so the caller can persist it
+        back to the database.
+        """
         logger.debug(f"Initializing GmailClient for account '{account_name}'")
-        # Initialize base with account_name and config
         super().__init__(account_name, config)
-        # credentials_file and token_file were validated by factory
-        if not config.auth.credentials_file:
-            logger.error("credentials_file is required but not provided")
-            raise ValueError("credentials_file is required")
-        if not config.auth.token_file:
-            logger.error("token_file is required but not provided")
-            raise ValueError("token_file is required")
-        creds_file: Path = config.auth.credentials_file  # type: ignore
-        token_file: Path = config.auth.token_file  # type: ignore
-        logger.debug(f"Using credentials file: {creds_file}")
-        logger.debug(f"Using token file: {token_file}")
-        # Inject credential and token paths into GmailAuth
-        self.auth = GmailAuth(creds_file, token_file)
+        if not config.auth.client_config_json:
+            logger.error("client_config_json is required but not provided")
+            raise ValueError("client_config_json is required")
+        self.auth = GmailAuth(
+            client_config_json=config.auth.client_config_json,
+            token_json=config.auth.token_json,
+            on_token_refreshed=on_token_refreshed,
+        )
         self.service: Any = None
         self._connect()
         logger.info(f"GmailClient initialized successfully for account '{account_name}'")

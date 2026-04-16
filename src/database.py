@@ -1,14 +1,14 @@
-"""Database module for tracking processed emails and monitoring state."""
+"""Database module for tracking processed emails, monitoring state, and configuration."""
 
 import sqlite3
 from datetime import datetime
 from pathlib import Path
 from types import TracebackType
-from typing import Optional, Set, Type
+from typing import Dict, Optional, Set, Type
 
 
 class EmailDatabase:
-    """Manages email processing state in SQLite database."""
+    """Manages email processing state, app settings, and accounts in SQLite."""
 
     def __init__(self, db_path: str = "sentinel.db"):
         """Initialize database connection and create tables if needed."""
@@ -39,6 +39,28 @@ class EmailDatabase:
                 CREATE TABLE IF NOT EXISTS monitoring_state (
                     key TEXT PRIMARY KEY,
                     value TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """
+            )
+
+            # Table for application-level settings (secrets + preferences)
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """
+            )
+
+            # Table for mail accounts — each row stores one MailAccountConfig as JSON
+            self.conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS accounts (
+                    name TEXT PRIMARY KEY,
+                    config_json TEXT NOT NULL,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             """
@@ -132,6 +154,65 @@ class EmailDatabase:
         """Get total number of processed emails."""
         cursor = self.conn.execute("SELECT COUNT(*) as count FROM processed_emails")
         return cursor.fetchone()["count"]
+
+    # ----- app_settings -----
+
+    def set_app_setting(self, key: str, value: str) -> None:
+        """Upsert an application setting."""
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO app_settings (key, value, updated_at)
+                   VALUES (?, ?, CURRENT_TIMESTAMP)
+                   ON CONFLICT(key) DO UPDATE SET
+                       value = excluded.value,
+                       updated_at = CURRENT_TIMESTAMP""",
+                (key, value),
+            )
+
+    def get_app_setting(self, key: str) -> Optional[str]:
+        cursor = self.conn.execute(
+            "SELECT value FROM app_settings WHERE key = ?", (key,)
+        )
+        row = cursor.fetchone()
+        return row["value"] if row else None
+
+    def get_all_app_settings(self) -> Dict[str, str]:
+        cursor = self.conn.execute("SELECT key, value FROM app_settings")
+        return {row["key"]: row["value"] for row in cursor}
+
+    def delete_app_setting(self, key: str) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM app_settings WHERE key = ?", (key,))
+
+    # ----- accounts -----
+
+    def upsert_account(self, name: str, config_json: str) -> None:
+        """Upsert a mail account configuration (full MailAccountConfig as JSON)."""
+        with self.conn:
+            self.conn.execute(
+                """INSERT INTO accounts (name, config_json, updated_at)
+                   VALUES (?, ?, CURRENT_TIMESTAMP)
+                   ON CONFLICT(name) DO UPDATE SET
+                       config_json = excluded.config_json,
+                       updated_at = CURRENT_TIMESTAMP""",
+                (name, config_json),
+            )
+
+    def get_account(self, name: str) -> Optional[str]:
+        cursor = self.conn.execute(
+            "SELECT config_json FROM accounts WHERE name = ?", (name,)
+        )
+        row = cursor.fetchone()
+        return row["config_json"] if row else None
+
+    def list_accounts(self) -> Dict[str, str]:
+        """Return all accounts as {name: config_json}."""
+        cursor = self.conn.execute("SELECT name, config_json FROM accounts")
+        return {row["name"]: row["config_json"] for row in cursor}
+
+    def delete_account(self, name: str) -> None:
+        with self.conn:
+            self.conn.execute("DELETE FROM accounts WHERE name = ?", (name,))
 
     def close(self):
         """Close database connection."""

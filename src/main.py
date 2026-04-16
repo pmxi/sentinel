@@ -1,59 +1,53 @@
 import sys
 
-from src.monitor import EmailMonitor
 from src.classifier.email_classifier import EmailClassifier
 from src.config import settings
 from src.database import EmailDatabase
-from src.logging_config import get_logger
 from src.email.mail_config import MailboxesConfig
-from src.notify.telegram_notifier import TelegramNotifier
+from src.logging_config import get_logger
+from src.monitor import EmailMonitor
 from src.notify.telegram_email_notifier import TelegramEmailNotifier
+from src.notify.telegram_notifier import TelegramNotifier
 
 logger = get_logger(__name__)
 
 
 def main():
-    """Main entry point."""
+    """Run the email monitor daemon."""
 
     logger.info("Sentinel Email Monitor Starting")
-    logger.info(f"Log level: {settings.LOG_LEVEL}")
-    logger.info(f"Log directory: {settings.LOG_DIR}")
 
     try:
-        # Validate configuration
-        logger.debug("Validating configuration")
-        settings.validate()
-        logger.debug("Configuration validation successful")
-
-        # Load mailbox configuration
-        logger.debug("Loading mailbox configuration")
-        mailboxes_config = MailboxesConfig.from_yaml()
-        logger.debug("Mailbox configuration loaded successfully")
-
-        # Initialize database
-        logger.debug(f"Initializing database at {settings.DATABASE_PATH}")
         database = EmailDatabase(settings.DATABASE_PATH)
-        logger.debug("Database initialized successfully")
 
-        # Initialize classifier
+        logger.debug("Loading settings from database")
+        settings.load(database)
+        settings.validate()
+
+        logger.info(f"Log level: {settings.LOG_LEVEL}")
+        logger.info(f"Log directory: {settings.LOG_DIR}")
+
+        logger.debug("Loading mailbox configuration from database")
+        mailboxes_config = MailboxesConfig.from_db(database)
+        if not mailboxes_config.get_enabled_accounts():
+            raise ValueError(
+                "No enabled mail accounts configured. Run 'sentinel account add'."
+            )
+
         logger.debug("Initializing email classifier")
         classifier = EmailClassifier()
-        logger.debug("Email classifier initialized successfully")
 
-        # Initialize notifier
-        logger.debug("Initializing Telegram notifier")
-        
         if not settings.TELEGRAM_BOT_TOKEN or not settings.TELEGRAM_CHAT_ID:
-            raise ValueError("Telegram credentials not configured. Please set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID.")
-            
+            raise ValueError(
+                "Telegram credentials not configured. Run 'sentinel init'."
+            )
+
         notifier = TelegramNotifier(
             bot_token=settings.TELEGRAM_BOT_TOKEN,
-            chat_id=settings.TELEGRAM_CHAT_ID
+            chat_id=settings.TELEGRAM_CHAT_ID,
         )
         email_notifier = TelegramEmailNotifier(notifier)
-        logger.debug("Telegram notifier initialized successfully")
 
-        # Create and run monitor
         monitor = EmailMonitor(mailboxes_config, classifier, email_notifier, database)
         monitor.run()
 
