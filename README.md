@@ -111,6 +111,19 @@ The first run will complete any outstanding OAuth flows (Gmail / MS Graph
 open a browser), then begin polling. Refreshed tokens are written back to
 the database automatically.
 
+### Web UI (optional)
+
+For a browser-based view of the daemon's status and a place to edit
+settings / classification notes / toggle accounts, run:
+
+```bash
+uv run sentinel web
+```
+
+Binds 127.0.0.1:8765 by default (`--host` / `--port` to override). No
+auth — keep it on localhost. Changes to app settings or accounts take
+effect at the next daemon restart.
+
 ### Configuring the database location
 
 By default the database lives at `./sentinel.db`. Override with:
