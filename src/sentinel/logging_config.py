@@ -1,84 +1,74 @@
-"""Centralized logging configuration for Sentinel."""
+"""Centralized logging configuration for Sentinel.
+
+Timestamps are UTC everywhere — no per-host timezone drift when the daemon
+runs on servers in one tz and someone reads the logs from another.
+"""
 
 import logging
 import logging.handlers
 import os
+import time
 from pathlib import Path
 from typing import Optional
 
-# Default formats
-FILE_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(funcName)s() - %(message)s"
-CONSOLE_FORMAT = FILE_FORMAT
+# File: full detail for debugging / grep — ISO 8601 UTC with milliseconds.
+FILE_FORMAT = "%(asctime)s.%(msecs)03dZ %(levelname)-5s %(name)s %(filename)s:%(lineno)d — %(message)s"
+FILE_DATEFMT = "%Y-%m-%dT%H:%M:%S"
 
-# Global file handler to share across all loggers
-_file_handler = None
+# Console: terse, same UTC tz as the file (short HH:MM:SSZ).
+CONSOLE_FORMAT = "%(asctime)sZ %(levelname)-5s %(name)s: %(message)s"
+CONSOLE_DATEFMT = "%H:%M:%S"
+
+
+class _UTCFormatter(logging.Formatter):
+    """Formatter that emits timestamps in UTC regardless of host timezone."""
+
+    converter = time.gmtime
+
+
+_file_handler: Optional[logging.Handler] = None
 
 
 def _get_or_create_file_handler(log_dir: Optional[str] = None) -> logging.Handler:
-    """Get or create the shared file handler for all modules."""
+    """Get or create the shared rotating file handler (10MB × 5 backups)."""
     global _file_handler
 
     if _file_handler is None:
-        # Get log directory from environment or use default
         log_dir = log_dir or os.getenv("SENTINEL_LOG_DIR", "logs")
-        
-        # Create log directory
         log_path = Path(log_dir)
         log_path.mkdir(parents=True, exist_ok=True)
-
-        # Single log file for entire application
         file_path = log_path / "sentinel.log"
 
-        # Rotating file handler with sensible defaults
         _file_handler = logging.handlers.RotatingFileHandler(
-            file_path, maxBytes=10 * 1024 * 1024, backupCount=5  # 10MB, 5 backups
+            file_path, maxBytes=10 * 1024 * 1024, backupCount=5
         )
-        _file_handler.setLevel(logging.DEBUG)  # File gets all details
-        file_formatter = logging.Formatter(FILE_FORMAT)
-        _file_handler.setFormatter(file_formatter)
+        _file_handler.setLevel(logging.DEBUG)  # File always captures full detail.
+        _file_handler.setFormatter(_UTCFormatter(FILE_FORMAT, datefmt=FILE_DATEFMT))
 
     return _file_handler
 
 
-def setup_logging(
-    name: str,
-    level: Optional[str] = None,
-) -> logging.Logger:
+def setup_logging(name: str, level: Optional[str] = None) -> logging.Logger:
+    """Configure a logger with a terse UTC console handler and the shared file handler.
+
+    Environment variables:
+        LOG_LEVEL (default INFO) — console level; file is always DEBUG.
+        SENTINEL_LOG_DIR (default 'logs') — directory for sentinel.log.
     """
-    Set up logging configuration for a module.
+    log_level = (level or os.getenv("LOG_LEVEL", "INFO")).upper()
 
-    Args:
-        name: Logger name. This is typically the module name.
-        level: Log level (DEBUG, INFO, WARNING, ERROR, CRITICAL) this overrides the envvar LOG_LEVEL
-
-    Returns:
-        Configured logger instance
-    
-    Environment Variables:
-        LOG_LEVEL: Set logging level (default: INFO)
-        SENTINEL_LOG_DIR: Set log directory (default: logs)
-    """
-    # Get log level from environment or parameter
-    log_level = level or os.getenv("LOG_LEVEL", "INFO")
-
-    # Create logger
     logger = logging.getLogger(name)
-    logger.setLevel(getattr(logging, log_level.upper()))
+    logger.setLevel(getattr(logging, log_level))
 
-    # Prevent duplicate handlers
     if logger.handlers:
         return logger
 
-    # Console handler
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(getattr(logging, log_level.upper()))
-    console_formatter = logging.Formatter(CONSOLE_FORMAT, datefmt="%H:%M:%S")
-    console_handler.setFormatter(console_formatter)
+    console_handler.setLevel(getattr(logging, log_level))
+    console_handler.setFormatter(_UTCFormatter(CONSOLE_FORMAT, datefmt=CONSOLE_DATEFMT))
     logger.addHandler(console_handler)
 
-    # File handler uses the shared handler
-    file_handler = _get_or_create_file_handler()
-    logger.addHandler(file_handler)
+    logger.addHandler(_get_or_create_file_handler())
 
     return logger
 
