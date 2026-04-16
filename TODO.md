@@ -13,13 +13,10 @@ Everything known to be outstanding. Priorities are rough; re-order as needed.
   today. MSGraph messages have a `webLink` field; IMAP can't produce a true
   deep link, but can fall back to a provider-specific webmail URL where
   configured.
-- **Confidence in notifications.** A subtle footer line (e.g.
-  `confidence 0.92`) so obviously-wrong classifications are easier to spot
-  and threshold-tune.
 - **Persist classification results.** Today they're thrown away after the
-  notifier call. Add `priority`, `confidence`, `summary` columns to
-  `processed_emails` so history is queryable — useful for debugging and a
-  precondition for any future "review my recent classifications" UI.
+  notifier call. Add `priority`, `summary` columns to `processed_emails`
+  so history is queryable — useful for debugging and a precondition for
+  any future "review my recent classifications" UI.
 
 ## Correctness / hygiene
 

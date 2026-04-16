@@ -5,7 +5,7 @@ from enum import Enum
 from typing import Optional
 
 from openai import OpenAI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from sentinel.config import settings
 from sentinel.email.models import EmailData
@@ -23,20 +23,15 @@ class ClassificationResult:
     """Result of email classification — clean interface for consumers."""
 
     priority: EmailPriority
-    confidence: float
     reasoning: str
     summary: Optional[str] = None
 
     def is_important(self) -> bool:
         return self.priority == EmailPriority.IMPORTANT
 
-    def is_high_confidence(self) -> bool:
-        return self.confidence >= 0.8
-
     def __str__(self) -> str:
         return (
             f"Priority: {self.priority.value.capitalize()}\n"
-            f"Confidence: {self.confidence:.2f}\n"
             f"Reasoning: {self.reasoning}\n"
             f"Summary: {self.summary or 'N/A'}"
         )
@@ -46,14 +41,12 @@ class _ClassificationResponse(BaseModel):
     """Pydantic schema handed to OpenAI's structured-output parser."""
 
     priority: EmailPriority
-    confidence: float = Field(..., ge=0.0, le=1.0)
     reasoning: str
     summary: str
 
     def to_result(self) -> ClassificationResult:
         return ClassificationResult(
             priority=self.priority,
-            confidence=self.confidence,
             reasoning=self.reasoning,
             summary=self.summary,
         )
@@ -97,7 +90,6 @@ EMAIL TO CLASSIFY:
 
 Return:
 - priority: "important" or "normal"
-- confidence: 0.0-1.0
 - reasoning: brief explanation
 - summary: concise 140-character summary
 """
