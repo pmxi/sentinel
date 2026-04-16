@@ -9,6 +9,15 @@ from pydantic import BaseModel
 
 from sentinel.config import settings
 from sentinel.email.models import EmailData
+from sentinel.logging_config import get_logger
+
+logger = get_logger(__name__)
+
+# Hard cap on how much of an email body we hand to the LLM. Sized generously
+# so legitimate long threads (~30KB) go through untouched; bigger than this is
+# essentially always inline-base64 attachments, bloated HTML newsletters, or
+# malformed MIME. Truncation is logged at WARNING so it's observable.
+_MAX_EMAIL_BODY_CHARS = 50_000
 
 
 class EmailPriority(str, Enum):
@@ -75,6 +84,7 @@ class EmailClassifier:
     def _create_classification_prompt(self, email: EmailData) -> str:
         extra = settings.CLASSIFICATION_NOTES.strip()
         extra_block = f"\nADDITIONAL NOTES FROM THE USER (take these seriously):\n{extra}\n" if extra else ""
+        email_text = self._render_email_for_llm(email)
         return f"""
 You are an email classification assistant. Analyze the following email and classify it as IMPORTANT or NORMAL.
 
@@ -88,10 +98,37 @@ NORMAL:
 - Everything else, including newsletters, mass mailings, and apparent scams
 {extra_block}
 EMAIL TO CLASSIFY:
-{email}
+{email_text}
 
 Return:
 - priority: "important" or "normal"
 - reasoning: brief explanation
 - summary: concise 140-character summary
 """
+
+    def _render_email_for_llm(self, email: EmailData) -> str:
+        """Render the email as plaintext for the prompt, truncating the body
+        if it's pathologically long. Headers always go through in full."""
+        body = email.body
+        original_size = len(body)
+        if original_size > _MAX_EMAIL_BODY_CHARS:
+            body = (
+                body[:_MAX_EMAIL_BODY_CHARS]
+                + f"\n\n[... truncated from {original_size:,} chars ...]"
+            )
+            logger.warning(
+                "Email body truncated for LLM: id=%s from=%s subject=%r original=%d chars limit=%d chars",
+                email.id,
+                email.sender[:80],
+                email.subject[:80],
+                original_size,
+                _MAX_EMAIL_BODY_CHARS,
+            )
+
+        return (
+            f"From: {email.sender}\n"
+            f"To: {email.recipient}\n"
+            f"Subject: {email.subject}\n"
+            f"Date: {email.received_date}\n\n"
+            f"{body}"
+        )
