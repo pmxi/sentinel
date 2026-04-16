@@ -1,324 +1,252 @@
-"""Continuous email monitoring script."""
+"""Continuous multi-tenant email-monitoring loop.
+
+One daemon iterates over every user in the database on each tick:
+  - loads the user's mail accounts and per-user preferences
+  - builds a notifier from their preferences (Telegram for now)
+  - fetches new mail from each enabled account
+  - classifies via the shared OpenAI client, passing the user's notes
+  - notifies on IMPORTANT, no-ops otherwise
+  - records processing in the per-user ledger
+
+A single user's failure (bad OAuth, offline IMAP, classifier error) does
+not halt the loop or affect other users — it's logged and the tick moves on.
+"""
 
 import signal
 import time
 from datetime import datetime, timedelta
 from types import FrameType
-from typing import List, Optional
+from typing import Any, Dict, Optional
 
-from sentinel.classifier.email_classifier import ClassificationResult, EmailClassifier
+from sentinel.classifier.email_classifier import (
+    ClassificationResult,
+    EmailClassifier,
+)
 from sentinel.config import settings
 from sentinel.database import EmailDatabase
 from sentinel.email.email_client_base import EmailClient
 from sentinel.email.email_client_factory import EmailClientFactory
-from sentinel.email.gmail.models import EmailData
-from sentinel.email.mail_config import MailAccountConfig, MailboxesConfig
+from sentinel.email.mail_config import MailboxesConfig
+from sentinel.email.models import EmailData
 from sentinel.logging_config import get_logger
 from sentinel.notify.email_notifier import EmailNotifier
+from sentinel.notify.telegram_email_notifier import TelegramEmailNotifier
+from sentinel.notify.telegram_notifier import TelegramNotifier
+from sentinel.user_settings import UserSettings
 
-# Set up logger for this module
 logger = get_logger("sentinel.monitor")
 
 
 class EmailMonitor:
-    db: EmailDatabase
-    mail_config: MailboxesConfig
-    classifier: EmailClassifier
-    notifier: EmailNotifier
-    email_clients: List[EmailClient]
-    running: bool
-    """Monitors all configured inboxes for new emails and processes them."""
+    """Top-level daemon. Iterates users and processes their mail on each tick."""
 
-    def __init__(
-        self,
-        mailboxes_config: MailboxesConfig,
-        classifier: EmailClassifier,
-        notifier: EmailNotifier,
-        database: EmailDatabase,
-    ):
-        """Initialize the email monitor.
-
-        Args:
-            mailboxes_config: The mailbox configuration to use for monitoring.
-            classifier: The email classifier to use for categorizing emails.
-            notifier: The notifier to use for sending alerts about important emails.
-            database: The database to use for tracking processed emails and monitoring state.
-        """
+    def __init__(self, database: EmailDatabase):
         logger.info("Initializing EmailMonitor")
+        self.db = database
+        self.classifier = EmailClassifier()
         self.running = True
 
-        self.db = database
-        self.mail_config = mailboxes_config
-        self.classifier = classifier
-        self.notifier = notifier
+        signal.signal(signal.SIGINT, self._signal_handler)
+        signal.signal(signal.SIGTERM, self._signal_handler)
 
-        logger.debug("Initializing email clients")
-        try:
-            self.email_clients: List[EmailClient] = []
-
-            # Initialize clients for all enabled accounts
-            for (
-                account_name,
-                account_config,
-            ) in self.mail_config.get_enabled_accounts().items():
-                try:
-                    client = EmailClientFactory.create(
-                        account_name, account_config, db=self.db
-                    )
-                    self.email_clients.append(client)
-                    logger.info(
-                        f"Initialized {account_config.provider} client for account '{account_name}'"
-                    )
-                except Exception as e:
-                    logger.warning(
-                        f"Failed to initialize client for account '{account_name}': {e}"
-                    )
-
-            # This is true if email_clients is empty.
-            if not self.email_clients:
-                raise Exception("No email clients could be initialized")
-
-            # Set up signal handler for graceful shutdown
-            signal.signal(signal.SIGINT, self._signal_handler)
-            signal.signal(signal.SIGTERM, self._signal_handler)
-
-            logger.info("EmailMonitor initialization complete")
-
-        except Exception as e:
-            logger.critical(f"Failed to initialize EmailMonitor: {e}", exc_info=True)
-            raise
+        logger.info("EmailMonitor initialization complete")
 
     def _signal_handler(self, signum: int, frame: Optional[FrameType]) -> None:
-        """Handle shutdown signals gracefully."""
         logger.info(f"Received signal {signum}. Initiating graceful shutdown...")
         self.running = False
 
-    def _initialize_monitoring(self) -> datetime:
-        """Initialize monitoring timestamps and return the last check time."""
-        # Initialize monitoring start time if this is the first run
-        monitoring_start = self.db.get_monitoring_start_time()
-        if not monitoring_start:
-            monitoring_start = datetime.now()
-            self.db.set_monitoring_start_time(monitoring_start)
-            logger.info(
-                f"First run detected. Setting monitoring start time to {monitoring_start}"
-            )
-            logger.info("Will only process emails received after this timestamp")
-        else:
-            logger.info(f"Resuming monitoring. Original start time: {monitoring_start}")
-
-        # Get the last check time or use monitoring start time
-        last_check = self.db.get_last_check_time() or monitoring_start
-        logger.info(f"Last check timestamp: {last_check}")
-
-        processed_count = self.db.get_processed_count()
-        logger.info(f"Total emails processed in previous runs: {processed_count}")
-
-        return last_check
-
     def run(self) -> None:
-        """Main monitoring loop."""
-        logger.info("Starting Sentinel Email Monitor")
         logger.info(
-            f"Configuration: poll_interval={settings.POLL_INTERVAL_SECONDS}s, "
-            f"process_only_unread={settings.PROCESS_ONLY_UNREAD}, "
-            f"max_lookback={settings.MAX_LOOKBACK_HOURS}h"
+            "Starting Sentinel monitor: poll=%ss, max_lookback=%sh",
+            settings.POLL_INTERVAL_SECONDS,
+            settings.MAX_LOOKBACK_HOURS,
         )
-
-        last_check = self._initialize_monitoring()
-        logger.debug("Entering main monitoring loop")
 
         while self.running:
             try:
-                self._check_and_process_emails(last_check)
-
-                # Update last check time
-                last_check = datetime.now()
-                self.db.update_last_check_time(last_check)
-                logger.debug(f"Updated last check time to {last_check}")
-
-                if self.running:
-                    logger.debug(
-                        f"Sleeping for {settings.POLL_INTERVAL_SECONDS} seconds"
-                    )
-                    time.sleep(settings.POLL_INTERVAL_SECONDS)
-
+                self._tick()
             except KeyboardInterrupt:
                 logger.info("Keyboard interrupt received")
                 break
             except Exception as e:
-                logger.error(f"Unexpected error in monitoring loop: {e}", exc_info=True)
-                if self.running:
-                    logger.warning(
-                        f"Will retry in {settings.POLL_INTERVAL_SECONDS} seconds"
-                    )
-                    time.sleep(settings.POLL_INTERVAL_SECONDS)
+                logger.error(f"Unexpected error in monitor tick: {e}", exc_info=True)
 
-        logger.info("Monitoring loop ended. Cleaning up...")
+            if self.running:
+                time.sleep(settings.POLL_INTERVAL_SECONDS)
+
+        logger.info("Monitor loop ended. Cleaning up...")
         self.db.close()
         logger.info("Monitor stopped successfully")
 
-    def _check_and_process_emails(self, after_timestamp: datetime) -> int:
-        """Check for new emails and process them.
+    def _tick(self) -> None:
+        users = self.db.list_users()
+        if not users:
+            logger.debug("No users yet; skipping tick")
+            return
+        for user in users:
+            try:
+                self._process_user(user)
+            except Exception as e:
+                logger.error(
+                    f"Error processing user_id={user['id']} ({user['email']}): {e}",
+                    exc_info=True,
+                )
 
-        Returns:
-            Number of emails processed
-        """
-        # Apply max lookback limit
-        max_lookback = datetime.now() - timedelta(hours=settings.MAX_LOOKBACK_HOURS)
-        if after_timestamp < max_lookback:
-            logger.debug(
-                f"Adjusting timestamp from {after_timestamp} to max lookback {max_lookback}"
+    def _process_user(self, user: Dict[str, Any]) -> None:
+        user_id = int(user["id"])
+        user_settings = UserSettings.load(self.db, user_id)
+        mailboxes = MailboxesConfig.from_db(self.db, user_id)
+        enabled = mailboxes.get_enabled_accounts()
+        if not enabled:
+            logger.debug(f"user_id={user_id} has no enabled accounts")
+            return
+
+        notifier = self._build_notifier(user_settings)
+        if notifier is None:
+            logger.warning(
+                f"user_id={user_id} ({user['email']}) has no notification channel configured; "
+                "their mail will be classified but IMPORTANT alerts have nowhere to go"
             )
-            after_timestamp = max_lookback
 
-        logger.info(f"Checking for new emails after {after_timestamp}")
+        last_check = self._initialize_monitoring(user_id)
+        after_timestamp = self._clamp_to_max_lookback(last_check)
 
-        try:
-            processed_count = 0
-            total_new_emails = 0
-
-            # Process emails grouped by client
-            for client in self.email_clients:
-                emails = self._fetch_emails_from_client(client, after_timestamp)
-
-                # Filter out already processed emails
-                new_emails = [
-                    email
-                    for email in emails
-                    if not self.db.is_email_processed(email.id)
-                ]
-
-                if new_emails:
-                    logger.info(
-                        f"Found {len(new_emails)} new email(s) from {client.provider_type}"
-                    )
-                    total_new_emails += len(new_emails)
-
-                    for email in new_emails:
-                        if self._process_email(client, email):
-                            processed_count += 1
-
-            if total_new_emails == 0:
-                logger.info("No new emails to process")
-            else:
-                logger.info(
-                    f"Successfully processed {processed_count}/{total_new_emails} emails"
+        for account_name, account_config in enabled.items():
+            try:
+                client = EmailClientFactory.create(
+                    account_name, account_config, db=self.db, user_id=user_id
+                )
+                self._process_account(
+                    user_id=user_id,
+                    user_notes=user_settings.CLASSIFICATION_NOTES,
+                    client=client,
+                    notifier=notifier,
+                    after_timestamp=after_timestamp,
+                )
+            except Exception as e:
+                logger.warning(
+                    f"Account '{account_name}' for user_id={user_id} failed: {e}",
+                    exc_info=True,
                 )
 
-            return processed_count
+        self.db.update_last_check_time(user_id, datetime.now())
 
+    def _build_notifier(self, user_settings: UserSettings) -> Optional[EmailNotifier]:
+        if user_settings.has_telegram():
+            return TelegramEmailNotifier(
+                TelegramNotifier(
+                    bot_token=user_settings.TELEGRAM_BOT_TOKEN,
+                    chat_id=user_settings.TELEGRAM_CHAT_ID,
+                )
+            )
+        # Email-as-notification-channel (via Resend) to be wired up later;
+        # for now Telegram is the only option.
+        return None
+
+    def _initialize_monitoring(self, user_id: int) -> datetime:
+        monitoring_start = self.db.get_monitoring_start_time(user_id)
+        if not monitoring_start:
+            monitoring_start = datetime.now()
+            self.db.set_monitoring_start_time(user_id, monitoring_start)
+            logger.info(
+                f"First tick for user_id={user_id}. Setting monitoring start to {monitoring_start}"
+            )
+        return self.db.get_last_check_time(user_id) or monitoring_start
+
+    def _clamp_to_max_lookback(self, after_timestamp: datetime) -> datetime:
+        max_lookback = datetime.now() - timedelta(hours=settings.MAX_LOOKBACK_HOURS)
+        return max(after_timestamp, max_lookback)
+
+    def _process_account(
+        self,
+        user_id: int,
+        user_notes: str,
+        client: EmailClient,
+        notifier: Optional[EmailNotifier],
+        after_timestamp: datetime,
+    ) -> None:
+        account_config = client.config
+        process_unread = account_config.settings.process_only_unread
+
+        try:
+            emails = client.get_emails_after_timestamp(
+                after_timestamp, unread_only=process_unread
+            )
         except Exception as e:
-            logger.error(f"Error checking/processing emails: {e}", exc_info=True)
-            return 0
+            logger.error(
+                f"Error fetching emails from {client.provider_type} (user_id={user_id}): {e}"
+            )
+            return
 
-    def _process_email(self, client: EmailClient, email: EmailData) -> bool:
-        """Process a single email.
+        new_emails = [
+            email for email in emails if not self.db.is_email_processed(user_id, email.id)
+        ]
+        if not new_emails:
+            return
 
-        Returns:
-            True if successfully processed, False otherwise
-        """
         logger.info(
-            f"Processing email: provider={email.provider}, id={email.id}, "
-            f"from={email.sender}, subject={email.subject[:50]}..."
+            f"user_id={user_id}: {len(new_emails)} new email(s) from {client.provider_type}"
         )
-        logger.debug(
-            f"Email details: date={email.received_date}, body_preview={email.body[:100] if email.body else 'No body'}..."
-        )
+        for email in new_emails:
+            self._process_email(user_id, user_notes, client, notifier, email)
 
+    def _process_email(
+        self,
+        user_id: int,
+        user_notes: str,
+        client: EmailClient,
+        notifier: Optional[EmailNotifier],
+        email: EmailData,
+    ) -> None:
+        logger.info(
+            f"Processing user_id={user_id} provider={email.provider} id={email.id} "
+            f"from={email.sender[:60]} subject={email.subject[:60]!r}"
+        )
         try:
-            # Classify the email
-            logger.debug("Starting email classification")
-            classification = self.classifier.classify_email(email)
-            summary = classification.summary or "No summary available"
-            logger.info(f"Classification complete. Summary: {summary[:100]}...")
-            logger.debug(f"Full classification result: {classification}")
+            classification = self.classifier.classify_email(email, notes=user_notes)
+            logger.info(
+                f"  → {classification.priority.value.upper()}: {(classification.summary or '')[:100]}"
+            )
 
-            # Take action based on classification
-            if classification.is_important():
-                logger.info("Email classified as IMPORTANT. Sending notification...")
-                self._send_notification(email, classification)
-            else:
-                logger.info(
-                    f"Email classified as {classification.priority.value.upper()}. No action needed."
-                )
+            if classification.is_important() and notifier is not None:
+                self._send_notification(notifier, email, classification)
 
-            # Mark as read after processing (if enabled)
             if not email.is_read:
                 try:
                     client.mark_as_read(email.id)
-                    logger.debug(f"Marked email {email.id} as read")
                 except Exception as e:
-                    logger.warning(f"Failed to mark email as read: {e}")
+                    logger.warning(f"Failed to mark {email.id} as read: {e}")
 
-            # Mark as processed regardless of notification status
-            logger.debug(f"Marking email {email.id} as processed in database")
             self.db.mark_email_processed(
-                email.id,
+                user_id=user_id,
+                email_id=email.id,
                 provider=email.provider,
                 subject=email.subject,
                 sender=email.sender,
             )
-            logger.info(f"Email {email.id} successfully processed and recorded")
-            return True
-
         except Exception as e:
             logger.error(f"Error processing email {email.id}: {e}", exc_info=True)
-
-            # Still mark as processed to avoid retry loops
+            # Record it anyway so we don't retry-loop on a broken message.
             try:
-                logger.warning(
-                    f"Marking email {email.id} as processed despite error to avoid retry loops"
+                self.db.mark_email_processed(
+                    user_id=user_id,
+                    email_id=email.id,
+                    provider=email.provider,
                 )
-                self.db.mark_email_processed(email.id, provider=email.provider)
             except Exception as db_error:
-                logger.error(
-                    f"Failed to mark email as processed: {db_error}", exc_info=True
-                )
-
-            return False
-
-    def _get_account_config(self, account_name: str) -> Optional[MailAccountConfig]:
-        """Get account configuration by account name."""
-        return self.mail_config.accounts.get(account_name)
-
-    def _fetch_emails_from_client(
-        self, client: EmailClient, after_timestamp: datetime
-    ) -> List[EmailData]:
-        """Fetch emails from a single client."""
-        # Get account-specific settings
-        account_config = self._get_account_config(client.account_name)
-        process_unread = (
-            account_config.settings.process_only_unread
-            if account_config
-            else settings.PROCESS_ONLY_UNREAD
-        )
-
-        logger.debug(
-            f"Fetching emails from {client.provider_type} with params: "
-            f"after_timestamp={after_timestamp}, unread_only={process_unread}"
-        )
-
-        try:
-            client_emails = client.get_emails_after_timestamp(
-                after_timestamp, unread_only=process_unread
-            )
-            logger.debug(f"{client.provider_type} returned {len(client_emails)} emails")
-            return client_emails
-        except Exception as e:
-            logger.error(f"Error fetching emails from {client.provider_type}: {e}")
-            return []
+                logger.error(f"Failed to mark email as processed: {db_error}")
 
     def _send_notification(
-        self, email: EmailData, classification: ClassificationResult
+        self,
+        notifier: EmailNotifier,
+        email: EmailData,
+        classification: ClassificationResult,
     ) -> None:
-        """Send notification for an important email."""
         try:
-            message_id = self.notifier.notify(email, classification)
-
+            message_id = notifier.notify(email, classification)
             if message_id:
-                logger.info(f"Notification sent successfully. Message ID: {message_id}")
+                logger.info(f"Notification sent. Message ID: {message_id}")
             else:
-                logger.warning("Failed to send notification for important email")
+                logger.warning("Notifier returned no message id (send likely failed)")
         except Exception as e:
             logger.error(f"Error sending notification: {e}")

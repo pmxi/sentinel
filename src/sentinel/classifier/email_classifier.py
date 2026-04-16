@@ -69,10 +69,14 @@ class EmailClassifier:
             raise ValueError("LLM_API_KEY not found.")
         self.client = OpenAI(api_key=settings.LLM_API_KEY)
 
-    def classify_email(self, email: EmailData) -> ClassificationResult:
+    def classify_email(
+        self, email: EmailData, notes: str = ""
+    ) -> ClassificationResult:
+        """Classify one email. `notes` is the per-user CLASSIFICATION_NOTES
+        string, appended to the base prompt."""
         response = self.client.responses.parse(
             model=settings.LLM_MODEL,
-            input=self._create_classification_prompt(email),
+            input=self._create_classification_prompt(email, notes),
             text_format=_ClassificationResponse,
         )
 
@@ -81,8 +85,8 @@ class EmailClassifier:
             raise ValueError("OpenAI Responses API returned no parsed output")
         return parsed.to_result()
 
-    def _create_classification_prompt(self, email: EmailData) -> str:
-        extra = settings.CLASSIFICATION_NOTES.strip()
+    def _create_classification_prompt(self, email: EmailData, notes: str = "") -> str:
+        extra = (notes or "").strip()
         extra_block = f"\nADDITIONAL NOTES FROM THE USER (take these seriously):\n{extra}\n" if extra else ""
         email_text = self._render_email_for_llm(email)
         return f"""

@@ -1,63 +1,131 @@
-"""Flask web app for configuring and monitoring Sentinel at runtime.
+"""Flask web app — multi-tenant signup/login + per-user configuration.
 
-The app reads/writes the same SQLite database the daemon uses. Changes to
-app_settings and account configs take effect the next time the daemon
-reloads them — which today only happens on daemon restart, since
-Settings.load(db) and MailboxesConfig.from_db(db) are called once at
-startup. A running daemon will pick up toggled accounts and updated
-notes only after a restart.
+Signup/login goes through Google OAuth (identity scopes: openid email
+profile — no Gmail access). Users land on a dashboard showing their own
+status and classification history, manage their own Telegram / mail
+accounts / classification notes, and never see other users' data.
 
-Bind is 127.0.0.1 by default. There's no auth layer; don't expose to
-the public internet.
+Operator-level settings (LLM key, Resend, etc.) are NOT editable via
+this UI — the operator configures them via `sentinel init` at deploy
+time. End users only see their own preferences.
 """
 
 from __future__ import annotations
 
 import json
 from datetime import datetime
-from typing import Any, Dict, List
+from functools import wraps
+from typing import Any, Callable, Dict, List, Optional
 
-from flask import Flask, redirect, render_template, request, url_for
+from authlib.integrations.flask_client import OAuth
+from flask import (
+    Flask,
+    abort,
+    g,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
 
 from sentinel.config import Settings, settings
 from sentinel.database import EmailDatabase
 from sentinel.email.mail_config import MailAccountConfig
+from sentinel.user_settings import UserSettings
 
 
-# Settings exposed in the UI. Order here is the order they appear on the form.
-# (key, label, input type — "text" | "password" | "number")
-EDITABLE_SETTINGS: List[tuple[str, str, str]] = [
-    ("LLM_API_KEY", "OpenAI API key", "password"),
-    ("LLM_MODEL", "OpenAI model", "text"),
-    ("TELEGRAM_BOT_TOKEN", "Telegram bot token", "password"),
-    ("TELEGRAM_CHAT_ID", "Telegram chat ID", "text"),
-    ("RESEND_API_KEY", "Resend API key", "password"),
-    ("EMAIL_FROM_ADDRESS", "Email From address", "text"),
-    ("EMAIL_FROM_NAME", "Email From name", "text"),
-    ("POLL_INTERVAL_SECONDS", "Poll interval (seconds)", "number"),
-    ("MAX_LOOKBACK_HOURS", "Max lookback (hours)", "number"),
-    ("LOG_LEVEL", "Log level", "text"),
-]
-
-SECRET_KEYS = {"LLM_API_KEY", "TELEGRAM_BOT_TOKEN", "RESEND_API_KEY"}
+GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
 
 
-def create_app(db_path: str | None = None) -> Flask:
+def create_app(db_path: Optional[str] = None) -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config["DB_PATH"] = db_path or settings.DATABASE_PATH
+    _bootstrap_settings(app)
+
+    app.secret_key = Settings.SESSION_SECRET
+
+    oauth = OAuth(app)
+    oauth.register(
+        name="google",
+        client_id=Settings.GOOGLE_CLIENT_ID,
+        client_secret=Settings.GOOGLE_CLIENT_SECRET,
+        server_metadata_url=GOOGLE_DISCOVERY_URL,
+        client_kwargs={"scope": "openid email profile"},
+    )
 
     def open_db() -> EmailDatabase:
         return EmailDatabase(app.config["DB_PATH"])
 
-    @app.route("/")
-    def dashboard():
+    def current_user_id() -> Optional[int]:
+        return session.get("user_id")
+
+    def login_required(view: Callable) -> Callable:
+        @wraps(view)
+        def wrapped(*args, **kwargs):
+            if current_user_id() is None:
+                return redirect(url_for("login"))
+            return view(*args, **kwargs)
+        return wrapped
+
+    @app.context_processor
+    def inject_current_user():
+        uid = current_user_id()
+        if uid is None:
+            return {"current_user": None}
+        return {"current_user": {"id": uid, "email": session.get("email"), "name": session.get("name")}}
+
+    # ------------------------------------------------------------------ auth
+
+    @app.route("/login")
+    def login():
+        return render_template("login.html")
+
+    @app.route("/auth/google/start")
+    def auth_google_start():
+        redirect_uri = url_for("auth_google_callback", _external=True)
+        return oauth.google.authorize_redirect(redirect_uri)
+
+    @app.route("/auth/google/callback")
+    def auth_google_callback():
+        token = oauth.google.authorize_access_token()
+        userinfo = token.get("userinfo") or oauth.google.parse_id_token(token, None)
+        if not userinfo or "sub" not in userinfo:
+            abort(400, "Google did not return a user identity")
+
         db = open_db()
         try:
-            processed_count = db.get_processed_count()
-            last_check = db.get_last_check_time()
-            monitoring_start = db.get_monitoring_start_time()
-            recent = _fetch_recent_processed(db, limit=25)
-            accounts_count = len(db.list_accounts())
+            user_id = db.upsert_user(
+                google_sub=userinfo["sub"],
+                email=userinfo.get("email", ""),
+                name=userinfo.get("name"),
+            )
+        finally:
+            db.close()
+
+        session["user_id"] = user_id
+        session["email"] = userinfo.get("email", "")
+        session["name"] = userinfo.get("name", "")
+        return redirect(url_for("dashboard"))
+
+    @app.route("/logout", methods=["POST"])
+    def logout():
+        session.clear()
+        return redirect(url_for("login"))
+
+    # ------------------------------------------------------------------ dashboard
+
+    @app.route("/")
+    @login_required
+    def dashboard():
+        uid = current_user_id()
+        db = open_db()
+        try:
+            processed_count = db.get_processed_count(user_id=uid)
+            last_check = db.get_last_check_time(uid)
+            monitoring_start = db.get_monitoring_start_time(uid)
+            recent = _fetch_recent_processed(db, uid, limit=25)
+            accounts_count = len(db.list_accounts(uid))
             health = _daemon_health(last_check)
         finally:
             db.close()
@@ -72,52 +140,64 @@ def create_app(db_path: str | None = None) -> Flask:
             health=health,
         )
 
-    @app.route("/settings", methods=["GET", "POST"])
-    def settings_page():
+    # ------------------------------------------------------------------ preferences (per-user)
+
+    @app.route("/preferences", methods=["GET", "POST"])
+    @login_required
+    def preferences_page():
+        uid = current_user_id()
         db = open_db()
         try:
             if request.method == "POST":
-                for key, _label, _type in EDITABLE_SETTINGS:
+                for key in ("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID", "EMAIL_NOTIFICATION_TO"):
                     raw = request.form.get(key, "").strip()
-                    # For secrets, don't wipe the stored value when the field was left blank.
-                    if not raw and key in SECRET_KEYS:
+                    # For secret-shaped values (bot token) a blank field means "keep the stored value".
+                    is_secret = key == "TELEGRAM_BOT_TOKEN"
+                    if not raw and is_secret:
                         continue
                     if raw:
-                        db.set_app_setting(key, raw)
-                return redirect(url_for("settings_page", saved=1))
+                        db.set_user_setting(uid, key, raw)
+                    else:
+                        db.delete_user_setting(uid, key)
+                return redirect(url_for("preferences_page", saved=1))
 
-            current = db.get_all_app_settings()
-            rows = []
-            for key, label, kind in EDITABLE_SETTINGS:
-                value = current.get(key, "")
-                display = _mask(value) if key in SECRET_KEYS and value else value
-                rows.append({
-                    "key": key,
-                    "label": label,
-                    "type": kind,
-                    "value": "" if key in SECRET_KEYS else value,
-                    "display": display,
-                    "is_secret": key in SECRET_KEYS,
-                    "is_set": bool(value),
-                })
+            stored = db.get_all_user_settings(uid)
+            rows = [
+                {"key": "TELEGRAM_BOT_TOKEN", "label": "Telegram bot token", "type": "password",
+                 "value": "", "display": _mask(stored.get("TELEGRAM_BOT_TOKEN", "")),
+                 "is_secret": True, "is_set": bool(stored.get("TELEGRAM_BOT_TOKEN"))},
+                {"key": "TELEGRAM_CHAT_ID", "label": "Telegram chat ID", "type": "text",
+                 "value": stored.get("TELEGRAM_CHAT_ID", ""), "display": stored.get("TELEGRAM_CHAT_ID", ""),
+                 "is_secret": False, "is_set": bool(stored.get("TELEGRAM_CHAT_ID"))},
+                {"key": "EMAIL_NOTIFICATION_TO", "label": "Notification email (optional, via Resend)", "type": "email",
+                 "value": stored.get("EMAIL_NOTIFICATION_TO", ""), "display": stored.get("EMAIL_NOTIFICATION_TO", ""),
+                 "is_secret": False, "is_set": bool(stored.get("EMAIL_NOTIFICATION_TO"))},
+            ]
             return render_template(
-                "settings.html",
+                "preferences.html",
                 rows=rows,
                 saved=request.args.get("saved") == "1",
             )
         finally:
             db.close()
 
+    # ------------------------------------------------------------------ prompt (per-user)
+
     @app.route("/prompt", methods=["GET", "POST"])
+    @login_required
     def prompt_page():
+        uid = current_user_id()
         db = open_db()
         try:
             if request.method == "POST":
                 notes = request.form.get("CLASSIFICATION_NOTES", "")
-                db.set_app_setting("CLASSIFICATION_NOTES", notes)
+                if notes.strip():
+                    db.set_user_setting(uid, "CLASSIFICATION_NOTES", notes)
+                else:
+                    db.delete_user_setting(uid, "CLASSIFICATION_NOTES")
                 return redirect(url_for("prompt_page", saved=1))
 
-            notes = db.get_app_setting("CLASSIFICATION_NOTES") or ""
+            notes = db.get_user_setting(uid, "CLASSIFICATION_NOTES") or ""
             return render_template(
                 "prompt.html",
                 notes=notes,
@@ -127,35 +207,50 @@ def create_app(db_path: str | None = None) -> Flask:
         finally:
             db.close()
 
+    # ------------------------------------------------------------------ accounts (per-user)
+
     @app.route("/accounts")
+    @login_required
     def accounts_page():
+        uid = current_user_id()
         db = open_db()
         try:
             rows = []
-            for name, raw in db.list_accounts().items():
+            for name, raw in db.list_accounts(uid).items():
                 try:
                     acc = MailAccountConfig.model_validate_json(raw)
-                    rows.append({
-                        "name": name,
-                        "provider": acc.provider,
-                        "enabled": acc.enabled,
-                    })
-                except Exception as e:  # pragma: no cover - defensive
+                    rows.append({"name": name, "provider": acc.provider, "enabled": acc.enabled})
+                except Exception as e:
                     rows.append({"name": name, "provider": "invalid", "enabled": False, "error": str(e)})
             return render_template("accounts.html", accounts=rows)
         finally:
             db.close()
 
     @app.route("/accounts/<name>/toggle", methods=["POST"])
+    @login_required
     def toggle_account(name: str):
+        uid = current_user_id()
         db = open_db()
         try:
-            raw = db.get_account(name)
+            raw = db.get_account(uid, name)
             if not raw:
-                return ("not found", 404)
+                abort(404)
             data = json.loads(raw)
             data["enabled"] = not data.get("enabled", True)
-            db.upsert_account(name, json.dumps(data))
+            db.upsert_account(uid, name, json.dumps(data))
+            return redirect(url_for("accounts_page"))
+        finally:
+            db.close()
+
+    @app.route("/accounts/<name>/delete", methods=["POST"])
+    @login_required
+    def delete_account(name: str):
+        uid = current_user_id()
+        db = open_db()
+        try:
+            if not db.get_account(uid, name):
+                abort(404)
+            db.delete_account(uid, name)
             return redirect(url_for("accounts_page"))
         finally:
             db.close()
@@ -163,15 +258,35 @@ def create_app(db_path: str | None = None) -> Flask:
     return app
 
 
+# ------------------------------------------------------------------ helpers
+
+def _bootstrap_settings(app: Flask) -> None:
+    """Load Settings from the DB once at app creation time so OAuth / session
+    config is available to Authlib and Flask."""
+    db = EmailDatabase(app.config["DB_PATH"])
+    try:
+        Settings.load(db)
+        if not Settings.SESSION_SECRET:
+            raise RuntimeError(
+                "SESSION_SECRET not configured. Run 'sentinel init' first."
+            )
+        if not Settings.GOOGLE_CLIENT_ID or not Settings.GOOGLE_CLIENT_SECRET:
+            raise RuntimeError(
+                "GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not configured. Run 'sentinel init' first."
+            )
+    finally:
+        db.close()
+
+
 def _mask(value: str) -> str:
+    if not value:
+        return ""
     if len(value) <= 6:
         return "•" * len(value)
     return "•" * (len(value) - 4) + value[-4:]
 
 
-def _daemon_health(last_check: datetime | None) -> Dict[str, Any]:
-    """Heuristic: if the daemon wrote a last_check_time within 3x the poll
-    interval, call it healthy. Otherwise stale or never run."""
+def _daemon_health(last_check: Optional[datetime]) -> Dict[str, Any]:
     if last_check is None:
         return {"status": "never run", "ok": False}
     age_s = (datetime.now() - last_check).total_seconds()
@@ -181,17 +296,17 @@ def _daemon_health(last_check: datetime | None) -> Dict[str, Any]:
     return {"status": f"stale (last check {int(age_s)}s ago)", "ok": False}
 
 
-def _fetch_recent_processed(db: EmailDatabase, limit: int = 25) -> List[Dict[str, Any]]:
+def _fetch_recent_processed(db: EmailDatabase, user_id: int, limit: int = 25) -> List[Dict[str, Any]]:
     cursor = db.conn.execute(
         "SELECT email_id, provider, subject, sender, processed_at "
-        "FROM processed_emails ORDER BY processed_at DESC LIMIT ?",
-        (limit,),
+        "FROM processed_emails WHERE user_id = ? "
+        "ORDER BY processed_at DESC LIMIT ?",
+        (user_id, limit),
     )
     return [dict(row) for row in cursor.fetchall()]
 
 
 def _base_prompt_preview() -> str:
-    """Render the base (pre-notes) classifier prompt for display only."""
     return (
         "You are an email classification assistant. "
         "Analyze the following email and classify it as IMPORTANT or NORMAL.\n\n"
@@ -206,7 +321,5 @@ def _base_prompt_preview() -> str:
 
 
 def run(host: str = "127.0.0.1", port: int = 8765, debug: bool = False) -> None:
-    """Start the Flask dev server. Bound to localhost by default; the app has
-    no auth layer, so don't bind to 0.0.0.0 without adding one."""
     app = create_app()
     app.run(host=host, port=port, debug=debug)

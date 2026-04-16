@@ -87,18 +87,18 @@ class MailboxesConfig(BaseModel):
         return {name: acc for name, acc in self.accounts.items() if acc.enabled}
 
     @classmethod
-    def from_db(cls, db: "EmailDatabase") -> "MailboxesConfig":
-        """Load configuration from the accounts table."""
-        rows = db.list_accounts()
+    def from_db(cls, db: "EmailDatabase", user_id: int) -> "MailboxesConfig":
+        """Load a single user's mail-account configuration."""
+        rows = db.list_accounts(user_id)
         accounts: Dict[str, MailAccountConfig] = {}
         for name, config_json in rows.items():
             try:
                 accounts[name] = MailAccountConfig.model_validate_json(config_json)
             except Exception as e:
-                logger.error(f"Failed to parse account '{name}': {e}")
+                logger.error(f"Failed to parse account '{name}' for user_id={user_id}: {e}")
                 raise
         config = cls(accounts=accounts)
-        logger.info(f"Loaded {len(accounts)} mail accounts from database")
+        logger.info(f"Loaded {len(accounts)} mail accounts for user_id={user_id}")
         for name, account in accounts.items():
             logger.info(
                 f"  - {name}: {account.provider} (enabled: {account.enabled})"

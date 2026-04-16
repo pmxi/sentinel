@@ -2,8 +2,8 @@
 {% block title %}Accounts — Sentinel{% endblock %}
 {% block content %}
 <section>
-  <h2>Mail accounts</h2>
-  <p class="hint">To add or remove accounts, use <code>uv run sentinel account add</code> or <code>uv run sentinel account remove &lt;name&gt;</code>.</p>
+  <h2>Your mail accounts</h2>
+  <p class="hint">Adding a mail account opens the provider's OAuth flow (Gmail via IMAP with app password coming soon — currently CLI-only).</p>
   {% if accounts %}
     <table>
       <thead><tr><th>Name</th><th>Provider</th><th>Enabled</th><th></th></tr></thead>
@@ -13,9 +13,13 @@
           <td>{{ a.name }}</td>
           <td>{{ a.provider }}</td>
           <td>{{ "yes" if a.enabled else "no" }}</td>
-          <td>
+          <td class="actions">
             <form method="post" action="{{ url_for('toggle_account', name=a.name) }}">
               <button type="submit">{{ "Disable" if a.enabled else "Enable" }}</button>
+            </form>
+            <form method="post" action="{{ url_for('delete_account', name=a.name) }}"
+                  onsubmit="return confirm('Delete {{ a.name }}? This cannot be undone.');">
+              <button type="submit" class="danger">Delete</button>
             </form>
           </td>
         </tr>
@@ -23,7 +27,7 @@
       </tbody>
     </table>
   {% else %}
-    <p>No accounts configured. Run <code>uv run sentinel account add</code>.</p>
+    <p>No mail accounts yet.</p>
   {% endif %}
 </section>
 {% endblock %}

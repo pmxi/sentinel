@@ -28,9 +28,11 @@ class EmailClientFactory:
         account_name: str,
         config: MailAccountConfig,
         db: Optional["EmailDatabase"] = None,
+        user_id: Optional[int] = None,
     ) -> EmailClient:
-        """Create an email client. If `db` is provided, OAuth token refreshes
-        are persisted back into the accounts table automatically."""
+        """Create an email client. If both `db` and `user_id` are provided,
+        OAuth token refreshes are persisted back into that user's accounts
+        row automatically."""
 
         if not config.enabled:
             raise ValueError(f"Account {account_name} is disabled")
@@ -42,7 +44,9 @@ class EmailClientFactory:
         logger.info(f"Creating {config.provider} client for account: {account_name}")
 
         on_token_refreshed = (
-            cls._make_token_persister(db, account_name, config) if db else None
+            cls._make_token_persister(db, user_id, account_name, config)
+            if db is not None and user_id is not None
+            else None
         )
 
         if config.provider == MailProvider.GMAIL_API:
@@ -56,15 +60,20 @@ class EmailClientFactory:
 
     @staticmethod
     def _make_token_persister(
-        db: "EmailDatabase", account_name: str, config: MailAccountConfig
+        db: "EmailDatabase",
+        user_id: int,
+        account_name: str,
+        config: MailAccountConfig,
     ) -> Callable[[str], None]:
         """Return a callback that updates config.auth.token_json and writes
-        the account row back to the database."""
+        the account row back to the database, scoped to the given user."""
 
         def persist(token_json: str) -> None:
             config.auth.token_json = token_json
-            db.upsert_account(account_name, config.model_dump_json())
-            logger.debug(f"Persisted refreshed token for account '{account_name}'")
+            db.upsert_account(user_id, account_name, config.model_dump_json())
+            logger.debug(
+                f"Persisted refreshed token for user_id={user_id} account='{account_name}'"
+            )
 
         return persist
 

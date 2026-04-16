@@ -3,6 +3,10 @@
 Only DATABASE_PATH is bootstrapped from the environment (so the daemon knows
 where to look). Everything else lives in the `app_settings` table and is
 populated via `settings.load(db)` during startup.
+
+Per-user preferences (Telegram creds, classification notes, etc.) live in
+the `user_settings` table — NOT here. This class is for operator-level,
+app-wide config only.
 """
 
 import os
@@ -18,31 +22,32 @@ class Settings:
     # ----- bootstrap (env only) -----
     DATABASE_PATH: str = os.getenv("DATABASE_PATH", "sentinel.db")
 
-    # ----- LLM -----
+    # ----- LLM (operator-paid) -----
     LLM_PROVIDER: str = "openai"
     LLM_API_KEY: Optional[str] = None
     LLM_MODEL: str = "gpt-5.4"
-    CLASSIFICATION_NOTES: str = ""  # Appended to the base classifier prompt.
 
-    # ----- Telegram -----
-    TELEGRAM_BOT_TOKEN: Optional[str] = None
-    TELEGRAM_CHAT_ID: Optional[str] = None
-
-    # ----- Twilio (optional) -----
+    # ----- Twilio (optional, operator-paid) -----
     TWILIO_ACCOUNT_SID: Optional[str] = None
     TWILIO_AUTH_TOKEN: Optional[str] = None
     TWILIO_PHONE_NUMBER: Optional[str] = None
-    NOTIFICATION_PHONE_NUMBER: Optional[str] = None
 
-    # ----- Resend (transactional email) -----
+    # ----- Resend (transactional email, operator-paid) -----
     RESEND_API_KEY: Optional[str] = None
     EMAIL_FROM_ADDRESS: Optional[str] = None
     EMAIL_FROM_NAME: str = ""
 
+    # ----- Google OAuth (identity only — 'openid email profile' scopes) -----
+    GOOGLE_CLIENT_ID: Optional[str] = None
+    GOOGLE_CLIENT_SECRET: Optional[str] = None
+
+    # ----- Flask sessions -----
+    SESSION_SECRET: Optional[str] = None
+
     # ----- Monitoring -----
     POLL_INTERVAL_SECONDS: int = 30
-    PROCESS_ONLY_UNREAD: bool = True
     MAX_LOOKBACK_HOURS: int = 24
+    PROCESS_ONLY_UNREAD: bool = True
 
     # ----- Logging -----
     LOG_LEVEL: str = "INFO"
@@ -64,8 +69,18 @@ class Settings:
 
     @classmethod
     def validate(cls) -> bool:
+        missing = []
         if not cls.LLM_API_KEY:
-            raise ValueError("LLM_API_KEY not configured. Run 'sentinel init'.")
+            missing.append("LLM_API_KEY")
+        if not cls.GOOGLE_CLIENT_ID or not cls.GOOGLE_CLIENT_SECRET:
+            missing.append("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET")
+        if not cls.SESSION_SECRET:
+            missing.append("SESSION_SECRET")
+        if missing:
+            raise ValueError(
+                f"Missing required app settings: {', '.join(missing)}. "
+                "Configure them via 'sentinel init' or the admin web UI."
+            )
         return True
 
 

@@ -8,13 +8,21 @@
 </head>
 <body>
   <header>
-    <h1><a href="{{ url_for('dashboard') }}">Sentinel</a></h1>
-    <nav>
-      <a href="{{ url_for('dashboard') }}">Dashboard</a>
-      <a href="{{ url_for('settings_page') }}">Settings</a>
-      <a href="{{ url_for('prompt_page') }}">Prompt</a>
-      <a href="{{ url_for('accounts_page') }}">Accounts</a>
-    </nav>
+    <h1><a href="{{ url_for('dashboard') if current_user else url_for('login') }}">Sentinel</a></h1>
+    {% if current_user %}
+      <nav>
+        <a href="{{ url_for('dashboard') }}">Dashboard</a>
+        <a href="{{ url_for('accounts_page') }}">Accounts</a>
+        <a href="{{ url_for('preferences_page') }}">Preferences</a>
+        <a href="{{ url_for('prompt_page') }}">Prompt</a>
+      </nav>
+      <div class="user">
+        <span class="user-email">{{ current_user.email }}</span>
+        <form method="post" action="{{ url_for('logout') }}" class="logout-form">
+          <button type="submit">Sign out</button>
+        </form>
+      </div>
+    {% endif %}
   </header>
   <main>
     {% block content %}{% endblock %}

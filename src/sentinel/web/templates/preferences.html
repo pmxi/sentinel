@@ -1,10 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Settings — Sentinel{% endblock %}
+{% block title %}Preferences — Sentinel{% endblock %}
 {% block content %}
 <section>
-  <h2>App settings</h2>
+  <h2>Your preferences</h2>
   {% if saved %}<p role="status" class="flash">Saved.</p>{% endif %}
-  <p class="hint">Secrets show masked. Leave the field blank to keep the stored value.</p>
+  <p class="hint">Only you can see these values. Leave a secret field blank to keep the stored value. Clear a non-secret field to remove it.</p>
   <form method="post">
     {% for row in rows %}
       <p>
