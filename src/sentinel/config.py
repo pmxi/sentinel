@@ -19,9 +19,9 @@ class Settings:
     DATABASE_PATH: str = os.getenv("DATABASE_PATH", "sentinel.db")
 
     # ----- LLM -----
-    LLM_PROVIDER: str = "google"
+    LLM_PROVIDER: str = "openai"
     LLM_API_KEY: Optional[str] = None
-    LLM_MODEL: str = "gemini-2.5-flash-preview-05-20"
+    LLM_MODEL: str = "gpt-5.4"
 
     # ----- Telegram -----
     TELEGRAM_BOT_TOKEN: Optional[str] = None
@@ -59,9 +59,7 @@ class Settings:
     @classmethod
     def validate(cls) -> bool:
         if not cls.LLM_API_KEY:
-            raise ValueError(
-                "LLM_API_KEY not configured. Run 'sentinel init' or 'sentinel migrate'."
-            )
+            raise ValueError("LLM_API_KEY not configured. Run 'sentinel init'.")
         return True
 
 

@@ -36,13 +36,13 @@ will also be able to adjust the classification criteria to their needs.
 
 ## Features
 
-Email Sentinel uses Google's Gemini LLM to classify your emails. All
-configuration — API keys, mail accounts, OAuth tokens, preferences — lives in
-a single SQLite database, managed through a guided CLI. Both IMAP and Gmail
-API are supported, along with Microsoft Graph for Office 365 / Outlook
-accounts. The app polls your accounts regularly and sends notifications for
-important emails via Telegram. The same database tracks which emails have
-been processed so restarts don't produce duplicates.
+Email Sentinel classifies your emails using OpenAI's Responses API (default
+model: GPT 5.4). All configuration — API keys, mail accounts, OAuth tokens,
+preferences — lives in a single SQLite database, managed through a guided
+CLI. Both IMAP and Gmail API are supported, along with Microsoft Graph for
+Office 365 / Outlook accounts. The app polls your accounts regularly and
+sends notifications for important emails via Telegram. The same database
+tracks which emails have been processed so restarts don't produce duplicates.
 
 ## Installation
 
@@ -61,7 +61,7 @@ All setup happens through the `sentinel` CLI — no YAML or `.env` files.
 
 ### 1. Gather credentials
 
-- **Gemini API key** — from [Google AI Studio](https://aistudio.google.com/app/apikey).
+- **OpenAI API key** — from [platform.openai.com](https://platform.openai.com/api-keys).
 - **Telegram bot** — create one via [`@BotFather`](https://t.me/BotFather),
   grab the token, message the bot once, then hit
   `https://api.telegram.org/bot<TOKEN>/getUpdates` to find your chat ID.
@@ -78,7 +78,7 @@ All setup happens through the `sentinel` CLI — no YAML or `.env` files.
 uv run sentinel init
 ```
 
-You'll be prompted for the Gemini key, Telegram credentials, and a few
+You'll be prompted for the OpenAI key, Telegram credentials, and a few
 monitoring preferences. Everything is stored in `sentinel.db`.
 
 ### 3. Add mail accounts
@@ -124,6 +124,6 @@ This is the only environment variable Sentinel reads.
 ## Roadmap
 
 - Allow customizing classification rules per account.
-- Support for different LLM providers (currently uses Gemini; OpenAI,
-  Anthropic, etc. would be straightforward).
+- Support for different LLM providers (currently uses OpenAI; Anthropic,
+  local models, etc. would be straightforward).
 - A hosted offering with a web UI on top of the same configuration schema.

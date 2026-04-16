@@ -67,12 +67,12 @@ def cmd_init(_args: argparse.Namespace) -> None:
     db = _open_db()
     print("Sentinel first-time setup — press enter to accept defaults.\n")
 
-    llm_key = _prompt_secret("Gemini API key (required)")
+    llm_key = _prompt_secret("OpenAI API key (required)")
     if not llm_key:
         raise SystemExit("LLM_API_KEY is required.")
     db.set_app_setting("LLM_API_KEY", llm_key)
 
-    llm_model = _prompt("Gemini model", default=settings.LLM_MODEL)
+    llm_model = _prompt("OpenAI model", default=settings.LLM_MODEL)
     db.set_app_setting("LLM_MODEL", llm_model)
 
     print("\nTelegram notifications (required):")

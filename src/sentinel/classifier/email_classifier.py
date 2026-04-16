@@ -1,14 +1,14 @@
-"""Email classification using LLM"""
+"""Email classification using OpenAI's Responses API."""
 
 from dataclasses import dataclass
 from enum import Enum
 from typing import Optional
 
-from google import genai  # type: ignore
+from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from sentinel.config import settings
-from sentinel.email.gmail.models import EmailData
+from sentinel.email.models import EmailData
 
 
 class EmailPriority(str, Enum):
@@ -20,7 +20,7 @@ class EmailPriority(str, Enum):
 
 @dataclass(frozen=True)
 class ClassificationResult:
-    """Result of email classification - clean interface for consumers"""
+    """Result of email classification — clean interface for consumers."""
 
     priority: EmailPriority
     confidence: float
@@ -28,15 +28,12 @@ class ClassificationResult:
     summary: Optional[str] = None
 
     def is_important(self) -> bool:
-        """Check if email is important"""
         return self.priority == EmailPriority.IMPORTANT
 
     def is_high_confidence(self) -> bool:
-        """Check if classification confidence is high (>= 0.8)"""
         return self.confidence >= 0.8
 
     def __str__(self) -> str:
-        """String representation of the classification result"""
         return (
             f"Priority: {self.priority.value.capitalize()}\n"
             f"Confidence: {self.confidence:.2f}\n"
@@ -46,15 +43,14 @@ class ClassificationResult:
 
 
 class _ClassificationResponse(BaseModel):
-    """Internal Pydantic model for LLM response parsing"""
+    """Pydantic schema handed to OpenAI's structured-output parser."""
 
     priority: EmailPriority
     confidence: float = Field(..., ge=0.0, le=1.0)
     reasoning: str
-    summary: Optional[str] = None
+    summary: str
 
     def to_result(self) -> ClassificationResult:
-        """Convert to public dataclass"""
         return ClassificationResult(
             priority=self.priority,
             confidence=self.confidence,
@@ -64,37 +60,26 @@ class _ClassificationResponse(BaseModel):
 
 
 class EmailClassifier:
-    """Classifies emails using Google Gemini AI"""
+    """Classifies emails via the OpenAI Responses API with Pydantic-parsed output."""
 
     def __init__(self):
-        """Initialize the email classifier"""
         if not settings.LLM_API_KEY:
             raise ValueError("LLM_API_KEY not found.")
-        self.client = genai.Client(api_key=settings.LLM_API_KEY)
+        self.client = OpenAI(api_key=settings.LLM_API_KEY)
 
     def classify_email(self, email: EmailData) -> ClassificationResult:
-        """Classify an email into one of the predefined categories"""
-        prompt = self._create_classification_prompt(email)
-
-        response = self.client.models.generate_content(
-            model="gemini-2.5-flash-preview-05-20",
-            contents=prompt,
-            config={
-                "response_mime_type": "application/json",
-                "response_schema": _ClassificationResponse,
-            },
+        response = self.client.responses.parse(
+            model=settings.LLM_MODEL,
+            input=self._create_classification_prompt(email),
+            text_format=_ClassificationResponse,
         )
 
-        if not response or not response.text:
-            raise ValueError("No response received from the Gemini API")
-
-        response = _ClassificationResponse.model_validate_json(response.text)
-        return response.to_result()
+        parsed = response.output_parsed
+        if parsed is None:
+            raise ValueError("OpenAI Responses API returned no parsed output")
+        return parsed.to_result()
 
     def _create_classification_prompt(self, email: EmailData) -> str:
-        """Create a structured prompt for email classification"""
-        email_text = email.__str__()
-
         return f"""
 You are an email classification assistant. Analyze the following email and classify it as IMPORTANT or NORMAL.
 
@@ -108,11 +93,11 @@ NORMAL:
 - Everything else, including newsletters, mass mailings, and apparent scams
 
 EMAIL TO CLASSIFY:
-{email_text}
+{email}
 
-Respond with a JSON object containing:
+Return:
 - priority: "important" or "normal"
 - confidence: 0.0-1.0
-- reasoning: Brief explanation
-- summary: Concise 140-character summary
+- reasoning: brief explanation
+- summary: concise 140-character summary
 """
