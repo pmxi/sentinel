@@ -37,16 +37,18 @@ will also be able to adjust the classification criteria to their needs.
 
 ## Features
 
-Email Sentinel uses Google's Gemini LLM to classify your emails. You configure
-your mail accounts in a mailboxes.yaml file - both IMAP and Gmail API are
-supported. The app polls your accounts regularly (every 60 seconds by default)
-and sends notifications for important emails via Twilio SMS or Telegram. A
-SQLite database tracks which emails have been processed to avoid duplicates.
+Email Sentinel uses Google's Gemini LLM to classify your emails. All
+configuration — API keys, mail accounts, OAuth tokens, preferences — lives in
+a single SQLite database, managed through a guided CLI. Both IMAP and Gmail
+API are supported, along with Microsoft Graph for Office 365 / Outlook
+accounts. The app polls your accounts regularly and sends notifications for
+important emails via Telegram. The same database tracks which emails have
+been processed so restarts don't produce duplicates.
 
 ## Installation
 
-This project was developed and tested with Python 3.13.2 on macOS Sonoma with a
-M3 MacBook. No guarantees are made for other environments. Install
+This project was developed and tested with Python 3.13.2 on macOS Sonoma with
+an M3 MacBook. No guarantees are made for other environments. Install
 [uv](https://docs.astral.sh/uv/getting-started/installation/), then sync
 dependencies:
 
@@ -54,18 +56,75 @@ dependencies:
 uv sync
 ```
 
-## Configuration
+## Setup
 
-First, set up environment variables for API keys and system settings using
-`.env.example` as a template.
+All setup happens through the `sentinel` CLI — no YAML or `.env` files.
 
-Then, configure your email accounts in a `mailboxes.yaml` file. The file path
-is specified via environment variable. See `config/mailboxes.example.yaml` for
-a template.
+### 1. Gather credentials
+
+- **Gemini API key** — from [Google AI Studio](https://aistudio.google.com/app/apikey).
+- **Telegram bot** — create one via [`@BotFather`](https://t.me/BotFather),
+  grab the token, message the bot once, then hit
+  `https://api.telegram.org/bot<TOKEN>/getUpdates` to find your chat ID.
+- **Gmail accounts** — create an OAuth 2.0 Desktop client in the
+  [Google Cloud Console](https://console.cloud.google.com/) with the Gmail API
+  enabled, and download the client JSON.
+- **Microsoft 365 / Outlook accounts** — register an app in Azure AD with
+  `Mail.ReadWrite` (delegated) and note its client ID + tenant ID.
+- **IMAP accounts** — server, port, username, and (app-)password.
+
+### 2. First-time app setup
+
+```bash
+./sentinel.py init
+```
+
+You'll be prompted for the Gemini key, Telegram credentials, and a few
+monitoring preferences. Everything is stored in `sentinel.db`.
+
+### 3. Add mail accounts
+
+Run this once per mailbox you want to monitor:
+
+```bash
+./sentinel.py account add
+```
+
+Pick a provider and follow the prompts. For Gmail you'll be asked for the
+path to the OAuth client JSON (its contents are copied into the database —
+you can delete the file afterwards). For MS Graph you'll enter the Azure
+client/tenant IDs. For IMAP you'll provide the server details and password.
+
+Other account commands:
+
+```bash
+./sentinel.py account list
+./sentinel.py account remove <name>
+```
+
+### 4. Run the monitor
+
+```bash
+./sentinel.py run
+```
+
+The first run will complete any outstanding OAuth flows (Gmail / MS Graph
+open a browser), then begin polling. Refreshed tokens are written back to
+the database automatically.
+
+### Configuring the database location
+
+By default the database lives at `./sentinel.db`. Override with:
+
+```bash
+export DATABASE_PATH=/var/lib/sentinel/sentinel.db
+```
+
+This is the only environment variable Sentinel reads.
 
 ## Roadmap
 
-- Allow customizing classification rules. Options are to build a Web UI, or
-  continue using the mailboxes.yaml config file.
-- Support for different LLM providers (currently uses Gemini, but want to add
-  OpenAI, Anthropic, etc.)
+- Allow customizing classification rules per account.
+- Support for different LLM providers (currently uses Gemini; OpenAI,
+  Anthropic, etc. would be straightforward).
+- A hosted offering with a web UI on top of the same configuration schema.
