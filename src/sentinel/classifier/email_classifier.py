@@ -73,6 +73,8 @@ class EmailClassifier:
         return parsed.to_result()
 
     def _create_classification_prompt(self, email: EmailData) -> str:
+        extra = settings.CLASSIFICATION_NOTES.strip()
+        extra_block = f"\nADDITIONAL NOTES FROM THE USER (take these seriously):\n{extra}\n" if extra else ""
         return f"""
 You are an email classification assistant. Analyze the following email and classify it as IMPORTANT or NORMAL.
 
@@ -84,7 +86,7 @@ IMPORTANT:
 
 NORMAL:
 - Everything else, including newsletters, mass mailings, and apparent scams
-
+{extra_block}
 EMAIL TO CLASSIFY:
 {email}
 

@@ -22,6 +22,7 @@ class Settings:
     LLM_PROVIDER: str = "openai"
     LLM_API_KEY: Optional[str] = None
     LLM_MODEL: str = "gpt-5.4"
+    CLASSIFICATION_NOTES: str = ""  # Appended to the base classifier prompt.
 
     # ----- Telegram -----
     TELEGRAM_BOT_TOKEN: Optional[str] = None
