@@ -2,6 +2,6 @@
 """Entry point for Sentinel Email Monitor."""
 
 if __name__ == "__main__":
-    from src.main import main
+    from src.cli import main
 
     main()
