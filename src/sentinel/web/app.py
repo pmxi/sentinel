@@ -31,12 +31,15 @@ EDITABLE_SETTINGS: List[tuple[str, str, str]] = [
     ("LLM_MODEL", "OpenAI model", "text"),
     ("TELEGRAM_BOT_TOKEN", "Telegram bot token", "password"),
     ("TELEGRAM_CHAT_ID", "Telegram chat ID", "text"),
+    ("RESEND_API_KEY", "Resend API key", "password"),
+    ("EMAIL_FROM_ADDRESS", "Email From address", "text"),
+    ("EMAIL_FROM_NAME", "Email From name", "text"),
     ("POLL_INTERVAL_SECONDS", "Poll interval (seconds)", "number"),
     ("MAX_LOOKBACK_HOURS", "Max lookback (hours)", "number"),
     ("LOG_LEVEL", "Log level", "text"),
 ]
 
-SECRET_KEYS = {"LLM_API_KEY", "TELEGRAM_BOT_TOKEN"}
+SECRET_KEYS = {"LLM_API_KEY", "TELEGRAM_BOT_TOKEN", "RESEND_API_KEY"}
 
 
 def create_app(db_path: str | None = None) -> Flask:

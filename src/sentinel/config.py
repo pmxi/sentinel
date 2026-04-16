@@ -34,6 +34,11 @@ class Settings:
     TWILIO_PHONE_NUMBER: Optional[str] = None
     NOTIFICATION_PHONE_NUMBER: Optional[str] = None
 
+    # ----- Resend (transactional email) -----
+    RESEND_API_KEY: Optional[str] = None
+    EMAIL_FROM_ADDRESS: Optional[str] = None
+    EMAIL_FROM_NAME: str = ""
+
     # ----- Monitoring -----
     POLL_INTERVAL_SECONDS: int = 30
     PROCESS_ONLY_UNREAD: bool = True

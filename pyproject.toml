@@ -13,6 +13,7 @@ dependencies = [
     "msgraph-sdk",
     "azure-identity",
     "flask>=3.0.0",
+    "resend>=2.0.0",
 ]
 
 [project.scripts]
