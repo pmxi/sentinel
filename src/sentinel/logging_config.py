@@ -55,16 +55,19 @@ def setup_logging(name: str, level: Optional[str] = None) -> logging.Logger:
         LOG_LEVEL (default INFO) — console level; file is always DEBUG.
         SENTINEL_LOG_DIR (default 'logs') — directory for sentinel.log.
     """
-    log_level = (level or os.getenv("LOG_LEVEL", "INFO")).upper()
+    console_level = (level or os.getenv("LOG_LEVEL", "INFO")).upper()
 
+    # Logger is DEBUG so every record reaches the handlers; each handler
+    # then decides for itself whether to emit. This is what lets the file
+    # capture full detail while the console respects LOG_LEVEL.
     logger = logging.getLogger(name)
-    logger.setLevel(getattr(logging, log_level))
+    logger.setLevel(logging.DEBUG)
 
     if logger.handlers:
         return logger
 
     console_handler = logging.StreamHandler()
-    console_handler.setLevel(getattr(logging, log_level))
+    console_handler.setLevel(getattr(logging, console_level))
     console_handler.setFormatter(_UTCFormatter(CONSOLE_FORMAT, datefmt=CONSOLE_DATEFMT))
     logger.addHandler(console_handler)
 
