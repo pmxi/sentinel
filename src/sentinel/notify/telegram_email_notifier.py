@@ -1,81 +1,82 @@
+from email.utils import parseaddr
 from typing import Optional
 
+from sentinel.classifier.email_classifier import ClassificationResult
+from sentinel.email.models import EmailData
+from sentinel.logging_config import get_logger
 from sentinel.notify.email_notifier import EmailNotifier
 from sentinel.notify.telegram_notifier import TelegramNotifier
-from sentinel.classifier.email_classifier import ClassificationResult
-from sentinel.email.gmail.models import EmailData
-from sentinel.logging_config import get_logger
 
 logger = get_logger(__name__)
 
+# MarkdownV2 reserved characters (outside link URLs).
+_MD2_SPECIALS = r"_*[]()~`>#+-=|{}.!"
+
 
 class TelegramEmailNotifier(EmailNotifier):
-    """Email notifier that formats and sends notifications via Telegram."""
-    
+    """Formats important-email alerts for Telegram.
+
+    Layout (lean — the first line is what shows on small previews like an
+    Apple Watch, so every character counts):
+
+        <sender_email>     (tappable link to the message if provider gives one)
+
+        <subject>
+
+        <summary>
+
+    No labels, no emoji. If the EmailData lacks a deep link, the sender
+    renders as plain text (Telegram will auto-link it as mailto:, which is
+    an acceptable fallback).
+    """
+
     def __init__(self, telegram_notifier: TelegramNotifier):
-        """Initialize with a Telegram notifier instance.
-        
-        Args:
-            telegram_notifier: The base Telegram notifier to use for sending
-        """
         self.notifier = telegram_notifier
-    
-    def notify(self, email: EmailData, classification: ClassificationResult) -> Optional[str]:
-        """Format and send an email notification via Telegram.
-        
-        Args:
-            email: The email data
-            classification: The classification result
-            
-        Returns:
-            Message ID if successful, None otherwise
-        """
+
+    def notify(
+        self, email: EmailData, classification: ClassificationResult
+    ) -> Optional[str]:
         try:
-            # Format the message with Telegram markdown
             message = self._format_email_notification(email, classification)
             return self.notifier.send(message)
         except Exception as e:
             logger.error(f"Failed to send email notification: {e}")
             return None
-    
-    def _format_email_notification(self, email: EmailData, classification: ClassificationResult) -> str:
-        """Format an email into a Telegram notification message.
-        
-        Args:
-            email: The email data
-            classification: The classification result
-            
-        Returns:
-            Formatted message with Telegram MarkdownV2
-        """
-        # Get summary and truncate if needed
-        summary = classification.summary or "No summary available"
+
+    def _format_email_notification(
+        self, email: EmailData, classification: ClassificationResult
+    ) -> str:
+        summary = classification.summary or ""
         if len(summary) > 500:
-            summary = summary[:497] + "\\.\\.\\."
-        
-        # Format the message with emojis and markdown
-        message = (
-            f"📧 *Important Email Alert*\n\n"
-            f"*From:* {self._escape_markdown(email.sender)}\n"
-            f"*Subject:* {self._escape_markdown(email.subject)}\n\n"
-            f"*Summary:* {self._escape_markdown(summary)}"
+            summary = summary[:497] + "..."
+
+        _, addr = parseaddr(email.sender)
+        sender = addr or email.sender
+
+        sender_text = _md2_escape(sender)
+        first_line = (
+            f"[{sender_text}]({_url_escape(email.url)})"
+            if email.url
+            else sender_text
         )
-        
-        return message
-    
-    def _escape_markdown(self, text: str) -> str:
-        """Escape special characters for Telegram MarkdownV2.
-        
-        Args:
-            text: Text to escape
-            
-        Returns:
-            Escaped text safe for MarkdownV2
-        """
-        special_chars = [
-            "_", "*", "[", "]", "(", ")", "~", "`", ">", "#",
-            "+", "-", "=", "|", "{", "}", ".", "!"
-        ]
-        for char in special_chars:
-            text = text.replace(char, f"\\{char}")
-        return text
+
+        return (
+            f"{first_line}\n\n"
+            f"{_md2_escape(email.subject)}\n\n"
+            f"{_md2_escape(summary)}"
+        )
+
+
+def _md2_escape(text: str) -> str:
+    """Escape MarkdownV2 reserved characters outside link URLs."""
+    out = []
+    for ch in text:
+        if ch in _MD2_SPECIALS:
+            out.append("\\")
+        out.append(ch)
+    return "".join(out)
+
+
+def _url_escape(url: str) -> str:
+    """Inside a MarkdownV2 link URL only ')' and '\\' must be escaped."""
+    return url.replace("\\", "\\\\").replace(")", "\\)")

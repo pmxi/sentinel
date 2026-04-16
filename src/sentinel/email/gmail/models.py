@@ -46,6 +46,10 @@ def email_data_from_gmail_message(message: dict) -> EmailData:
     # Check if read
     is_read = "UNREAD" not in message.get("labelIds", [])
 
+    # Deep link into Gmail web UI; /u/0/ targets the user's primary Google account.
+    thread_id = message.get("threadId")
+    url = f"https://mail.google.com/mail/u/0/#inbox/{thread_id}" if thread_id else None
+
     return EmailData(
         id=message["id"],
         subject=subject,
@@ -55,4 +59,5 @@ def email_data_from_gmail_message(message: dict) -> EmailData:
         received_date=date,
         is_read=is_read,
         provider="gmail",
+        url=url,
     )
