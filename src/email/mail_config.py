@@ -55,7 +55,6 @@ class AccountSettings(BaseModel):
     process_only_unread: bool = True
     max_lookback_hours: int = 24
     folders: List[str] = ["INBOX"]
-    junk_folder_name: str = "Junk"
 
 
 class MailAccountConfig(BaseModel):

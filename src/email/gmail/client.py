@@ -161,30 +161,6 @@ class GmailClient(EmailClient):
             logger.error(f"Error getting email details for message {message_id}: {e}", exc_info=True)
             return None
 
-    def move_to_junk(self, message_id: str):
-        """Move email to junk folder"""
-        logger.debug(f"Moving message {message_id} to junk folder")
-        try:
-            # Create junk label if it doesn't exist
-            self._ensure_junk_label()
-
-            # Add junk label and remove inbox label
-            junk_label_id = self._get_junk_label_id()
-            logger.debug(f"Using junk label ID: {junk_label_id}")
-            
-            self.service.users().messages().modify(
-                userId="me",
-                id=message_id,
-                body={
-                    "addLabelIds": [junk_label_id],
-                    "removeLabelIds": ["INBOX"],
-                },
-            ).execute()
-            logger.info(f"Successfully moved message {message_id} to junk folder")
-        except Exception as e:
-            logger.error(f"Failed to move email to junk: {str(e)}", exc_info=True)
-            raise Exception(f"Failed to move email to junk: {str(e)}")
-
     def mark_as_read(self, message_id: str):
         """Mark email as read"""
         logger.debug(f"Marking message {message_id} as read")
@@ -197,43 +173,3 @@ class GmailClient(EmailClient):
             logger.error(f"Failed to mark message {message_id} as read: {str(e)}", exc_info=True)
             raise Exception(f"Failed to mark as read: {str(e)}")
 
-    def _ensure_junk_label(self):
-        """Create junk label if it doesn't exist"""
-        junk_folder_name = self.config.settings.junk_folder_name
-        logger.debug(f"Ensuring junk label '{junk_folder_name}' exists")
-        try:
-            labels = self.service.users().labels().list(userId="me").execute()
-            label_names = [label["name"] for label in labels.get("labels", [])]
-
-            if junk_folder_name not in label_names:
-                logger.info(f"Junk label '{junk_folder_name}' not found, creating it")
-                label_object = {
-                    "name": junk_folder_name,
-                    "messageListVisibility": "show",
-                    "labelListVisibility": "labelShow",
-                }
-                self.service.users().labels().create(
-                    userId="me", body=label_object
-                ).execute()
-                logger.info(f"Successfully created junk label '{junk_folder_name}'")
-            else:
-                logger.debug(f"Junk label '{junk_folder_name}' already exists")
-        except Exception as e:
-            logger.error(f"Failed to create junk label: {str(e)}", exc_info=True)
-            raise Exception(f"Failed to create junk label: {str(e)}")
-
-    def _get_junk_label_id(self) -> str:
-        """Get the ID of the junk label"""
-        junk_folder_name = self.config.settings.junk_folder_name
-        logger.debug(f"Getting junk label ID for '{junk_folder_name}'")
-        try:
-            labels = self.service.users().labels().list(userId="me").execute()
-            for label in labels.get("labels", []):
-                if label["name"] == junk_folder_name:
-                    logger.debug(f"Found junk label '{junk_folder_name}' with ID: {label['id']}")
-                    return label["id"]
-            logger.error(f"Junk label '{junk_folder_name}' not found in label list")
-            raise Exception(f"Junk label '{junk_folder_name}' not found")
-        except Exception as e:
-            logger.error(f"Failed to get junk label ID: {str(e)}", exc_info=True)
-            raise Exception(f"Failed to get junk label ID: {str(e)}")

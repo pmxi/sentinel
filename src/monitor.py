@@ -235,18 +235,9 @@ class EmailMonitor:
             logger.debug(f"Full classification result: {classification}")
 
             # Take action based on classification
-            if classification.priority.value == "junk":
-                logger.info("Email classified as JUNK. Moving to junk folder...")
-                try:
-                    client.move_to_junk(email.id)
-                    logger.info("Email moved to junk folder")
-                except Exception as e:
-                    logger.error(f"Failed to move email to junk: {e}")
-
-            elif classification.is_important():
+            if classification.is_important():
                 logger.info("Email classified as IMPORTANT. Sending notification...")
                 self._send_notification(email, classification)
-
             else:
                 logger.info(
                     f"Email classified as {classification.priority.value.upper()}. No action needed."

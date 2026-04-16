@@ -12,9 +12,6 @@ from azure.identity import (
 )
 from msgraph import GraphServiceClient
 from msgraph.generated.models.message import Message
-from msgraph.generated.users.item.messages.item.move.move_post_request_body import (
-    MovePostRequestBody,
-)
 
 from src.email.email_client_base import EmailClient
 from src.email.mail_config import MailAccountConfig
@@ -250,20 +247,6 @@ class MSGraphClient(EmailClient):
         except Exception as e:
             logger.error(f"Failed to mark message {message_id} as read: {str(e)}", exc_info=True)
             raise Exception(f"Failed to mark as read: {str(e)}")
-
-    def move_to_junk(self, message_id: str):
-        """Move email to junk folder."""
-        logger.debug(f"Moving message {message_id} to junk folder")
-        try:
-            # Use well-known folder name "junkemail"
-            move_body = MovePostRequestBody(destination_id="junkemail")
-            self._run_async(
-                self.client.me.messages.by_message_id(message_id).move.post(move_body)
-            )
-            logger.info(f"Successfully moved message {message_id} to junk folder")
-        except Exception as e:
-            logger.error(f"Failed to move email to junk: {str(e)}", exc_info=True)
-            raise Exception(f"Failed to move email to junk: {str(e)}")
 
     def _parse_message(self, msg: Message) -> EmailData:
         """Convert Graph API message to EmailData."""

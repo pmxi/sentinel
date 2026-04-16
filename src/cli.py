@@ -164,7 +164,7 @@ def _prompt_gmail_account() -> MailAccountConfig:
     except Exception as e:
         raise SystemExit(f"Invalid JSON: {e}")
 
-    settings_obj = _prompt_account_settings(default_junk="Junk")
+    settings_obj = _prompt_account_settings()
     return MailAccountConfig(
         provider=MailProvider.GMAIL_API,
         auth=AuthConfig(
@@ -181,7 +181,7 @@ def _prompt_msgraph_account() -> MailAccountConfig:
     if not client_id:
         raise SystemExit("client_id is required.")
 
-    settings_obj = _prompt_account_settings(default_junk="junkemail")
+    settings_obj = _prompt_account_settings()
     return MailAccountConfig(
         provider=MailProvider.MSGRAPH,
         auth=AuthConfig(
@@ -201,7 +201,7 @@ def _prompt_imap_account() -> MailAccountConfig:
     if not server or not username or not password:
         raise SystemExit("server, username, and password are required.")
 
-    settings_obj = _prompt_account_settings(default_junk="Junk")
+    settings_obj = _prompt_account_settings()
     return MailAccountConfig(
         provider=MailProvider.IMAP,
         server=server,
@@ -215,14 +215,12 @@ def _prompt_imap_account() -> MailAccountConfig:
     )
 
 
-def _prompt_account_settings(default_junk: str) -> AccountSettings:
+def _prompt_account_settings() -> AccountSettings:
     process_only_unread = _prompt_bool("Process only unread?", default=True)
     max_lookback = int(_prompt("Max lookback hours", default="24"))
-    junk = _prompt("Junk folder name", default=default_junk)
     return AccountSettings(
         process_only_unread=process_only_unread,
         max_lookback_hours=max_lookback,
-        junk_folder_name=junk,
     )
 
 

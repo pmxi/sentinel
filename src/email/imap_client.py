@@ -213,35 +213,6 @@ class IMAPClient(EmailClient):
             logger.error(f"Failed to mark as read: {e}")
             raise
 
-    def move_to_junk(self, message_id: str):
-        """Move email to junk folder"""
-        try:
-            conn = self._get_connection()
-
-            # Mark as seen
-            conn.store(message_id, "+FLAGS", "\\Seen")
-
-            # Use configured junk folder name
-            junk_folder_name = self.config.settings.junk_folder_name
-            
-            try:
-                # Copy to junk folder
-                result = conn.copy(message_id, junk_folder_name)
-                if result[0] == "OK":
-                    # Mark for deletion from inbox
-                    conn.store(message_id, "+FLAGS", "\\Deleted")
-                    conn.expunge()
-                    logger.info(f"Moved email {message_id} to {junk_folder_name}")
-                else:
-                    raise Exception(f"Failed to copy message to {junk_folder_name}")
-            except (imaplib.IMAP4.error, ValueError) as e:
-                logger.error(f"Failed to move to folder {junk_folder_name}: {e}")
-                raise Exception(f"Could not move email to junk folder '{junk_folder_name}': {e}")
-
-        except Exception as e:
-            logger.error(f"Failed to move email to junk: {e}")
-            raise
-
     def _decode_header(self, header: str) -> str:
         """Decode email header"""
         if not header:

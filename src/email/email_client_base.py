@@ -38,8 +38,3 @@ class EmailClient(ABC):
     def mark_as_read(self, message_id: str):
         """Mark email as read"""
         pass
-
-    @abstractmethod
-    def move_to_junk(self, message_id: str):
-        """Move email to junk folder"""
-        pass

@@ -16,7 +16,6 @@ class EmailPriority(str, Enum):
 
     IMPORTANT = "important"
     NORMAL = "normal"
-    JUNK = "junk"
 
 
 @dataclass(frozen=True)
@@ -97,7 +96,7 @@ class EmailClassifier:
         email_text = email.__str__()
 
         return f"""
-You are an email classification assistant. Analyze the following email and classify it into one of three categories:
+You are an email classification assistant. Analyze the following email and classify it as IMPORTANT or NORMAL.
 
 IMPORTANT:
 - Addressed to me personally
@@ -105,18 +104,14 @@ IMPORTANT:
 - Legal matter
 - Urgent
 
-JUNK:
-- Newsletter/updates from an org I don't have a relationship with
-- Apparent scam
-
 NORMAL:
-- Everything else
+- Everything else, including newsletters, mass mailings, and apparent scams
 
 EMAIL TO CLASSIFY:
 {email_text}
 
 Respond with a JSON object containing:
-- priority: "important", "normal", or "junk"
+- priority: "important" or "normal"
 - confidence: 0.0-1.0
 - reasoning: Brief explanation
 - summary: Concise 140-character summary

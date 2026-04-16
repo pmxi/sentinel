@@ -24,9 +24,8 @@ can't do.
 
 ## Solution
 
-An app that reads all incoming emails. It will decide if it's important, and
-send an appropriate notification. If it's junk it will move it to a junk
-folder.
+An app that reads all incoming emails, decides if each is important, and
+sends an appropriate notification for the ones that are.
 
 This app should be configurable to monitor many mailboxes simultaneously. For
 example, for my personal use case, it will monitor my Purdue email and my
