@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Prompt — Sentinel{% endblock %}
+{% block content %}
+<section>
+  <h2>Classification prompt</h2>
+  {% if saved %}<p role="status" class="flash">Saved.</p>{% endif %}
+  <p>Base prompt (read-only) — shown so you know what your notes are appending to.</p>
+  <pre>{{ base_prompt }}</pre>
+</section>
+
+<section>
+  <h2>Additional notes</h2>
+  <p>These are appended to the prompt on every classification. Free text; describe what you consider important or not important in plain English.</p>
+  <form method="post">
+    <label for="CLASSIFICATION_NOTES" class="sr-only">Additional notes</label>
+    <textarea id="CLASSIFICATION_NOTES" name="CLASSIFICATION_NOTES" rows="12" spellcheck="true" placeholder="e.g. Treat anything from my-boss@example.com as IMPORTANT. Never flag package-tracking updates as important.">{{ notes }}</textarea>
+    <button type="submit">Save</button>
+  </form>
+</section>
+{% endblock %}

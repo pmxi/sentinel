@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Streams — Sentinel{% endblock %}
+{% block content %}
+<section>
+  <h2>Your streams</h2>
+  <p><a class="button" href="{{ url_for('new_stream_page') }}">Add stream</a></p>
+  {% if streams %}
+    <table>
+      <thead><tr><th>Name</th><th>Type</th><th>Detail</th><th>Enabled</th><th></th></tr></thead>
+      <tbody>
+      {% for s in streams %}
+        <tr>
+          <td>{{ s.name }}</td>
+          <td>{{ s.stream_type }}</td>
+          <td>
+            {% if s.error %}<em>invalid: {{ s.error }}</em>{% else %}{{ s.detail }}{% endif %}
+          </td>
+          <td>{{ "yes" if s.enabled else "no" }}</td>
+          <td class="actions">
+            <form method="post" action="{{ url_for('toggle_stream', name=s.name) }}">
+              <button type="submit">{{ "Disable" if s.enabled else "Enable" }}</button>
+            </form>
+            <form method="post" action="{{ url_for('delete_stream', name=s.name) }}"
+                  onsubmit="return confirm('Delete {{ s.name }}? This cannot be undone.');">
+              <button type="submit" class="danger">Delete</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No streams yet.</p>
+  {% endif %}
+</section>
+{% endblock %}

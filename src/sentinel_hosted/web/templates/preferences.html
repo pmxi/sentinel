@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Preferences — Sentinel{% endblock %}
+{% block content %}
+<section>
+  <h2>Telegram notifications</h2>
+  {% if telegram_chat_id %}
+    <p>Linked to chat <code>{{ telegram_chat_id }}</code>.</p>
+    <form method="post" action="{{ url_for('telegram_unlink') }}"
+          onsubmit="return confirm('Unlink Telegram? You will stop receiving notifications.');">
+      <button type="submit" class="danger">Unlink</button>
+    </form>
+  {% else %}
+    <p>Get notifications in Telegram. Click below to open <code>@{{ telegram_bot_username }}</code>, then tap <em>Start</em> to link this account.</p>
+    <form method="post" action="{{ url_for('telegram_link_start') }}">
+      <button type="submit">Link Telegram</button>
+    </form>
+  {% endif %}
+</section>
+
+<section>
+  <h2>Other preferences</h2>
+  {% if saved %}<p role="status" class="flash">Saved.</p>{% endif %}
+  <form method="post">
+    <p>
+      <label for="EMAIL_NOTIFICATION_TO">Notification email (optional, via Resend)</label>
+      <input
+        id="EMAIL_NOTIFICATION_TO"
+        name="EMAIL_NOTIFICATION_TO"
+        type="email"
+        value="{{ email_notification_to }}"
+        autocomplete="off"
+        spellcheck="false">
+    </p>
+    <button type="submit">Save</button>
+  </form>
+</section>
+{% endblock %}
