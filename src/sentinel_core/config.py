@@ -55,9 +55,10 @@ class Settings:
     SESSION_SECRET: Optional[str] = None
 
     # ----- Monitoring -----
-    POLL_INTERVAL_SECONDS: int = 30
+    # Per-stream poll intervals live on the stream's own config (RSS: poll_seconds,
+    # email: hard-coded 60s). Lookback is the cap used by new email streams when
+    # they first start up — how far back to scan on initial poll.
     MAX_LOOKBACK_HOURS: int = 24
-    PROCESS_ONLY_UNREAD: bool = True
 
     # ----- Logging -----
     LOG_LEVEL: str = "INFO"
@@ -65,7 +66,7 @@ class Settings:
     DISABLE_FILE_LOGGING: bool = False
 
     # ----- Gmail OAuth scopes (code-level default) -----
-    GMAIL_SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+    GMAIL_SCOPES: list[str] = ["https://www.googleapis.com/auth/gmail.readonly"]
 
     @classmethod
     def load(cls, db: "EmailDatabase") -> None:
@@ -75,7 +76,11 @@ class Settings:
                 continue
             default = getattr(cls, key)
             target = type(default) if default is not None else str
-            setattr(cls, key, _coerce(raw, target))
+            try:
+                value = _coerce(raw, target)
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"Invalid {key!r}: {raw!r}") from e
+            setattr(cls, key, value)
 
     @classmethod
     def validate(cls) -> bool:

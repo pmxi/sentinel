@@ -2,33 +2,42 @@
 
 Auth is delegated to a pluggable IdentityProvider (see web/auth/). The rest of
 this module is mode-agnostic: every route asks the provider for the current
-user_id and scopes its db queries by that id. In local mode the provider is a
-null-auth singleton; in hosted mode it's Google OAuth.
+user_id and scopes its db queries by that id.
 
 Operator-level settings (LLM key, Resend, etc.) are NOT editable via this UI
 — the operator configures them via `sentinel init` at deploy time. End users
-only see their own preferences.
+only see their own streams and preferences.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import queue
 import secrets
+import threading
 from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional
 
+import time
+
 from flask import (
     Flask,
+    Response,
     abort,
     current_app,
     redirect,
     render_template,
     request,
+    stream_with_context,
     url_for,
 )
 
 from sentinel_core.config import Settings, settings
 from sentinel_core.database import EmailDatabase
+from sentinel_core.live_bus import LiveEventBus
+from sentinel_core.logging_config import get_logger
+from sentinel_core.monitor import Monitor
 from sentinel_core.streams.email.mail_config import (
     AccountSettings,
     AuthConfig,
@@ -36,18 +45,33 @@ from sentinel_core.streams.email.mail_config import (
     MailAccountConfig,
     MailProvider,
 )
+from sentinel_core.streams.registry import all_specs, ensure_loaded
+from sentinel_core.streams.rss.config import RSSStreamConfig
+from sentinel_core.time_utils import utc_now
 from sentinel_app.web.auth import build_provider
 from sentinel_app.web.imap_probe import probe_imap
+
+logger = get_logger(__name__)
 
 
 def create_app(db_path: Optional[str] = None) -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.config["DB_PATH"] = db_path or settings.DATABASE_PATH
     _bootstrap_settings(app)
+    ensure_loaded()
 
     identity = build_provider(Settings.DEPLOYMENT_MODE, app.config["DB_PATH"])
     identity.init_app(app)
     app.extensions["identity"] = identity
+
+    # In local (single-user, single-process) mode, run the supervisor in a
+    # background thread so there's only one command to start Sentinel and
+    # the live feed can fan out events in-memory with zero polling.
+    #
+    # Hosted mode intentionally keeps the supervisor as a separate process
+    # (isolation, multi-worker web servers, scale-out) — the SSE handler
+    # falls back to tailing the live_events table in sqlite.
+    app.extensions["live_bus"] = _maybe_start_embedded_monitor(app)
 
     def open_db() -> EmailDatabase:
         return EmailDatabase(app.config["DB_PATH"])
@@ -74,8 +98,8 @@ def create_app(db_path: Optional[str] = None) -> Flask:
             processed_count = db.get_processed_count(user_id=uid)
             last_check = db.get_last_check_time(uid)
             monitoring_start = db.get_monitoring_start_time(uid)
-            recent = _fetch_recent_processed(db, uid, limit=25)
-            accounts_count = len(db.list_accounts(uid))
+            recent = db.recent_processed_items(uid, limit=25)
+            streams_count = len(db.list_streams(uid))
             health = _daemon_health(last_check)
         finally:
             db.close()
@@ -86,7 +110,7 @@ def create_app(db_path: Optional[str] = None) -> Flask:
             last_check=last_check,
             monitoring_start=monitoring_start,
             recent=recent,
-            accounts_count=accounts_count,
+            streams_count=streams_count,
             health=health,
         )
 
@@ -124,7 +148,7 @@ def create_app(db_path: Optional[str] = None) -> Flask:
         if not Settings.TELEGRAM_BOT_USERNAME:
             abort(500, "TELEGRAM_BOT_USERNAME not configured")
         token = secrets.token_urlsafe(24)
-        expires = datetime.now() + timedelta(minutes=10)
+        expires = utc_now() + timedelta(minutes=10)
         db = open_db()
         try:
             db.create_telegram_link_token(uid, token, expires)
@@ -171,11 +195,97 @@ def create_app(db_path: Optional[str] = None) -> Flask:
         finally:
             db.close()
 
-    # ------------------------------------------------------------------ accounts (per-user)
+    # ------------------------------------------------------------------ live feed (SSE)
 
-    @app.route("/accounts/new", methods=["GET", "POST"])
+    @app.route("/events/stream")
     @identity.login_required
-    def new_account_page():
+    def events_stream():
+        uid = identity.current_user_id()
+        bus: Optional[LiveEventBus] = app.extensions.get("live_bus")
+
+        # Start from the latest id so a new connection doesn't replay an
+        # hour of history. Client passes Last-Event-ID on reconnect to
+        # resume without gaps.
+        last_id_header = request.headers.get("Last-Event-ID")
+        since_param = request.args.get("since")
+        try:
+            if last_id_header is not None:
+                cursor = int(last_id_header)
+            elif since_param is not None:
+                cursor = int(since_param)
+            else:
+                db = open_db()
+                try:
+                    cursor = db.latest_live_event_id(uid)
+                finally:
+                    db.close()
+        except (ValueError, TypeError):
+            cursor = 0
+
+        if bus is not None:
+            generate = _sse_push_loop(app.config["DB_PATH"], uid, cursor, bus)
+        else:
+            generate = _sse_poll_loop(app.config["DB_PATH"], uid, cursor)
+
+        return Response(
+            stream_with_context(generate)(),
+            mimetype="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+                "Connection": "keep-alive",
+            },
+        )
+
+    # ------------------------------------------------------------------ streams (per-user)
+
+    @app.route("/streams")
+    @identity.login_required
+    def streams_page():
+        uid = identity.current_user_id()
+        db = open_db()
+        try:
+            rows = []
+            for row in db.list_streams(uid):
+                entry = {
+                    "name": row["name"],
+                    "stream_type": row["stream_type"],
+                    "enabled": True,
+                    "detail": "",
+                    "error": None,
+                }
+                try:
+                    if row["stream_type"] == "email":
+                        cfg = MailAccountConfig.model_validate_json(row["config_json"])
+                        entry["enabled"] = cfg.enabled
+                        entry["detail"] = (
+                            f"{cfg.auth.username}@{cfg.server}"
+                            if cfg.provider in (MailProvider.IMAP, "imap")
+                            else str(cfg.provider)
+                        )
+                    elif row["stream_type"] == "rss":
+                        cfg = RSSStreamConfig.model_validate_json(row["config_json"])
+                        entry["enabled"] = cfg.enabled
+                        entry["detail"] = str(cfg.feed_url)
+                except Exception as e:
+                    entry["error"] = str(e)
+                    entry["enabled"] = False
+                rows.append(entry)
+            return render_template("streams.html", streams=rows)
+        finally:
+            db.close()
+
+    @app.route("/streams/new")
+    @identity.login_required
+    def new_stream_page():
+        return render_template(
+            "new_stream.html",
+            stream_specs=all_specs(),
+        )
+
+    @app.route("/streams/new/email", methods=["GET", "POST"])
+    @identity.login_required
+    def new_email_stream_page():
         uid = identity.current_user_id()
         providers = _imap_provider_presets()
 
@@ -192,7 +302,7 @@ def create_app(db_path: Optional[str] = None) -> Flask:
 
             errors: List[str] = []
             if not name:
-                errors.append("Pick a friendly name for this account.")
+                errors.append("Pick a friendly name for this stream.")
             if not username:
                 errors.append("Email address is required.")
             if not password:
@@ -207,9 +317,9 @@ def create_app(db_path: Optional[str] = None) -> Flask:
 
             db = open_db()
             try:
-                if name and db.get_account(uid, name):
+                if name and db.get_stream(uid, name):
                     errors.append(
-                        f"You already have an account named {name!r}. Pick a different name."
+                        f"You already have a stream named {name!r}. Pick a different name."
                     )
 
                 if not errors:
@@ -219,7 +329,7 @@ def create_app(db_path: Optional[str] = None) -> Flask:
 
                 if errors:
                     return render_template(
-                        "new_account.html",
+                        "new_email_stream.html",
                         providers=providers,
                         errors=errors,
                         form={
@@ -242,63 +352,102 @@ def create_app(db_path: Optional[str] = None) -> Flask:
                     ),
                     settings=AccountSettings(),
                 )
-                db.upsert_account(uid, name, config.model_dump_json())
+                db.upsert_stream(uid, name, "email", config.model_dump_json())
             finally:
                 db.close()
-            return redirect(url_for("accounts_page"))
+            return redirect(url_for("streams_page"))
 
         return render_template(
-            "new_account.html",
+            "new_email_stream.html",
             providers=providers,
             errors=[],
             form={"preset": "gmail", "name": "", "username": "", "server": "", "port": ""},
         )
 
-    @app.route("/accounts")
+    @app.route("/streams/new/rss", methods=["GET", "POST"])
     @identity.login_required
-    def accounts_page():
+    def new_rss_stream_page():
         uid = identity.current_user_id()
-        db = open_db()
-        try:
-            rows = []
-            for name, raw in db.list_accounts(uid).items():
-                try:
-                    acc = MailAccountConfig.model_validate_json(raw)
-                    rows.append({"name": name, "provider": acc.provider, "enabled": acc.enabled})
-                except Exception as e:
-                    rows.append(
-                        {"name": name, "provider": "invalid", "enabled": False, "error": str(e)}
+
+        if request.method == "POST":
+            name = request.form.get("name", "").strip()
+            feed_url = request.form.get("feed_url", "").strip()
+            poll_str = request.form.get("poll_seconds", "300").strip()
+
+            errors: List[str] = []
+            if not name:
+                errors.append("Pick a friendly name for this stream.")
+            if not feed_url:
+                errors.append("Feed URL is required.")
+            try:
+                poll_seconds = int(poll_str)
+            except ValueError:
+                errors.append(f"Poll interval must be a number (got {poll_str!r}).")
+                poll_seconds = 300
+
+            db = open_db()
+            try:
+                if name and db.get_stream(uid, name):
+                    errors.append(
+                        f"You already have a stream named {name!r}. Pick a different name."
                     )
-            return render_template("accounts.html", accounts=rows)
-        finally:
-            db.close()
+                if not errors:
+                    try:
+                        config = RSSStreamConfig(
+                            feed_url=feed_url, poll_seconds=poll_seconds
+                        )
+                    except Exception as e:
+                        errors.append(f"Invalid config: {e}")
+                        config = None
 
-    @app.route("/accounts/<name>/toggle", methods=["POST"])
+                if errors or config is None:
+                    return render_template(
+                        "new_rss_stream.html",
+                        errors=errors,
+                        form={
+                            "name": name,
+                            "feed_url": feed_url,
+                            "poll_seconds": poll_str,
+                        },
+                    )
+
+                db.upsert_stream(uid, name, "rss", config.model_dump_json())
+            finally:
+                db.close()
+            return redirect(url_for("streams_page"))
+
+        return render_template(
+            "new_rss_stream.html",
+            errors=[],
+            form={"name": "", "feed_url": "", "poll_seconds": "300"},
+        )
+
+    @app.route("/streams/<name>/toggle", methods=["POST"])
     @identity.login_required
-    def toggle_account(name: str):
+    def toggle_stream(name: str):
         uid = identity.current_user_id()
         db = open_db()
         try:
-            raw = db.get_account(uid, name)
-            if not raw:
+            row = db.get_stream(uid, name)
+            if not row:
                 abort(404)
-            data = json.loads(raw)
+            data = json.loads(row["config_json"])
             data["enabled"] = not data.get("enabled", True)
-            db.upsert_account(uid, name, json.dumps(data))
-            return redirect(url_for("accounts_page"))
+            db.upsert_stream(uid, name, row["stream_type"], json.dumps(data))
+            return redirect(url_for("streams_page"))
         finally:
             db.close()
 
-    @app.route("/accounts/<name>/delete", methods=["POST"])
+    @app.route("/streams/<name>/delete", methods=["POST"])
     @identity.login_required
-    def delete_account(name: str):
+    def delete_stream(name: str):
         uid = identity.current_user_id()
         db = open_db()
         try:
-            if not db.get_account(uid, name):
+            if not db.get_stream(uid, name):
                 abort(404)
-            db.delete_account(uid, name)
-            return redirect(url_for("accounts_page"))
+            db.delete_stream(uid, name)
+            return redirect(url_for("streams_page"))
         finally:
             db.close()
 
@@ -308,7 +457,6 @@ def create_app(db_path: Optional[str] = None) -> Flask:
 # ------------------------------------------------------------------ helpers
 
 def _bootstrap_settings(app: Flask) -> None:
-    """Load Settings from the DB so the chosen IdentityProvider can read them."""
     db = EmailDatabase(app.config["DB_PATH"])
     try:
         Settings.load(db)
@@ -316,26 +464,115 @@ def _bootstrap_settings(app: Flask) -> None:
         db.close()
 
 
+def _maybe_start_embedded_monitor(app: Flask) -> Optional[LiveEventBus]:
+    """Start the supervisor in-process for local mode. Returns the shared
+    bus, or None if this process shouldn't run a monitor."""
+    if Settings.DEPLOYMENT_MODE != "local":
+        return None
+    if not Settings.LLM_API_KEY:
+        logger.info(
+            "LLM_API_KEY not configured — skipping embedded monitor. "
+            "Run `sentinel init --local` to configure."
+        )
+        return None
+    # Werkzeug's reloader spawns two processes; only the reloaded child
+    # should run the supervisor (it's the one that survives across restarts).
+    import os
+    if os.environ.get("WERKZEUG_RUN_MAIN") == "false":
+        return None
+
+    bus = LiveEventBus()
+
+    def _run_monitor() -> None:
+        try:
+            db = EmailDatabase(app.config["DB_PATH"])
+            monitor = Monitor(db, bus=bus)
+            asyncio.run(monitor.run())
+        except Exception as e:
+            logger.exception(f"Embedded monitor crashed: {e}")
+
+    thread = threading.Thread(
+        target=_run_monitor, name="sentinel-monitor", daemon=True
+    )
+    thread.start()
+    logger.info("Embedded monitor started in background thread")
+    return bus
+
+
+def _sse_push_loop(db_path: str, uid: int, cursor: int, bus: LiveEventBus):
+    """Generator factory for the local-mode SSE: subscribe first (so nothing
+    published after this point is missed), replay any catch-up events from
+    the db, then block on the bus queue. Zero polling after the initial
+    catch-up."""
+    def generate():
+        nonlocal cursor
+        yield "retry: 3000\n: connected\n\n"
+        q = bus.subscribe()
+        try:
+            db = EmailDatabase(db_path)
+            try:
+                for row in db.fetch_live_events_since(uid, cursor, limit=500):
+                    cursor = int(row["id"])
+                    yield _sse_frame(cursor, row["event_type"], row["payload_json"])
+            finally:
+                db.close()
+
+            while True:
+                try:
+                    event = q.get(timeout=15)
+                except queue.Empty:
+                    yield ": keepalive\n\n"
+                    continue
+                if event.user_id != uid:
+                    continue
+                if event.event_id <= cursor:
+                    continue
+                cursor = event.event_id
+                yield _sse_frame(cursor, event.event_type, event.payload_json)
+        finally:
+            bus.unsubscribe(q)
+    return generate
+
+
+def _sse_poll_loop(db_path: str, uid: int, cursor: int):
+    """Generator factory for the hosted-mode SSE: tail the live_events
+    table every 500ms."""
+    def generate():
+        nonlocal cursor
+        yield "retry: 3000\n: connected\n\n"
+        heartbeat_countdown = 30
+        db = EmailDatabase(db_path)
+        try:
+            while True:
+                rows = db.fetch_live_events_since(uid, cursor, limit=200)
+                if rows:
+                    for row in rows:
+                        cursor = int(row["id"])
+                        yield _sse_frame(cursor, row["event_type"], row["payload_json"])
+                    heartbeat_countdown = 30
+                else:
+                    heartbeat_countdown -= 1
+                    if heartbeat_countdown <= 0:
+                        yield ": keepalive\n\n"
+                        heartbeat_countdown = 30
+                time.sleep(0.5)
+        finally:
+            db.close()
+    return generate
+
+
+def _sse_frame(event_id: int, event_type: str, payload_json: str) -> str:
+    return f"id: {event_id}\nevent: {event_type}\ndata: {payload_json}\n\n"
+
+
 def _daemon_health(last_check: Optional[datetime]) -> Dict[str, Any]:
     if last_check is None:
         return {"status": "never run", "ok": False}
-    age_s = (datetime.now() - last_check).total_seconds()
-    threshold = max(3 * Settings.POLL_INTERVAL_SECONDS, 60)
+    age_s = (utc_now() - last_check).total_seconds()
+    threshold = max(3 * 60, 60)  # consider the daemon stale after ~3 minutes
     if age_s < threshold:
         return {"status": f"running (last check {int(age_s)}s ago)", "ok": True}
     return {"status": f"stale (last check {int(age_s)}s ago)", "ok": False}
-
-
-def _fetch_recent_processed(
-    db: EmailDatabase, user_id: int, limit: int = 25
-) -> List[Dict[str, Any]]:
-    cursor = db.conn.execute(
-        "SELECT email_id, provider, subject, sender, processed_at "
-        "FROM processed_emails WHERE user_id = ? "
-        "ORDER BY processed_at DESC LIMIT ?",
-        (user_id, limit),
-    )
-    return [dict(row) for row in cursor.fetchall()]
 
 
 def _imap_provider_presets() -> Dict[str, Dict[str, Any]]:
@@ -387,15 +624,13 @@ def _imap_provider_presets() -> Dict[str, Dict[str, Any]]:
 
 def _base_prompt_preview() -> str:
     return (
-        "You are an email classification assistant. "
-        "Analyze the following email and classify it as IMPORTANT or NORMAL.\n\n"
-        "IMPORTANT:\n"
-        "- Addressed to me personally\n"
-        "- Job interview offer\n"
-        "- Legal matter\n"
-        "- Urgent\n\n"
-        "NORMAL:\n"
-        "- Everything else, including newsletters, mass mailings, and apparent scams"
+        "You are a classification assistant. The user subscribes to several "
+        "information streams (email, RSS, ...) and wants to be alerted only to "
+        "the items that genuinely matter.\n\n"
+        "For emails, IMPORTANT means: addressed to me personally, job interview "
+        "offers, legal matters, urgent. NORMAL means everything else.\n\n"
+        "For RSS items, IMPORTANT means: major breaking news with real "
+        "consequences, security advisories, releases the user cares about."
     )
 
 

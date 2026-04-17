@@ -2,8 +2,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import List, Optional
 
-from .gmail.models import EmailData
 from .mail_config import MailAccountConfig
+from .models import EmailData
 
 
 class EmailClient(ABC):
@@ -38,3 +38,7 @@ class EmailClient(ABC):
     def mark_as_read(self, message_id: str):
         """Mark email as read"""
         pass
+
+    def close(self) -> None:
+        """Release any underlying resources held by the client."""
+        return None

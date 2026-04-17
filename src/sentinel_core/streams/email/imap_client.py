@@ -3,13 +3,15 @@ import imaplib
 from datetime import datetime
 from email.header import decode_header
 from email.message import Message
+from email.utils import parsedate_to_datetime
 from typing import List, Optional
 
 from sentinel_core.logging_config import get_logger
+from sentinel_core.time_utils import ensure_utc
 
 from .email_client_base import EmailClient
-from .gmail.models import EmailData
 from .mail_config import AuthMethod, MailAccountConfig
+from .models import EmailData
 
 logger = get_logger(__name__)
 
@@ -20,7 +22,6 @@ class IMAPClient(EmailClient):
     def __init__(self, account_name: str, config: MailAccountConfig):
         # Initialize base with account_name and its MailAccountConfig
         super().__init__(account_name, config)
-        self.config = config
         self.connection = None
 
         # Validate IMAP configuration
@@ -140,16 +141,16 @@ class IMAPClient(EmailClient):
 
             for email_id in email_ids:
                 email_data = self._fetch_email(email_id.decode())
-                if (
-                    email_data
-                    and self._parse_date(email_data.received_date) > after_timestamp
-                ):
+                if not email_data:
+                    continue
+                received_at = self._parse_date(email_data.received_date)
+                if received_at is not None and received_at > after_timestamp:
                     emails.append(email_data)
 
             return emails
         except Exception as e:
             logger.error(f"Error getting emails after timestamp: {e}")
-            return []
+            raise
 
     def _fetch_email(self, email_id: str) -> Optional[EmailData]:
         """Fetch and parse a single email"""
@@ -257,14 +258,10 @@ class IMAPClient(EmailClient):
 
         return body
 
-    def _parse_date(self, date_str: str) -> datetime:
+    def _parse_date(self, date_str: str) -> Optional[datetime]:
         """Parse email date string to datetime"""
         try:
-            # Remove timezone info for simpler parsing
-            date_str = date_str.split(" (")[0]
-            return datetime.strptime(date_str, "%a, %d %b %Y %H:%M:%S %z").replace(
-                tzinfo=None
-            )
-        except (ValueError, AttributeError) as e:
-            logger.warning(f"Failed to parse email date '{date_str}': {e}. Using current time.")
-            return datetime.now()
+            return ensure_utc(parsedate_to_datetime(date_str))
+        except (TypeError, ValueError, IndexError, AttributeError) as e:
+            logger.warning(f"Failed to parse email date {date_str!r}: {e}")
+            return None

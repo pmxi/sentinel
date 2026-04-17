@@ -1,70 +1,73 @@
-"""Continuous multi-tenant email-monitoring loop.
+"""Async supervisor that drives every user's every stream.
 
-One daemon iterates over every user in the database on each tick:
-  - loads the user's mail accounts and per-user preferences
-  - builds a notifier from their preferences (Telegram for now)
-  - fetches new mail from each enabled account
-  - classifies via the shared OpenAI client, passing the user's notes
-  - notifies on IMPORTANT, no-ops otherwise
-  - records processing in the per-user ledger
+For each (user, stream) pair the supervisor spawns one asyncio task running
+`async for item in stream.items(): ...`. Streams own their own cadence and
+reconnect logic; the supervisor only handles classification, notification,
+dedup, and restart-on-crash.
 
-A single user's failure (bad OAuth, offline IMAP, classifier error) does
-not halt the loop or affect other users — it's logged and the tick moves on.
+Signals: SIGINT / SIGTERM set a shutdown event and cancel all tasks.
 """
 
-import signal
-import time
-from datetime import datetime, timedelta
-from types import FrameType
-from typing import Any, Dict, Optional
+from __future__ import annotations
 
-from sentinel_core.classifier.email_classifier import (
-    ClassificationResult,
-    EmailClassifier,
+import asyncio
+import json
+import signal
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+from openai import (
+    APIConnectionError,
+    APIStatusError,
+    APITimeoutError,
+    InternalServerError,
+    RateLimitError,
 )
+
+from sentinel_core.classifier import ClassificationResult, ItemClassifier
 from sentinel_core.config import settings
-from sentinel_core.database import EmailDatabase
-from sentinel_core.streams.email.email_client_base import EmailClient
-from sentinel_core.streams.email.email_client_factory import EmailClientFactory
-from sentinel_core.streams.email.mail_config import MailboxesConfig
-from sentinel_core.streams.email.models import EmailData
+from sentinel_core.live_bus import LiveEvent, LiveEventBus
 from sentinel_core.logging_config import get_logger
-from sentinel_core.notify.email_notifier import EmailNotifier
-from sentinel_core.notify.telegram_email_notifier import TelegramEmailNotifier
+from sentinel_core.notify.item_notifier import ItemNotifier
+from sentinel_core.notify.telegram_item_notifier import TelegramItemNotifier
 from sentinel_core.notify.telegram_notifier import TelegramNotifier
+from sentinel_core.streams.base import Item, Stream
+from sentinel_core.streams.registry import build_stream, ensure_loaded
 from sentinel_core.telegram_bot import start_in_thread as start_telegram_listener
+from sentinel_core.time_utils import utc_now
 from sentinel_core.user_settings import UserSettings
+
+if TYPE_CHECKING:
+    from sentinel_core.database import EmailDatabase
 
 logger = get_logger("sentinel.monitor")
 
 
-class EmailMonitor:
-    """Top-level daemon. Iterates users and processes their mail on each tick."""
+# How long to wait before restarting a stream task that raised.
+_RESTART_DELAY_SECONDS = 30
 
-    def __init__(self, database: EmailDatabase):
-        logger.info("Initializing EmailMonitor")
+
+class Monitor:
+    """Top-level async supervisor."""
+
+    def __init__(
+        self,
+        database: "EmailDatabase",
+        bus: Optional[LiveEventBus] = None,
+    ):
+        logger.info("Initializing Monitor")
+        ensure_loaded()
         self.db = database
-        self.classifier = EmailClassifier()
-        self.running = True
+        self.classifier = ItemClassifier()
+        self.bus = bus
+        self._shutdown = asyncio.Event()
+        self._tasks: List[asyncio.Task] = []
 
-        signal.signal(signal.SIGINT, self._signal_handler)
-        signal.signal(signal.SIGTERM, self._signal_handler)
+    async def run(self) -> None:
+        logger.info("Starting Sentinel supervisor")
 
-        logger.info("EmailMonitor initialization complete")
+        self._install_signal_handlers()
 
-    def _signal_handler(self, signum: int, frame: Optional[FrameType]) -> None:
-        logger.info(f"Received signal {signum}. Initiating graceful shutdown...")
-        self.running = False
-
-    def run(self) -> None:
-        logger.info(
-            "Starting Sentinel monitor: poll=%ss, max_lookback=%sh",
-            settings.POLL_INTERVAL_SECONDS,
-            settings.MAX_LOOKBACK_HOURS,
-        )
-
-        # Spawn the Telegram bot listener so /start <token> links land in
-        # user_settings without a separate long-running process.
         if settings.TELEGRAM_BOT_TOKEN:
             start_telegram_listener(settings.DATABASE_PATH)
         else:
@@ -73,191 +76,265 @@ class EmailMonitor:
                 "Telegram linking will not work until it's configured"
             )
 
-        while self.running:
-            try:
-                self._tick()
-            except KeyboardInterrupt:
-                logger.info("Keyboard interrupt received")
-                break
-            except Exception as e:
-                logger.error(f"Unexpected error in monitor tick: {e}", exc_info=True)
-
-            if self.running:
-                time.sleep(settings.POLL_INTERVAL_SECONDS)
-
-        logger.info("Monitor loop ended. Cleaning up...")
-        self.db.close()
-        logger.info("Monitor stopped successfully")
-
-    def _tick(self) -> None:
-        users = self.db.list_users()
+        users = await asyncio.to_thread(self.db.list_users)
         if not users:
-            logger.debug("No users yet; skipping tick")
-            return
+            logger.warning("No users yet; supervisor will idle until a user is added")
+
         for user in users:
+            await self._spawn_user_streams(user)
+
+        if not self._tasks:
+            logger.info("No streams to run. Waiting for shutdown signal.")
+            await self._shutdown.wait()
+        else:
+            logger.info(f"Supervising {len(self._tasks)} stream tasks")
+            await self._shutdown.wait()
+
+        await self._cancel_all()
+        logger.info("Supervisor stopped successfully")
+
+    # ------------------------------------------------------------------ spawn
+
+    async def _spawn_user_streams(self, user: Dict[str, Any]) -> None:
+        user_id = int(user["id"])
+        rows = await asyncio.to_thread(self.db.list_streams, user_id)
+        if not rows:
+            logger.debug(f"user_id={user_id} ({user['email']}) has no streams")
+            return
+
+        await asyncio.to_thread(self._ensure_monitoring_start, user_id)
+
+        for row in rows:
             try:
-                self._process_user(user)
+                stream = build_stream(
+                    stream_type=row["stream_type"],
+                    name=row["name"],
+                    config_json=row["config_json"],
+                    db=self.db,
+                    user_id=user_id,
+                )
             except Exception as e:
                 logger.error(
-                    f"Error processing user_id={user['id']} ({user['email']}): {e}",
-                    exc_info=True,
+                    f"Failed to build stream {row['name']!r} "
+                    f"(type={row['stream_type']}) for user_id={user_id}: {e}"
                 )
-
-    def _process_user(self, user: Dict[str, Any]) -> None:
-        user_id = int(user["id"])
-        user_settings = UserSettings.load(self.db, user_id)
-        mailboxes = MailboxesConfig.from_db(self.db, user_id)
-        enabled = mailboxes.get_enabled_accounts()
-        if not enabled:
-            logger.debug(f"user_id={user_id} has no enabled accounts")
-            return
-
-        notifier = self._build_notifier(user_settings)
-        if notifier is None:
-            logger.warning(
-                f"user_id={user_id} ({user['email']}) has no notification channel configured; "
-                "their mail will be classified but IMPORTANT alerts have nowhere to go"
+                continue
+            task = asyncio.create_task(
+                self._run_stream(user_id, stream),
+                name=f"stream:{user_id}:{row['name']}",
             )
+            self._tasks.append(task)
 
-        last_check = self._initialize_monitoring(user_id)
-        after_timestamp = self._clamp_to_max_lookback(last_check)
+    def _ensure_monitoring_start(self, user_id: int) -> None:
+        if self.db.get_monitoring_start_time(user_id) is None:
+            self.db.set_monitoring_start_time(user_id, utc_now())
 
-        for account_name, account_config in enabled.items():
+    async def _run_stream(self, user_id: int, stream: Stream) -> None:
+        """Drive one stream. Restarts after a delay if items() raises."""
+        while not self._shutdown.is_set():
             try:
-                client = EmailClientFactory.create(
-                    account_name, account_config, db=self.db, user_id=user_id
+                user_notes = await asyncio.to_thread(
+                    self._load_user_notes, user_id
                 )
-                self._process_account(
-                    user_id=user_id,
-                    user_notes=user_settings.CLASSIFICATION_NOTES,
-                    client=client,
-                    notifier=notifier,
-                    after_timestamp=after_timestamp,
+                notifier = await asyncio.to_thread(
+                    self._build_notifier, user_id
                 )
+                async for item in stream.items():
+                    if self._shutdown.is_set():
+                        return
+                    await self._handle_item(user_id, user_notes, notifier, item)
+                    await asyncio.to_thread(
+                        self.db.update_last_check_time, user_id, utc_now()
+                    )
+                # Generator exited normally — stream is done (e.g. disabled).
+                return
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
-                logger.warning(
-                    f"Account '{account_name}' for user_id={user_id} failed: {e}",
-                    exc_info=True,
+                logger.exception(
+                    f"Stream {stream.name!r} (user_id={user_id}) crashed: {e}. "
+                    f"Restarting in {_RESTART_DELAY_SECONDS}s"
                 )
+                try:
+                    await asyncio.wait_for(
+                        self._shutdown.wait(), timeout=_RESTART_DELAY_SECONDS
+                    )
+                    return  # shutdown fired during the delay
+                except asyncio.TimeoutError:
+                    continue
 
-        self.db.update_last_check_time(user_id, datetime.now())
+    # ------------------------------------------------------------------ per-item
 
-    def _build_notifier(self, user_settings: UserSettings) -> Optional[EmailNotifier]:
-        if user_settings.has_telegram() and settings.TELEGRAM_BOT_TOKEN:
-            return TelegramEmailNotifier(
-                TelegramNotifier(
-                    bot_token=settings.TELEGRAM_BOT_TOKEN,  # operator-shared bot
-                    chat_id=user_settings.TELEGRAM_CHAT_ID,
-                )
-            )
-        # Email-as-notification-channel (via Resend) to be wired up later;
-        # for now Telegram is the only option.
-        return None
-
-    def _initialize_monitoring(self, user_id: int) -> datetime:
-        monitoring_start = self.db.get_monitoring_start_time(user_id)
-        if not monitoring_start:
-            monitoring_start = datetime.now()
-            self.db.set_monitoring_start_time(user_id, monitoring_start)
-            logger.info(
-                f"First tick for user_id={user_id}. Setting monitoring start to {monitoring_start}"
-            )
-        return self.db.get_last_check_time(user_id) or monitoring_start
-
-    def _clamp_to_max_lookback(self, after_timestamp: datetime) -> datetime:
-        max_lookback = datetime.now() - timedelta(hours=settings.MAX_LOOKBACK_HOURS)
-        return max(after_timestamp, max_lookback)
-
-    def _process_account(
+    async def _handle_item(
         self,
         user_id: int,
         user_notes: str,
-        client: EmailClient,
-        notifier: Optional[EmailNotifier],
-        after_timestamp: datetime,
+        notifier: Optional[ItemNotifier],
+        item: Item,
     ) -> None:
-        account_config = client.config
-        process_unread = account_config.settings.process_only_unread
+        already = await asyncio.to_thread(
+            self.db.is_item_processed, user_id, item.source_type, item.id
+        )
+        if already:
+            return
 
+        logger.info(
+            f"user_id={user_id} source={item.source_type} id={item.id} "
+            f"author={item.author[:60]} title={item.title[:60]!r}"
+        )
+
+        await asyncio.to_thread(
+            self._emit_event, user_id, "item_received", _item_event_payload(item)
+        )
+
+        should_mark_processed = False
         try:
-            emails = client.get_emails_after_timestamp(
-                after_timestamp, unread_only=process_unread
+            classification = await self.classifier.classify(item, notes=user_notes)
+            logger.info(
+                f"  → {classification.priority.value.upper()}: "
+                f"{(classification.summary or '')[:100]}"
             )
+            await asyncio.to_thread(
+                self._emit_event,
+                user_id,
+                "item_classified",
+                {
+                    **_item_event_payload(item),
+                    "priority": classification.priority.value,
+                    "summary": classification.summary or "",
+                    "reasoning": classification.reasoning,
+                },
+            )
+            if classification.is_important() and notifier is not None:
+                await self._send_notification(notifier, item, classification)
+            should_mark_processed = True
         except Exception as e:
             logger.error(
-                f"Error fetching emails from {client.provider_type} (user_id={user_id}): {e}"
+                f"Error classifying item {item.source_type}/{item.id}: {e}",
+                exc_info=True,
             )
+            should_mark_processed = not _is_transient_classification_error(e)
+            if not should_mark_processed:
+                logger.info(
+                    "Leaving item unprocessed so classification can retry: "
+                    f"user_id={user_id} source={item.source_type} id={item.id}"
+                )
+
+        if not should_mark_processed:
             return
 
-        new_emails = [
-            email for email in emails if not self.db.is_email_processed(user_id, email.id)
-        ]
-        if not new_emails:
-            return
-
-        logger.info(
-            f"user_id={user_id}: {len(new_emails)} new email(s) from {client.provider_type}"
-        )
-        for email in new_emails:
-            self._process_email(user_id, user_notes, client, notifier, email)
-
-    def _process_email(
-        self,
-        user_id: int,
-        user_notes: str,
-        client: EmailClient,
-        notifier: Optional[EmailNotifier],
-        email: EmailData,
-    ) -> None:
-        logger.info(
-            f"Processing user_id={user_id} provider={email.provider} id={email.id} "
-            f"from={email.sender[:60]} subject={email.subject[:60]!r}"
-        )
         try:
-            classification = self.classifier.classify_email(email, notes=user_notes)
-            logger.info(
-                f"  → {classification.priority.value.upper()}: {(classification.summary or '')[:100]}"
-            )
-
-            if classification.is_important() and notifier is not None:
-                self._send_notification(notifier, email, classification)
-
-            if not email.is_read:
-                try:
-                    client.mark_as_read(email.id)
-                except Exception as e:
-                    logger.warning(f"Failed to mark {email.id} as read: {e}")
-
-            self.db.mark_email_processed(
-                user_id=user_id,
-                email_id=email.id,
-                provider=email.provider,
-                subject=email.subject,
-                sender=email.sender,
+            await asyncio.to_thread(
+                self.db.mark_item_processed,
+                user_id,
+                item.source_type,
+                item.id,
+                item.title,
+                item.author,
+                str(item.metadata.get("stream_name", "")) if item.metadata else "",
             )
         except Exception as e:
-            logger.error(f"Error processing email {email.id}: {e}", exc_info=True)
-            # Record it anyway so we don't retry-loop on a broken message.
-            try:
-                self.db.mark_email_processed(
-                    user_id=user_id,
-                    email_id=email.id,
-                    provider=email.provider,
-                )
-            except Exception as db_error:
-                logger.error(f"Failed to mark email as processed: {db_error}")
+            logger.error(f"Failed to record processed item: {e}")
 
-    def _send_notification(
+    async def _send_notification(
         self,
-        notifier: EmailNotifier,
-        email: EmailData,
+        notifier: ItemNotifier,
+        item: Item,
         classification: ClassificationResult,
     ) -> None:
         try:
-            message_id = notifier.notify(email, classification)
+            message_id = await asyncio.to_thread(notifier.notify, item, classification)
             if message_id:
                 logger.info(f"Notification sent. Message ID: {message_id}")
             else:
                 logger.warning("Notifier returned no message id (send likely failed)")
         except Exception as e:
             logger.error(f"Error sending notification: {e}")
+
+    # ------------------------------------------------------------------ helpers
+
+    def _load_user_notes(self, user_id: int) -> str:
+        s = UserSettings.load(self.db, user_id)
+        return s.CLASSIFICATION_NOTES
+
+    def _build_notifier(self, user_id: int) -> Optional[ItemNotifier]:
+        s = UserSettings.load(self.db, user_id)
+        if s.has_telegram() and settings.TELEGRAM_BOT_TOKEN:
+            return TelegramItemNotifier(
+                TelegramNotifier(
+                    bot_token=settings.TELEGRAM_BOT_TOKEN,
+                    chat_id=s.TELEGRAM_CHAT_ID,
+                )
+            )
+        return None
+
+    # ------------------------------------------------------------------ shutdown
+
+    def _install_signal_handlers(self) -> None:
+        import threading
+        if threading.current_thread() is not threading.main_thread():
+            # When the monitor runs in a background thread (embedded mode),
+            # the main thread owns signals. Skip; the web process's signal
+            # handler will tear us down via daemon=True exit.
+            return
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            try:
+                loop.add_signal_handler(sig, self._request_shutdown, sig)
+            except (NotImplementedError, RuntimeError):
+                pass
+
+    def _request_shutdown(self, sig: int) -> None:
+        logger.info(f"Received signal {sig}. Initiating graceful shutdown...")
+        self._shutdown.set()
+
+    async def _cancel_all(self) -> None:
+        for task in self._tasks:
+            task.cancel()
+        for task in self._tasks:
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
+
+    def _emit_event(self, user_id: int, event_type: str, payload: Dict[str, Any]) -> None:
+        try:
+            payload_json = json.dumps(payload)
+            event_id = self.db.emit_live_event(user_id, event_type, payload_json)
+            if self.bus is not None:
+                self.bus.publish(
+                    LiveEvent(
+                        event_id=event_id,
+                        user_id=user_id,
+                        event_type=event_type,
+                        payload_json=payload_json,
+                    )
+                )
+        except Exception as e:
+            logger.warning(f"Failed to emit live event {event_type}: {e}")
+
+
+def _item_event_payload(item: Item) -> Dict[str, Any]:
+    return {
+        "source_type": item.source_type,
+        "item_id": item.id,
+        "title": item.title,
+        "author": item.author,
+        "url": item.url,
+        "stream_name": (item.metadata or {}).get("stream_name", ""),
+        "received_at": item.received_at.isoformat() if item.received_at else None,
+    }
+
+
+def _is_transient_classification_error(exc: Exception) -> bool:
+    if isinstance(
+        exc,
+        (APIConnectionError, APITimeoutError, RateLimitError, InternalServerError),
+    ):
+        return True
+    if isinstance(exc, APIStatusError):
+        status_code = getattr(exc, "status_code", None)
+        return status_code in (408, 409, 429) or (
+            isinstance(status_code, int) and status_code >= 500
+        )
+    return False

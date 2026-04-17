@@ -233,7 +233,7 @@ class MSGraphClient(EmailClient):
             return emails
         except Exception as e:
             logger.error(f"Error getting emails after timestamp: {e}", exc_info=True)
-            return []
+            raise
 
     def mark_as_read(self, message_id: str):
         """Mark email as read."""

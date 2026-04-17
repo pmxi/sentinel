@@ -140,7 +140,7 @@ class GmailClient(EmailClient):
             return emails
         except Exception as e:
             logger.error(f"Error getting emails after timestamp: {e}", exc_info=True)
-            return []
+            raise
 
     def _get_email_details(self, message_id: str) -> Optional[EmailData]:
         """Get detailed email information"""
@@ -172,4 +172,3 @@ class GmailClient(EmailClient):
         except Exception as e:
             logger.error(f"Failed to mark message {message_id} as read: {str(e)}", exc_info=True)
             raise Exception(f"Failed to mark as read: {str(e)}")
-
