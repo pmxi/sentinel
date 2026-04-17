@@ -22,6 +22,12 @@ class Settings:
     # ----- bootstrap (env only) -----
     DATABASE_PATH: str = os.getenv("DATABASE_PATH", "sentinel.db")
 
+    # ----- Deployment mode -----
+    # "local"  — single-user, no auth (sentinel init --local). Default.
+    # "hosted" — multi-tenant, Google OAuth (sentinel init --hosted).
+    DEPLOYMENT_MODE: str = "local"
+    LOCAL_USER_ID: Optional[int] = None  # set by LocalIdentity on first run
+
     # ----- LLM (operator-paid) -----
     LLM_PROVIDER: str = "openai"
     LLM_API_KEY: Optional[str] = None
@@ -76,14 +82,16 @@ class Settings:
         missing = []
         if not cls.LLM_API_KEY:
             missing.append("LLM_API_KEY")
-        if not cls.GOOGLE_CLIENT_ID or not cls.GOOGLE_CLIENT_SECRET:
-            missing.append("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET")
-        if not cls.SESSION_SECRET:
-            missing.append("SESSION_SECRET")
+        if cls.DEPLOYMENT_MODE == "hosted":
+            if not cls.GOOGLE_CLIENT_ID or not cls.GOOGLE_CLIENT_SECRET:
+                missing.append("GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET")
+            if not cls.SESSION_SECRET:
+                missing.append("SESSION_SECRET")
         if missing:
+            init_cmd = "sentinel init --hosted" if cls.DEPLOYMENT_MODE == "hosted" else "sentinel init --local"
             raise ValueError(
-                f"Missing required app settings: {', '.join(missing)}. "
-                "Configure them via 'sentinel init' or the admin web UI."
+                f"Missing required app settings for DEPLOYMENT_MODE={cls.DEPLOYMENT_MODE!r}: "
+                f"{', '.join(missing)}. Configure with '{init_cmd}'."
             )
         return True
 

@@ -1,13 +1,13 @@
-"""Flask web app — multi-tenant signup/login + per-user configuration.
+"""Flask web app — works in both local single-user and hosted multi-tenant modes.
 
-Signup/login goes through Google OAuth (identity scopes: openid email
-profile — no Gmail access). Users land on a dashboard showing their own
-status and classification history, manage their own Telegram / mail
-accounts / classification notes, and never see other users' data.
+Auth is delegated to a pluggable IdentityProvider (see web/auth/). The rest of
+this module is mode-agnostic: every route asks the provider for the current
+user_id and scopes its db queries by that id. In local mode the provider is a
+null-auth singleton; in hosted mode it's Google OAuth.
 
-Operator-level settings (LLM key, Resend, etc.) are NOT editable via
-this UI — the operator configures them via `sentinel init` at deploy
-time. End users only see their own preferences.
+Operator-level settings (LLM key, Resend, etc.) are NOT editable via this UI
+— the operator configures them via `sentinel init` at deploy time. End users
+only see their own preferences.
 """
 
 from __future__ import annotations
@@ -15,18 +15,15 @@ from __future__ import annotations
 import json
 import secrets
 from datetime import datetime, timedelta
-from functools import wraps
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
-from authlib.integrations.flask_client import OAuth
 from flask import (
     Flask,
     abort,
-    g,
+    current_app,
     redirect,
     render_template,
     request,
-    session,
     url_for,
 )
 
@@ -39,11 +36,8 @@ from sentinel_core.streams.email.mail_config import (
     MailAccountConfig,
     MailProvider,
 )
-from sentinel_core.user_settings import UserSettings
+from sentinel_app.web.auth import build_provider
 from sentinel_app.web.imap_probe import probe_imap
-
-
-GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"
 
 
 def create_app(db_path: Optional[str] = None) -> Flask:
@@ -51,82 +45,30 @@ def create_app(db_path: Optional[str] = None) -> Flask:
     app.config["DB_PATH"] = db_path or settings.DATABASE_PATH
     _bootstrap_settings(app)
 
-    app.secret_key = Settings.SESSION_SECRET
-
-    oauth = OAuth(app)
-    oauth.register(
-        name="google",
-        client_id=Settings.GOOGLE_CLIENT_ID,
-        client_secret=Settings.GOOGLE_CLIENT_SECRET,
-        server_metadata_url=GOOGLE_DISCOVERY_URL,
-        client_kwargs={"scope": "openid email profile"},
-    )
+    identity = build_provider(Settings.DEPLOYMENT_MODE, app.config["DB_PATH"])
+    identity.init_app(app)
+    app.extensions["identity"] = identity
 
     def open_db() -> EmailDatabase:
         return EmailDatabase(app.config["DB_PATH"])
 
-    def current_user_id() -> Optional[int]:
-        return session.get("user_id")
-
-    def login_required(view: Callable) -> Callable:
-        @wraps(view)
-        def wrapped(*args, **kwargs):
-            if current_user_id() is None:
-                return redirect(url_for("login"))
-            return view(*args, **kwargs)
-        return wrapped
-
     @app.context_processor
-    def inject_current_user():
-        uid = current_user_id()
-        if uid is None:
-            return {"current_user": None}
-        return {"current_user": {"id": uid, "email": session.get("email"), "name": session.get("name")}}
-
-    # ------------------------------------------------------------------ auth
-
-    @app.route("/login")
-    def login():
-        return render_template("login.html")
-
-    @app.route("/auth/google/start")
-    def auth_google_start():
-        redirect_uri = url_for("auth_google_callback", _external=True)
-        return oauth.google.authorize_redirect(redirect_uri)
-
-    @app.route("/auth/google/callback")
-    def auth_google_callback():
-        token = oauth.google.authorize_access_token()
-        userinfo = token.get("userinfo") or oauth.google.parse_id_token(token, None)
-        if not userinfo or "sub" not in userinfo:
-            abort(400, "Google did not return a user identity")
-
-        db = open_db()
-        try:
-            user_id = db.upsert_user(
-                google_sub=userinfo["sub"],
-                email=userinfo.get("email", ""),
-                name=userinfo.get("name"),
-            )
-        finally:
-            db.close()
-
-        session["user_id"] = user_id
-        session["email"] = userinfo.get("email", "")
-        session["name"] = userinfo.get("name", "")
-        return redirect(url_for("dashboard"))
-
-    @app.route("/logout", methods=["POST"])
-    def logout():
-        session.clear()
-        return redirect(url_for("login"))
+    def inject_identity():
+        ident = current_app.extensions["identity"]
+        uid = ident.current_user_id()
+        return {
+            "identity_enabled": ident.is_enabled(),
+            "current_user": (
+                {"id": uid, "email": ident.current_user_email()} if uid else None
+            ),
+        }
 
     # ------------------------------------------------------------------ dashboard
 
     @app.route("/")
-    @login_required
+    @identity.login_required
     def dashboard():
-        uid = current_user_id()
+        uid = identity.current_user_id()
         db = open_db()
         try:
             processed_count = db.get_processed_count(user_id=uid)
@@ -151,14 +93,12 @@ def create_app(db_path: Optional[str] = None) -> Flask:
     # ------------------------------------------------------------------ preferences (per-user)
 
     @app.route("/preferences", methods=["GET", "POST"])
-    @login_required
+    @identity.login_required
     def preferences_page():
-        uid = current_user_id()
+        uid = identity.current_user_id()
         db = open_db()
         try:
             if request.method == "POST":
-                # Only EMAIL_NOTIFICATION_TO is edited via this form now.
-                # TELEGRAM_CHAT_ID is populated by the bot linking flow.
                 raw = request.form.get("EMAIL_NOTIFICATION_TO", "").strip()
                 if raw:
                     db.set_user_setting(uid, "EMAIL_NOTIFICATION_TO", raw)
@@ -167,10 +107,9 @@ def create_app(db_path: Optional[str] = None) -> Flask:
                 return redirect(url_for("preferences_page", saved=1))
 
             stored = db.get_all_user_settings(uid)
-            telegram_chat_id = stored.get("TELEGRAM_CHAT_ID", "")
             return render_template(
                 "preferences.html",
-                telegram_chat_id=telegram_chat_id,
+                telegram_chat_id=stored.get("TELEGRAM_CHAT_ID", ""),
                 telegram_bot_username=Settings.TELEGRAM_BOT_USERNAME,
                 email_notification_to=stored.get("EMAIL_NOTIFICATION_TO", ""),
                 saved=request.args.get("saved") == "1",
@@ -179,10 +118,9 @@ def create_app(db_path: Optional[str] = None) -> Flask:
             db.close()
 
     @app.route("/preferences/telegram/link", methods=["POST"])
-    @login_required
+    @identity.login_required
     def telegram_link_start():
-        """Generate a one-shot linking token and redirect to the bot's deep link."""
-        uid = current_user_id()
+        uid = identity.current_user_id()
         if not Settings.TELEGRAM_BOT_USERNAME:
             abort(500, "TELEGRAM_BOT_USERNAME not configured")
         token = secrets.token_urlsafe(24)
@@ -197,9 +135,9 @@ def create_app(db_path: Optional[str] = None) -> Flask:
         )
 
     @app.route("/preferences/telegram/unlink", methods=["POST"])
-    @login_required
+    @identity.login_required
     def telegram_unlink():
-        uid = current_user_id()
+        uid = identity.current_user_id()
         db = open_db()
         try:
             db.delete_user_setting(uid, "TELEGRAM_CHAT_ID")
@@ -210,9 +148,9 @@ def create_app(db_path: Optional[str] = None) -> Flask:
     # ------------------------------------------------------------------ prompt (per-user)
 
     @app.route("/prompt", methods=["GET", "POST"])
-    @login_required
+    @identity.login_required
     def prompt_page():
-        uid = current_user_id()
+        uid = identity.current_user_id()
         db = open_db()
         try:
             if request.method == "POST":
@@ -236,9 +174,9 @@ def create_app(db_path: Optional[str] = None) -> Flask:
     # ------------------------------------------------------------------ accounts (per-user)
 
     @app.route("/accounts/new", methods=["GET", "POST"])
-    @login_required
+    @identity.login_required
     def new_account_page():
-        uid = current_user_id()
+        uid = identity.current_user_id()
         providers = _imap_provider_presets()
 
         if request.method == "POST":
@@ -270,7 +208,9 @@ def create_app(db_path: Optional[str] = None) -> Flask:
             db = open_db()
             try:
                 if name and db.get_account(uid, name):
-                    errors.append(f"You already have an account named {name!r}. Pick a different name.")
+                    errors.append(
+                        f"You already have an account named {name!r}. Pick a different name."
+                    )
 
                 if not errors:
                     probe = probe_imap(server, port, username, password)
@@ -282,8 +222,13 @@ def create_app(db_path: Optional[str] = None) -> Flask:
                         "new_account.html",
                         providers=providers,
                         errors=errors,
-                        form={"preset": preset_key, "name": name, "username": username,
-                              "server": server, "port": port_str},
+                        form={
+                            "preset": preset_key,
+                            "name": name,
+                            "username": username,
+                            "server": server,
+                            "port": port_str,
+                        },
                     )
 
                 config = MailAccountConfig(
@@ -310,9 +255,9 @@ def create_app(db_path: Optional[str] = None) -> Flask:
         )
 
     @app.route("/accounts")
-    @login_required
+    @identity.login_required
     def accounts_page():
-        uid = current_user_id()
+        uid = identity.current_user_id()
         db = open_db()
         try:
             rows = []
@@ -321,15 +266,17 @@ def create_app(db_path: Optional[str] = None) -> Flask:
                     acc = MailAccountConfig.model_validate_json(raw)
                     rows.append({"name": name, "provider": acc.provider, "enabled": acc.enabled})
                 except Exception as e:
-                    rows.append({"name": name, "provider": "invalid", "enabled": False, "error": str(e)})
+                    rows.append(
+                        {"name": name, "provider": "invalid", "enabled": False, "error": str(e)}
+                    )
             return render_template("accounts.html", accounts=rows)
         finally:
             db.close()
 
     @app.route("/accounts/<name>/toggle", methods=["POST"])
-    @login_required
+    @identity.login_required
     def toggle_account(name: str):
-        uid = current_user_id()
+        uid = identity.current_user_id()
         db = open_db()
         try:
             raw = db.get_account(uid, name)
@@ -343,9 +290,9 @@ def create_app(db_path: Optional[str] = None) -> Flask:
             db.close()
 
     @app.route("/accounts/<name>/delete", methods=["POST"])
-    @login_required
+    @identity.login_required
     def delete_account(name: str):
-        uid = current_user_id()
+        uid = identity.current_user_id()
         db = open_db()
         try:
             if not db.get_account(uid, name):
@@ -361,29 +308,12 @@ def create_app(db_path: Optional[str] = None) -> Flask:
 # ------------------------------------------------------------------ helpers
 
 def _bootstrap_settings(app: Flask) -> None:
-    """Load Settings from the DB once at app creation time so OAuth / session
-    config is available to Authlib and Flask."""
+    """Load Settings from the DB so the chosen IdentityProvider can read them."""
     db = EmailDatabase(app.config["DB_PATH"])
     try:
         Settings.load(db)
-        if not Settings.SESSION_SECRET:
-            raise RuntimeError(
-                "SESSION_SECRET not configured. Run 'sentinel init' first."
-            )
-        if not Settings.GOOGLE_CLIENT_ID or not Settings.GOOGLE_CLIENT_SECRET:
-            raise RuntimeError(
-                "GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET not configured. Run 'sentinel init' first."
-            )
     finally:
         db.close()
-
-
-def _mask(value: str) -> str:
-    if not value:
-        return ""
-    if len(value) <= 6:
-        return "•" * len(value)
-    return "•" * (len(value) - 4) + value[-4:]
 
 
 def _daemon_health(last_check: Optional[datetime]) -> Dict[str, Any]:
@@ -396,7 +326,9 @@ def _daemon_health(last_check: Optional[datetime]) -> Dict[str, Any]:
     return {"status": f"stale (last check {int(age_s)}s ago)", "ok": False}
 
 
-def _fetch_recent_processed(db: EmailDatabase, user_id: int, limit: int = 25) -> List[Dict[str, Any]]:
+def _fetch_recent_processed(
+    db: EmailDatabase, user_id: int, limit: int = 25
+) -> List[Dict[str, Any]]:
     cursor = db.conn.execute(
         "SELECT email_id, provider, subject, sender, processed_at "
         "FROM processed_emails WHERE user_id = ? "
@@ -407,7 +339,6 @@ def _fetch_recent_processed(db: EmailDatabase, user_id: int, limit: int = 25) ->
 
 
 def _imap_provider_presets() -> Dict[str, Dict[str, Any]]:
-    """Per-provider IMAP defaults + where the user gets their app password."""
     return {
         "gmail": {
             "label": "Gmail",
