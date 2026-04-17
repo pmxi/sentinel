@@ -70,7 +70,7 @@ class EmailClientFactory:
 
         def persist(token_json: str) -> None:
             config.auth.token_json = token_json
-            db.upsert_account(user_id, account_name, config.model_dump_json())
+            db.upsert_stream(user_id, account_name, "email", config.model_dump_json())
             logger.debug(
                 f"Persisted refreshed token for user_id={user_id} account='{account_name}'"
             )

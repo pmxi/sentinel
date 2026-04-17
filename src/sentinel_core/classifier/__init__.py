@@ -1,5 +1,5 @@
-"""Email classification module"""
+"""Item classification module."""
 
-from .email_classifier import ClassificationResult, EmailClassifier, EmailPriority
+from .item_classifier import ClassificationResult, ItemClassifier, Priority
 
-__all__ = ["EmailClassifier", "EmailPriority", "ClassificationResult"]
+__all__ = ["ItemClassifier", "Priority", "ClassificationResult"]

@@ -2,18 +2,18 @@
 
 Two deployment modes, picked at `sentinel init`:
 
-  --local   single-user, no auth. CLI 'account add/list/remove' work and
-            target the implicit local user. Web UI requires no login.
-  --hosted  multi-tenant, Google OAuth. End users manage their own
-            accounts via the web UI; CLI 'account' subcommands take a
-            --user-email to target a specific user.
+  --local   single-user, no auth. CLI 'stream add/list/remove' target the
+            implicit local user. Web UI requires no login.
+  --hosted  multi-tenant, Google OAuth. End users manage their own streams
+            via the web UI; CLI 'stream' subcommands take a --user-email
+            to target a specific user.
 
   sentinel init --local | --hosted | (interactive)
-  sentinel run                start the monitor daemon
-  sentinel web                start the web UI
-  sentinel account list       list accounts (local: singleton; hosted: --user-email)
-  sentinel account add        add a mail account
-  sentinel account remove     remove a mail account
+  sentinel run                 start the supervisor daemon
+  sentinel web                 start the web UI
+  sentinel stream list         list streams
+  sentinel stream add          add a stream (--type email|rss)
+  sentinel stream remove NAME  remove a stream
 """
 
 from __future__ import annotations
@@ -35,6 +35,8 @@ from sentinel_core.streams.email.mail_config import (
     MailAccountConfig,
     MailProvider,
 )
+from sentinel_core.streams.registry import ensure_loaded, get as get_spec
+from sentinel_core.streams.rss.config import RSSStreamConfig
 
 
 # ------------------------------------------------------------------ helpers
@@ -70,7 +72,6 @@ def _read_file_content(label: str) -> str:
 
 
 def _ensure_local_user(db: EmailDatabase) -> int:
-    """Return the singleton local user id, creating the row + setting if missing."""
     stored = db.get_app_setting("LOCAL_USER_ID")
     if stored:
         uid = int(stored)
@@ -86,7 +87,6 @@ def _ensure_local_user(db: EmailDatabase) -> int:
 
 
 def _resolve_target_user(db: EmailDatabase, user_email: Optional[str]) -> int:
-    """Pick the user_id for an account command based on deployment mode."""
     Settings.load(db)
     mode = Settings.DEPLOYMENT_MODE
     if mode == "local":
@@ -94,7 +94,7 @@ def _resolve_target_user(db: EmailDatabase, user_email: Optional[str]) -> int:
     if not user_email:
         raise SystemExit(
             "Hosted mode requires --user-email <email> to identify which user "
-            "this account belongs to."
+            "this stream belongs to."
         )
     for u in db.list_users():
         if u["email"].lower() == user_email.lower():
@@ -162,63 +162,100 @@ def cmd_init(args: argparse.Namespace) -> None:
 
     print("\nMonitoring preferences:")
     db.set_app_setting(
-        "POLL_INTERVAL_SECONDS",
-        _prompt("  Poll interval (seconds)", default=str(settings.POLL_INTERVAL_SECONDS)),
-    )
-    db.set_app_setting(
         "MAX_LOOKBACK_HOURS",
         _prompt("  Max lookback (hours)", default=str(settings.MAX_LOOKBACK_HOURS)),
     )
 
     if mode == "local":
         print("\nLocal setup complete.")
-        print("  - Add a mail account: sentinel account add")
-        print("  - Start the daemon:   sentinel run")
-        print("  - Open the web UI:    sentinel web")
+        print("  - Add a stream:      sentinel stream add --type email")
+        print("  - Add an RSS feed:   sentinel stream add --type rss")
+        print("  - Start the daemon:  sentinel run")
+        print("  - Open the web UI:   sentinel web")
     else:
         print("\nHosted setup complete.")
         print("  - Start the web UI: sentinel web")
         print("  - Direct users to sign in with Google.")
 
 
-# ------------------------------------------------------------------ account
+# ------------------------------------------------------------------ stream
 
-def cmd_account_list(args: argparse.Namespace) -> None:
+def cmd_stream_list(args: argparse.Namespace) -> None:
+    ensure_loaded()
     db = _open_db()
     uid = _resolve_target_user(db, args.user_email)
-    accounts = db.list_accounts(uid)
-    if not accounts:
-        print("No accounts configured. Run 'sentinel account add'.")
+    rows = db.list_streams(uid)
+    if not rows:
+        print("No streams configured. Run 'sentinel stream add --type email' or '--type rss'.")
         return
-    for name, raw in accounts.items():
+    for row in rows:
+        name = row["name"]
+        stream_type = row["stream_type"]
         try:
-            acc = MailAccountConfig.model_validate_json(raw)
-            flag = "enabled" if acc.enabled else "disabled"
-            print(f"  {name:20s} {acc.provider:10s} ({flag})")
+            spec = get_spec(stream_type)
+            config = spec.config_cls.model_validate_json(row["config_json"])
+            enabled = getattr(config, "enabled", True)
+            flag = "enabled" if enabled else "disabled"
+            detail = _describe_stream(stream_type, config)
+            print(f"  {name:20s} {stream_type:8s} ({flag})  {detail}")
         except Exception as e:
-            print(f"  {name:20s} <invalid config: {e}>")
+            print(f"  {name:20s} {stream_type:8s} <invalid config: {e}>")
 
 
-def cmd_account_remove(args: argparse.Namespace) -> None:
+def _describe_stream(stream_type: str, config) -> str:
+    if stream_type == "email":
+        if config.provider == "imap" or config.provider == MailProvider.IMAP:
+            return f"{config.auth.username}@{config.server}:{config.port}"
+        return str(config.provider)
+    if stream_type == "rss":
+        return str(config.feed_url)
+    return ""
+
+
+def cmd_stream_remove(args: argparse.Namespace) -> None:
     db = _open_db()
     uid = _resolve_target_user(db, args.user_email)
-    if not db.get_account(uid, args.name):
-        raise SystemExit(f"No account named {args.name!r}")
-    db.delete_account(uid, args.name)
-    print(f"Removed account {args.name!r}")
+    if not db.get_stream(uid, args.name):
+        raise SystemExit(f"No stream named {args.name!r}")
+    db.delete_stream(uid, args.name)
+    print(f"Removed stream {args.name!r}")
 
 
-def cmd_account_add(args: argparse.Namespace) -> None:
+def cmd_stream_add(args: argparse.Namespace) -> None:
+    ensure_loaded()
     db = _open_db()
     uid = _resolve_target_user(db, args.user_email)
 
-    name = _prompt("Account name (e.g. 'personal', 'work')")
+    stream_type = args.type
+    if not stream_type:
+        print("Stream types: (1) email  (2) rss")
+        choice = _prompt("Choose stream type", default="1")
+        stream_type = {"1": "email", "2": "rss", "email": "email", "rss": "rss"}.get(
+            choice.lower(), "email"
+        )
+
+    name = _prompt("Stream name (e.g. 'personal', 'hn-frontpage')")
     if not name:
-        raise SystemExit("Account name is required.")
-    if db.get_account(uid, name):
-        raise SystemExit(f"Account {name!r} already exists. Remove it first.")
+        raise SystemExit("Stream name is required.")
+    if db.get_stream(uid, name):
+        raise SystemExit(f"Stream {name!r} already exists. Remove it first.")
 
-    print("Providers: (1) imap  (2) gmail_api  (3) msgraph")
+    if stream_type == "email":
+        config_json = _prompt_email_stream()
+    elif stream_type == "rss":
+        config_json = _prompt_rss_stream()
+    else:
+        raise SystemExit(f"Unknown stream type: {stream_type!r}")
+
+    db.upsert_stream(uid, name, stream_type, config_json)
+    print(f"\nAdded stream {name!r} (type={stream_type}).")
+    if stream_type == "email":
+        print("If this is a Gmail/MSGraph account, the first daemon run will "
+              "open a browser to complete OAuth.")
+
+
+def _prompt_email_stream() -> str:
+    print("Email providers: (1) imap  (2) gmail_api  (3) msgraph")
     choice = _prompt("Choose provider", default="1")
     provider = {
         "1": MailProvider.IMAP,
@@ -232,19 +269,16 @@ def cmd_account_add(args: argparse.Namespace) -> None:
         raise SystemExit(f"Unknown provider: {choice}")
 
     if provider == MailProvider.IMAP:
-        config = _prompt_imap_account()
+        config = _prompt_imap_config()
     elif provider == MailProvider.GMAIL_API:
-        config = _prompt_gmail_account()
+        config = _prompt_gmail_config()
     else:
-        config = _prompt_msgraph_account()
+        config = _prompt_msgraph_config()
 
-    db.upsert_account(uid, name, config.model_dump_json())
-    print(f"\nAdded account {name!r} ({provider.value}).")
-    if provider in (MailProvider.GMAIL_API, MailProvider.MSGRAPH):
-        print("First daemon run will open a browser to complete OAuth.")
+    return config.model_dump_json()
 
 
-def _prompt_imap_account() -> MailAccountConfig:
+def _prompt_imap_config() -> MailAccountConfig:
     server = _prompt("IMAP server (e.g. imap.gmail.com)")
     port = int(_prompt("IMAP port", default="993"))
     username = _prompt("Username (email address)")
@@ -260,7 +294,7 @@ def _prompt_imap_account() -> MailAccountConfig:
     )
 
 
-def _prompt_gmail_account() -> MailAccountConfig:
+def _prompt_gmail_config() -> MailAccountConfig:
     print("\nPaste the path to the Google OAuth client JSON (from GCP Console).")
     client_config_json = _read_file_content("OAuth client JSON")
     try:
@@ -274,7 +308,7 @@ def _prompt_gmail_account() -> MailAccountConfig:
     )
 
 
-def _prompt_msgraph_account() -> MailAccountConfig:
+def _prompt_msgraph_config() -> MailAccountConfig:
     client_id = _prompt("Azure client ID")
     tenant_id = _prompt("Azure tenant ID (or 'common')", default="common")
     if not client_id:
@@ -293,6 +327,15 @@ def _prompt_account_settings() -> AccountSettings:
         process_only_unread=process_only_unread,
         max_lookback_hours=max_lookback,
     )
+
+
+def _prompt_rss_stream() -> str:
+    feed_url = _prompt("Feed URL (RSS or Atom)")
+    if not feed_url:
+        raise SystemExit("feed_url is required.")
+    poll_seconds = int(_prompt("Poll interval (seconds)", default="300"))
+    config = RSSStreamConfig(feed_url=feed_url, poll_seconds=poll_seconds)
+    return config.model_dump_json()
 
 
 # ------------------------------------------------------------------ run / web
@@ -321,24 +364,31 @@ def build_parser() -> argparse.ArgumentParser:
                             help="Multi-tenant hosted mode (Google OAuth)")
     init.set_defaults(func=cmd_init, mode=None)
 
-    sub.add_parser("run", help="Start the monitor daemon").set_defaults(func=cmd_run)
+    sub.add_parser("run", help="Start the supervisor daemon").set_defaults(func=cmd_run)
 
     web = sub.add_parser("web", help="Start the web UI")
-    web.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
-    web.add_argument("--port", type=int, default=8765, help="Port (default: 8765)")
-    web.add_argument("--debug", action="store_true", help="Enable Flask debug mode")
+    web.add_argument("--host", default="127.0.0.1")
+    web.add_argument("--port", type=int, default=8765)
+    web.add_argument("--debug", action="store_true")
     web.set_defaults(func=cmd_web)
 
-    account = sub.add_parser("account", help="Manage mail accounts")
-    account_sub = account.add_subparsers(dest="account_cmd", required=True)
-    for cmd_name, fn in [("list", cmd_account_list), ("add", cmd_account_add)]:
-        p = account_sub.add_parser(cmd_name)
-        p.add_argument("--user-email", help="Target user (hosted mode only; defaults to local singleton)")
+    stream = sub.add_parser("stream", help="Manage data streams (email, rss, ...)")
+    stream_sub = stream.add_subparsers(dest="stream_cmd", required=True)
+
+    for cmd_name, fn in [("list", cmd_stream_list)]:
+        p = stream_sub.add_parser(cmd_name)
+        p.add_argument("--user-email", help="Target user (hosted mode only)")
         p.set_defaults(func=fn)
-    rm = account_sub.add_parser("remove")
+
+    add = stream_sub.add_parser("add")
+    add.add_argument("--type", choices=["email", "rss"], help="Stream type")
+    add.add_argument("--user-email", help="Target user (hosted mode only)")
+    add.set_defaults(func=cmd_stream_add)
+
+    rm = stream_sub.add_parser("remove")
     rm.add_argument("name")
-    rm.add_argument("--user-email", help="Target user (hosted mode only; defaults to local singleton)")
-    rm.set_defaults(func=cmd_account_remove)
+    rm.add_argument("--user-email", help="Target user (hosted mode only)")
+    rm.set_defaults(func=cmd_stream_remove)
 
     return parser
 

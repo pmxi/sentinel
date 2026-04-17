@@ -10,33 +10,133 @@
     <dd>{{ monitoring_start or '—' }}</dd>
     <dt>Last check</dt>
     <dd>{{ last_check or '—' }}</dd>
-    <dt>Emails processed</dt>
+    <dt>Items processed</dt>
     <dd>{{ processed_count }}</dd>
-    <dt>Accounts configured</dt>
-    <dd>{{ accounts_count }}</dd>
+    <dt>Streams configured</dt>
+    <dd>{{ streams_count }}</dd>
   </dl>
 </section>
 
+<section id="live-feed">
+  <h2>Live feed <span id="live-status" class="muted">connecting…</span></h2>
+  <ul id="live-list" class="live-list">
+    <li class="live-empty">Waiting for the next item…</li>
+  </ul>
+</section>
+
 <section>
-  <h2>Recent processed emails</h2>
+  <h2>Recent processed items</h2>
   {% if recent %}
     <table>
       <thead>
-        <tr><th>Time</th><th>Provider</th><th>Sender</th><th>Subject</th></tr>
+        <tr><th>Time</th><th>Source</th><th>Stream</th><th>Author</th><th>Title</th></tr>
       </thead>
       <tbody>
       {% for row in recent %}
         <tr>
           <td><time>{{ row.processed_at }}</time></td>
-          <td>{{ row.provider }}</td>
-          <td>{{ row.sender }}</td>
-          <td>{{ row.subject }}</td>
+          <td>{{ row.source_type }}</td>
+          <td>{{ row.stream_name }}</td>
+          <td>{{ row.author }}</td>
+          <td>{{ row.title }}</td>
         </tr>
       {% endfor %}
       </tbody>
     </table>
   {% else %}
-    <p>No emails processed yet.</p>
+    <p>No items processed yet.</p>
   {% endif %}
 </section>
+
+<script>
+(function () {
+  const list = document.getElementById("live-list");
+  const status = document.getElementById("live-status");
+  const MAX_ITEMS = 50;
+
+  function keyFor(data) {
+    return data.source_type + "::" + data.item_id;
+  }
+
+  function renderRow(data, classified) {
+    const li = document.createElement("li");
+    li.dataset.key = keyFor(data);
+    li.className = "live-item" + (classified ? " classified" : " pending")
+      + (classified && data.priority === "important" ? " important" : "");
+
+    const priority = classified
+      ? (data.priority === "important" ? "IMPORTANT" : "normal")
+      : "classifying…";
+
+    const authorText = document.createTextNode(data.author || data.source_type);
+    const author = document.createElement("span");
+    author.className = "live-author";
+    author.appendChild(authorText);
+
+    const title = document.createElement("span");
+    title.className = "live-title";
+    if (data.url) {
+      const a = document.createElement("a");
+      a.href = data.url;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.textContent = data.title || "(no title)";
+      title.appendChild(a);
+    } else {
+      title.textContent = data.title || "(no title)";
+    }
+
+    const meta = document.createElement("span");
+    meta.className = "live-meta";
+    meta.textContent = data.source_type
+      + (data.stream_name ? " · " + data.stream_name : "")
+      + " · " + priority;
+
+    const summary = document.createElement("div");
+    summary.className = "live-summary";
+    summary.textContent = classified ? (data.summary || "") : "";
+
+    li.appendChild(author);
+    li.appendChild(title);
+    li.appendChild(meta);
+    li.appendChild(summary);
+    return li;
+  }
+
+  function upsert(data, classified) {
+    // Drop the empty placeholder once real events arrive.
+    const empty = list.querySelector(".live-empty");
+    if (empty) empty.remove();
+
+    const key = keyFor(data);
+    const existing = list.querySelector('[data-key="' + CSS.escape(key) + '"]');
+    const row = renderRow(data, classified);
+    if (existing) {
+      list.replaceChild(row, existing);
+    } else {
+      list.insertBefore(row, list.firstChild);
+      while (list.children.length > MAX_ITEMS) {
+        list.removeChild(list.lastChild);
+      }
+    }
+  }
+
+  const es = new EventSource("{{ url_for('events_stream') }}");
+
+  es.addEventListener("open", () => {
+    status.textContent = "live";
+    status.className = "ok";
+  });
+  es.addEventListener("error", () => {
+    status.textContent = "reconnecting…";
+    status.className = "warn";
+  });
+  es.addEventListener("item_received", (ev) => {
+    try { upsert(JSON.parse(ev.data), false); } catch (e) { console.error(e); }
+  });
+  es.addEventListener("item_classified", (ev) => {
+    try { upsert(JSON.parse(ev.data), true); } catch (e) { console.error(e); }
+  });
+})();
+</script>
 {% endblock %}

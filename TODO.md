@@ -4,27 +4,20 @@ Everything known to be outstanding. Priorities are rough; re-order as needed.
 
 ## Features
 
-- **Generalize `EmailClient` → `Stream` and `EmailData` → `Item`.** Currently
-  the streams package only contains `streams/email/`. When the second stream
-  type lands (RSS, GitHub notifications, Slack, etc.) we need to extract a
-  generic `Stream` ABC — `fetch_new(after_timestamp) → list[Item]` — at
-  `sentinel_core/streams/base.py`, with an `Item` dataclass holding
-  `id`/`source_type`/`text`/`metadata`/`url`. `EmailData` becomes a
-  specialization. The classifier prompt should adapt by source type.
-- **RSS / Atom datastream.** Lowest-friction next source (no auth, no API
-  limits). Lives at `sentinel_core/streams/rss/`. Use as the shake-out for
-  the `Stream` abstraction above.
 - **GitHub notifications datastream.** Token-based auth, well-documented
   REST API. High signal for devs.
-- **Per-account classification rules.** Move classification preferences from
-  per-user (`CLASSIFICATION_NOTES`) to per-account, so different mailboxes
-  can have different "what's important" criteria.
+- **Bluesky Jetstream datastream.** Push-based (WebSocket) — the first real
+  exercise of the `async for item in stream.items()` interface against a
+  non-polling source.
+- **Per-stream classification rules.** Move classification preferences from
+  per-user (`CLASSIFICATION_NOTES`) to per-stream, so different streams can
+  have different "what's important" criteria.
 - **Deep links for MSGraph and IMAP.** Only Gmail populates `EmailData.url`
   today. MSGraph messages have a `webLink` field; IMAP can't produce a true
   deep link, but can fall back to a provider-specific webmail URL where
   configured.
 - **Persist classification results.** Today they're thrown away after the
-  notifier call. Add `priority`, `summary` columns to `processed_emails`
+  notifier call. Add `priority`, `summary` columns to `processed_items`
   so history is queryable — useful for debugging and a precondition for
   any future "review my recent classifications" UI.
 - **Email-as-notification-channel** via Resend. Schema (`EMAIL_NOTIFICATION_TO`)
@@ -38,17 +31,17 @@ Everything known to be outstanding. Priorities are rough; re-order as needed.
   `logging_config.py` ignores them in favor of env vars. Either honor the
   DB values after `Settings.load(db)` or delete the unused fields.
 - **Retry + backoff on transient failures.** OpenAI 429/5xx, Telegram
-  network blips, and Gmail API rate limits all currently raise straight to
-  the monitor loop's broad `except Exception` which then sleeps the whole
-  poll interval. Add targeted retry (with jitter) at each boundary.
+  network blips, and Gmail API rate limits all currently surface as
+  per-stream crashes that restart after a fixed 30s delay. Add targeted
+  retry (with jitter) at each boundary instead.
 - **Dedicated exception types.** The codebase raises bare `Exception(...)`
   in several places (Gmail client, IMAP client, monitor). A small
   hierarchy — `ProviderError`, `AuthError`, `ClassificationError` — would
   let the monitor branch intelligently instead of catch-all.
-- **Daemon picks up config changes without restart.** Currently the monitor
-  loads `Settings` and accounts once at startup. Web UI edits don't take
-  effect until `sentinel run` is restarted. Reload at the top of each
-  poll tick.
+- **Daemon picks up config changes without restart.** Currently the
+  supervisor loads `Settings` and streams once at startup. Web UI edits
+  (new stream added, existing disabled) don't take effect until `sentinel
+  run` is restarted. Reconcile the task set on a watcher task.
 - **Encrypt IMAP app passwords at rest.** App passwords give full mail
   access. Today they're plaintext in `accounts.config_json`. For hosted
   deployment, encrypt with a key in the env (not the database) before
@@ -64,14 +57,19 @@ Nothing exists today. Scaffold a pytest suite:
 - `tests/test_config.py` — `Settings.load` type coercion, mode-aware
   `validate()`.
 - `tests/test_mail_config.py` — `MailAccountConfig` validation per provider;
-  `MailboxesConfig.from_db` round-trip.
+  `streams` table round-trip (upsert/list/delete).
 - `tests/test_factory.py` — token-persister callback writes refreshed
-  token back to the db scoped by user_id.
-- `tests/test_monitor.py` — mock classifier + client + notifier; verify
+  token back to the streams row scoped by user_id.
+- `tests/test_stream_base.py` — stream registry resolves `email` and `rss`
+  types; `build_stream` round-trips from db.
+- `tests/test_rss_stream.py` — feedparser-stub-driven test that `RSSStream`
+  yields Items, dedups within a run, and suppresses backlog on first poll.
+- `tests/test_monitor.py` — stub classifier + stream + notifier; verify
   IMPORTANT notifies, NORMAL doesn't, already-processed skipped, one
-  user's failure doesn't break others.
-- `tests/test_classifier.py` — mock `client.responses.parse`; verify
-  schema round-trip and `ClassificationResult` mapping.
+  stream's crash restarts without affecting others.
+- `tests/test_classifier.py` — stub `client.responses.parse`; verify
+  source_type-aware prompt, schema round-trip, and `ClassificationResult`
+  mapping.
 - `tests/test_telegram_link.py` — link-token create/consume/expire/purge.
 - `tests/test_web_auth.py` — LocalIdentity injects singleton;
   GoogleOAuthIdentity gates routes; mode switch picks the right one.

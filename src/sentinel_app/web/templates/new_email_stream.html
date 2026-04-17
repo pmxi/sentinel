@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}Add account — Sentinel{% endblock %}
+{% block title %}Add email stream — Sentinel{% endblock %}
 {% block content %}
 <section class="new-account">
-  <h2>Add a mail account</h2>
+  <h2>Add an email stream</h2>
   <p class="hint">Sentinel connects to your mailbox over IMAP with an <em>app password</em> (not your regular login password). Most providers require you to enable 2-factor auth first, then generate a dedicated password for Sentinel from your account security settings.</p>
 
   {% if errors %}
@@ -15,7 +15,7 @@
   <form method="post">
     <p>
       <label for="preset">Provider</label>
-      <select id="preset" name="preset" onchange="this.form.submit.disabled=false">
+      <select id="preset" name="preset">
         {% for key, p in providers.items() %}
           <option value="{{ key }}" {% if form.preset == key %}selected{% endif %}>{{ p.label }}</option>
         {% endfor %}
@@ -23,7 +23,7 @@
     </p>
 
     <p>
-      <label for="name">Account name</label>
+      <label for="name">Stream name</label>
       <input id="name" name="name" type="text" value="{{ form.name }}" placeholder="e.g. 'personal', 'work'" required spellcheck="false">
       <span class="hint">Any short label — shown in dashboards and logs.</span>
     </p>
@@ -60,12 +60,11 @@
     </details>
 
     <button type="submit">Test &amp; save</button>
-    <a href="{{ url_for('accounts_page') }}">Cancel</a>
+    <a href="{{ url_for('streams_page') }}">Cancel</a>
   </form>
 </section>
 
 <script>
-  // Swap the "how to get an app password" hint based on the provider dropdown.
   const preset = document.getElementById("preset");
   function refreshNotes() {
     document.querySelectorAll(".provider-note").forEach(el => el.hidden = true);
