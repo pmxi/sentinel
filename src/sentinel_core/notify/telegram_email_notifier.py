@@ -1,11 +1,11 @@
 from email.utils import parseaddr
 from typing import Optional
 
-from sentinel.classifier.email_classifier import ClassificationResult
-from sentinel.email.models import EmailData
-from sentinel.logging_config import get_logger
-from sentinel.notify.email_notifier import EmailNotifier
-from sentinel.notify.telegram_notifier import TelegramNotifier
+from sentinel_core.classifier.email_classifier import ClassificationResult
+from sentinel_core.streams.email.models import EmailData
+from sentinel_core.logging_config import get_logger
+from sentinel_core.notify.email_notifier import EmailNotifier
+from sentinel_core.notify.telegram_notifier import TelegramNotifier
 
 logger = get_logger(__name__)
 

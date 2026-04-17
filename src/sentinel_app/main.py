@@ -1,9 +1,9 @@
 import sys
 
-from sentinel.config import settings
-from sentinel.database import EmailDatabase
-from sentinel.logging_config import get_logger
-from sentinel.monitor import EmailMonitor
+from sentinel_core.config import settings
+from sentinel_core.database import EmailDatabase
+from sentinel_core.logging_config import get_logger
+from sentinel_core.monitor import EmailMonitor
 
 logger = get_logger(__name__)
 

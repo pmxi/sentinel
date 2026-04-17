@@ -5,7 +5,8 @@ from email.header import decode_header
 from email.message import Message
 from typing import List, Optional
 
-from ..logging_config import get_logger
+from sentinel_core.logging_config import get_logger
+
 from .email_client_base import EmailClient
 from .gmail.models import EmailData
 from .mail_config import AuthMethod, MailAccountConfig

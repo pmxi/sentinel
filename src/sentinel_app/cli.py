@@ -21,8 +21,8 @@ import sys
 from getpass import getpass
 from typing import Optional
 
-from sentinel.config import settings
-from sentinel.database import EmailDatabase
+from sentinel_core.config import settings
+from sentinel_core.database import EmailDatabase
 
 
 def _open_db() -> EmailDatabase:
@@ -100,12 +100,12 @@ def cmd_init(_args: argparse.Namespace) -> None:
 # ------------------------------------------------------------------ run / web
 
 def cmd_run(_args: argparse.Namespace) -> None:
-    from sentinel.main import main as run_main
+    from sentinel_app.main import main as run_main
     run_main()
 
 
 def cmd_web(args: argparse.Namespace) -> None:
-    from sentinel.web.app import run as run_web
+    from sentinel_app.web.app import run as run_web
     run_web(host=args.host, port=args.port, debug=args.debug)
 
 

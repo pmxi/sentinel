@@ -30,17 +30,17 @@ from flask import (
     url_for,
 )
 
-from sentinel.config import Settings, settings
-from sentinel.database import EmailDatabase
-from sentinel.email.mail_config import (
+from sentinel_core.config import Settings, settings
+from sentinel_core.database import EmailDatabase
+from sentinel_core.streams.email.mail_config import (
     AccountSettings,
     AuthConfig,
     AuthMethod,
     MailAccountConfig,
     MailProvider,
 )
-from sentinel.user_settings import UserSettings
-from sentinel.web.imap_probe import probe_imap
+from sentinel_core.user_settings import UserSettings
+from sentinel_app.web.imap_probe import probe_imap
 
 
 GOOGLE_DISCOVERY_URL = "https://accounts.google.com/.well-known/openid-configuration"

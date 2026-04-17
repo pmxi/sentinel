@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 from typing import Optional
 
-from sentinel.classifier.email_classifier import ClassificationResult
-from sentinel.email.gmail.models import EmailData
+from sentinel_core.classifier.email_classifier import ClassificationResult
+from sentinel_core.streams.email.gmail.models import EmailData
 
 
 class EmailNotifier(ABC):

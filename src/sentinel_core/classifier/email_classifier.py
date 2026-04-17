@@ -7,9 +7,9 @@ from typing import Optional
 from openai import OpenAI
 from pydantic import BaseModel
 
-from sentinel.config import settings
-from sentinel.email.models import EmailData
-from sentinel.logging_config import get_logger
+from sentinel_core.config import settings
+from sentinel_core.streams.email.models import EmailData
+from sentinel_core.logging_config import get_logger
 
 logger = get_logger(__name__)
 

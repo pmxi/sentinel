@@ -13,7 +13,7 @@ import ssl
 from dataclasses import dataclass
 from typing import Optional
 
-from sentinel.logging_config import get_logger
+from sentinel_core.logging_config import get_logger
 
 logger = get_logger(__name__)
 

@@ -18,22 +18,22 @@ from datetime import datetime, timedelta
 from types import FrameType
 from typing import Any, Dict, Optional
 
-from sentinel.classifier.email_classifier import (
+from sentinel_core.classifier.email_classifier import (
     ClassificationResult,
     EmailClassifier,
 )
-from sentinel.config import settings
-from sentinel.database import EmailDatabase
-from sentinel.email.email_client_base import EmailClient
-from sentinel.email.email_client_factory import EmailClientFactory
-from sentinel.email.mail_config import MailboxesConfig
-from sentinel.email.models import EmailData
-from sentinel.logging_config import get_logger
-from sentinel.notify.email_notifier import EmailNotifier
-from sentinel.notify.telegram_email_notifier import TelegramEmailNotifier
-from sentinel.notify.telegram_notifier import TelegramNotifier
-from sentinel.telegram_bot import start_in_thread as start_telegram_listener
-from sentinel.user_settings import UserSettings
+from sentinel_core.config import settings
+from sentinel_core.database import EmailDatabase
+from sentinel_core.streams.email.email_client_base import EmailClient
+from sentinel_core.streams.email.email_client_factory import EmailClientFactory
+from sentinel_core.streams.email.mail_config import MailboxesConfig
+from sentinel_core.streams.email.models import EmailData
+from sentinel_core.logging_config import get_logger
+from sentinel_core.notify.email_notifier import EmailNotifier
+from sentinel_core.notify.telegram_email_notifier import TelegramEmailNotifier
+from sentinel_core.notify.telegram_notifier import TelegramNotifier
+from sentinel_core.telegram_bot import start_in_thread as start_telegram_listener
+from sentinel_core.user_settings import UserSettings
 
 logger = get_logger("sentinel.monitor")
 

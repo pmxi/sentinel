@@ -3,10 +3,10 @@ from typing import TYPE_CHECKING, Dict, List, Optional
 
 from pydantic import BaseModel, model_validator
 
-from sentinel.logging_config import get_logger
+from sentinel_core.logging_config import get_logger
 
 if TYPE_CHECKING:
-    from sentinel.database import EmailDatabase
+    from sentinel_core.database import EmailDatabase
 
 logger = get_logger(__name__)
 

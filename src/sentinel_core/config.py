@@ -13,7 +13,7 @@ import os
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
-    from sentinel.database import EmailDatabase
+    from sentinel_core.database import EmailDatabase
 
 
 class Settings:

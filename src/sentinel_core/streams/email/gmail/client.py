@@ -3,10 +3,10 @@ from typing import Any, Callable, List, Optional
 
 from googleapiclient.discovery import build  # type: ignore
 
-from sentinel.email.gmail.models import email_data_from_gmail_message
-from sentinel.email.mail_config import MailAccountConfig
-from sentinel.email.models import EmailData
-from sentinel.logging_config import get_logger
+from sentinel_core.streams.email.gmail.models import email_data_from_gmail_message
+from sentinel_core.streams.email.mail_config import MailAccountConfig
+from sentinel_core.streams.email.models import EmailData
+from sentinel_core.logging_config import get_logger
 
 from ..email_client_base import EmailClient
 from .auth import GmailAuth

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from sentinel.database import EmailDatabase
+    from sentinel_core.database import EmailDatabase
 
 
 @dataclass

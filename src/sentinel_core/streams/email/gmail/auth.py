@@ -5,7 +5,7 @@ from google.auth.transport.requests import Request  # type: ignore
 from google.oauth2.credentials import Credentials  # type: ignore
 from google_auth_oauthlib.flow import InstalledAppFlow  # type: ignore
 
-from sentinel.config import settings
+from sentinel_core.config import settings
 
 
 class GmailAuth:

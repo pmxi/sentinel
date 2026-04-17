@@ -1,14 +1,14 @@
 from typing import TYPE_CHECKING, Callable, Dict, Optional, Type
 
-from sentinel.email.email_client_base import EmailClient
-from sentinel.email.gmail.client import GmailClient
-from sentinel.email.imap_client import IMAPClient
-from sentinel.email.mail_config import AuthMethod, MailAccountConfig, MailProvider
-from sentinel.email.msgraph_client import MSGraphClient
-from sentinel.logging_config import get_logger
+from sentinel_core.streams.email.email_client_base import EmailClient
+from sentinel_core.streams.email.gmail.client import GmailClient
+from sentinel_core.streams.email.imap_client import IMAPClient
+from sentinel_core.streams.email.mail_config import AuthMethod, MailAccountConfig, MailProvider
+from sentinel_core.streams.email.msgraph_client import MSGraphClient
+from sentinel_core.logging_config import get_logger
 
 if TYPE_CHECKING:
-    from sentinel.database import EmailDatabase
+    from sentinel_core.database import EmailDatabase
 
 logger = get_logger(__name__)
 

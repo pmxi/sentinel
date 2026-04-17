@@ -2,8 +2,8 @@ from typing import Optional
 
 from twilio.rest import Client
 
-from sentinel.logging_config import get_logger
-from sentinel.notify.notifier import Notifier
+from sentinel_core.logging_config import get_logger
+from sentinel_core.notify.notifier import Notifier
 
 logger = get_logger(__name__)
 
