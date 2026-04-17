@@ -39,15 +39,25 @@ will also be able to adjust the classification criteria to their needs.
 Email Sentinel classifies your emails using OpenAI's Responses API (default
 model: GPT 5.4). All configuration — API keys, mail accounts, OAuth tokens,
 preferences — lives in a single SQLite database, managed through a guided
-CLI. Both IMAP and Gmail API are supported, along with Microsoft Graph for
-Office 365 / Outlook accounts. The app polls your accounts regularly and
-sends notifications for important emails via Telegram. The same database
-tracks which emails have been processed so restarts don't produce duplicates.
+CLI and a minimal web UI. IMAP, Gmail API, and Microsoft Graph providers
+are all supported. The app polls your accounts regularly and sends
+notifications for important emails via Telegram. The same database tracks
+which emails have been processed so restarts don't produce duplicates.
+
+## Project layout
+
+```
+src/
+  sentinel_core/     engine — classifier, monitor, db, streams, notifiers, telegram bot
+  sentinel_app/     UI — CLI + Flask web app + auth providers
+```
+
+The engine has no dependency on the UI layer, so the same code can be reused
+behind a different surface (Slack app, TUI, etc.) later.
 
 ## Installation
 
-This project was developed and tested with Python 3.13.2 on macOS Sonoma with
-an M3 MacBook. No guarantees are made for other environments. Install
+Tested with Python 3.13 on macOS. Install
 [uv](https://docs.astral.sh/uv/getting-started/installation/), then sync
 dependencies:
 
@@ -55,88 +65,137 @@ dependencies:
 uv sync
 ```
 
-## Setup
+Sentinel runs in two modes — pick one when you set it up:
 
-All setup happens through the `sentinel` CLI — no YAML or `.env` files.
+- **`local`** — single user, no auth, you run it for yourself. Default.
+- **`hosted`** — multi-tenant, Google OAuth signup/login.
 
-### 1. Gather credentials
+---
 
-- **OpenAI API key** — from [platform.openai.com](https://platform.openai.com/api-keys).
-- **Telegram bot** — create one via [`@BotFather`](https://t.me/BotFather),
-  grab the token, message the bot once, then hit
-  `https://api.telegram.org/bot<TOKEN>/getUpdates` to find your chat ID.
-- **Gmail accounts** — create an OAuth 2.0 Desktop client in the
-  [Google Cloud Console](https://console.cloud.google.com/) with the Gmail API
-  enabled, and download the client JSON.
-- **Microsoft 365 / Outlook accounts** — register an app in Azure AD with
-  `Mail.ReadWrite` (delegated) and note its client ID + tenant ID.
-- **IMAP accounts** — server, port, username, and (app-)password.
+## Quick start (self-hosted, single-user)
 
-### 2. First-time app setup
+### 1. Configure operator-level settings
 
 ```bash
-uv run sentinel init
+uv run sentinel init --local
 ```
 
-You'll be prompted for the OpenAI key, Telegram credentials, and a few
-monitoring preferences. Everything is stored in `sentinel.db`.
+You'll be asked for:
+- **OpenAI API key** (required) — from
+  [platform.openai.com](https://platform.openai.com/api-keys)
+- **Telegram bot** (optional) — create one via
+  [`@BotFather`](https://t.me/BotFather), paste the token + bot username
+- **Resend API key** (optional) — for transactional email; from
+  [resend.com](https://resend.com)
+- **Monitoring preferences** — poll interval, max lookback hours
 
-### 3. Add mail accounts
+A singleton "local" user is created automatically; you'll never need to log in.
 
-Run this once per mailbox you want to monitor:
+### 2. Add a mail account
 
 ```bash
 uv run sentinel account add
 ```
 
-Pick a provider and follow the prompts. For Gmail you'll be asked for the
-path to the OAuth client JSON (its contents are copied into the database —
-you can delete the file afterwards). For MS Graph you'll enter the Azure
-client/tenant IDs. For IMAP you'll provide the server details and password.
+Pick **IMAP** for Gmail/iCloud/Fastmail/Outlook.com/Yahoo (with an
+[app password](#getting-an-app-password)), or one of the OAuth providers
+for the rare case you've already verified an app with Google or Azure.
 
-Other account commands:
+You can also add accounts through the web UI (see step 4).
 
-```bash
-uv run sentinel account list
-uv run sentinel account remove <name>
-```
-
-### 4. Run the monitor
+### 3. Run the monitor
 
 ```bash
 uv run sentinel run
 ```
 
-The first run will complete any outstanding OAuth flows (Gmail / MS Graph
-open a browser), then begin polling. Refreshed tokens are written back to
-the database automatically.
+Polls every account on the configured interval, classifies new mail with
+OpenAI, and pings Telegram on IMPORTANT items. Refreshed OAuth tokens are
+written back to the database automatically.
 
-### Web UI (optional)
-
-For a browser-based view of the daemon's status and a place to edit
-settings / classification notes / toggle accounts, run:
+### 4. Open the web UI (optional but recommended)
 
 ```bash
 uv run sentinel web
 ```
 
-Binds 127.0.0.1:8765 by default (`--host` / `--port` to override). No
-auth — keep it on localhost. Changes to app settings or accounts take
-effect at the next daemon restart.
+Opens on `http://127.0.0.1:8765`. No login required in local mode. From
+there you can:
+- See daemon status and recently-processed emails
+- Add/disable/delete mail accounts
+- Edit your classification notes (appended to the LLM prompt every time)
+- Link your Telegram chat in one click
 
-### Configuring the database location
+---
 
-By default the database lives at `./sentinel.db`. Override with:
+## Hosted deployment (multi-tenant)
+
+For running Sentinel as a service for multiple users:
+
+### 1. Configure operator-level settings
+
+```bash
+uv run sentinel init --hosted
+```
+
+In addition to the local-mode prompts, you'll need:
+- **Google OAuth Client ID + Secret** — register a Web application OAuth
+  client in [Google Cloud Console](https://console.cloud.google.com/apis/credentials).
+  Add `http://127.0.0.1:8765/auth/google/callback` (and your prod URL) to
+  Authorized redirect URIs. Identity scopes only (`openid email profile`)
+  — no Google verification process needed.
+
+A `SESSION_SECRET` is auto-generated and persisted on first run.
+
+### 2. Run the daemon and web UI
+
+```bash
+uv run sentinel run        # one terminal — daemon + Telegram bot listener
+uv run sentinel web        # another — public web UI
+```
+
+Users sign up by clicking "Sign in with Google" on `/login`. After
+signing in they configure their own mail accounts, classification notes,
+and Telegram link via the web UI — operator-level secrets stay private.
+
+### CLI for operators
+
+`sentinel account add/list/remove --user-email <user@example.com>` lets
+the operator manage a specific user's mail accounts from the shell.
+
+---
+
+## Getting an app password
+
+For IMAP, you need an app password from your provider — your normal
+account password won't work. Quick links:
+
+- **Gmail:** [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords) (2-Step Verification must be on)
+- **iCloud:** [appleid.apple.com](https://appleid.apple.com) → Sign-In and Security → App-Specific Passwords
+- **Fastmail:** [app.fastmail.com/settings/security](https://app.fastmail.com/settings/security) → New app password
+- **Outlook.com:** [account.microsoft.com/security](https://account.microsoft.com/security)
+- **Yahoo:** [login.yahoo.com/account/security](https://login.yahoo.com/account/security)
+
+Microsoft 365 enterprise tenants disable basic IMAP auth — those
+require OAuth (XOAUTH2), not yet supported.
+
+---
+
+## Configuration
+
+The database lives at `./sentinel.db` by default. Override with:
 
 ```bash
 export DATABASE_PATH=/var/lib/sentinel/sentinel.db
 ```
 
-This is the only environment variable Sentinel reads.
+This is the only environment variable Sentinel reads. Everything else
+lives in the database and is editable via the CLI or web UI.
 
 ## Roadmap
 
-- Allow customizing classification rules per account.
-- Support for different LLM providers (currently uses OpenAI; Anthropic,
+- Generalize `EmailClient` → `Stream` and add non-email datastreams
+  (RSS, GitHub notifications, Slack, etc.) under `sentinel_core/streams/`.
+- Per-account classification rules.
+- Support for different LLM providers (currently OpenAI; Anthropic,
   local models, etc. would be straightforward).
-- A hosted offering with a web UI on top of the same configuration schema.
