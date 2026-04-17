@@ -23,29 +23,27 @@ firehose, and more.
 
 ## Features
 
-All configuration — API keys, streams, OAuth tokens, preferences — lives in
-a single SQLite database, managed through a guided CLI and a minimal web UI.
-The daemon is an async supervisor that runs one task per stream; push-native
-sources (WebSockets, SSE) will slot in alongside pull-based ones without
-changes to the supervisor.
+The repo is split into a pure shared library plus separate local and hosted
+runtimes. The local runtime is single-user and can back both a CLI and a
+local web UI with one SQLite database. The hosted runtime is multi-user and
+has its own storage model, web app, and worker process.
 
 ## Project layout
 
 ```
 src/
-  sentinel_core/     engine — Stream ABC, Item, classifier, async supervisor, db, notifiers
+  sentinel_lib/      shared library — streams, classifiers, processing, notifiers
     streams/
       base.py        Stream + Item
-      registry.py    stream_type → (config, class) registry
       email/         IMAP / Gmail API / Microsoft Graph
       rss/           RSS + Atom feeds via feedparser
-  sentinel_app/      UI — CLI + Flask web app + auth providers
+  sentinel_local/    single-user runtime — SQLite, CLI, local web app
+  sentinel_hosted/   multi-user runtime — hosted web app, worker, auth
 ```
 
-The engine has no dependency on the UI layer, so the same code can be reused
-behind a different surface (Slack app, TUI, etc.) later. Adding a new
-datastream is a matter of implementing `Stream` + a Pydantic config and
-registering the pair in `streams/registry.py`.
+`sentinel_lib` has no dependency on the runtime or UI layers. Both local and
+hosted runtimes compose it differently instead of sharing one mode-switched
+application.
 
 ## Installation
 
@@ -57,10 +55,10 @@ dependencies:
 uv sync
 ```
 
-Sentinel runs in two modes — pick one when you set it up:
+Sentinel has two separate runtimes:
 
-- **`local`** — single user, no auth, you run it for yourself. Default.
-- **`hosted`** — multi-tenant, Google OAuth signup/login.
+- **Local** — single user, no auth, for personal use.
+- **Hosted** — multi-tenant, Google OAuth signup/login.
 
 ---
 
@@ -69,7 +67,7 @@ Sentinel runs in two modes — pick one when you set it up:
 ### 1. Configure operator-level settings
 
 ```bash
-uv run sentinel init --local
+uv run sentinel init
 ```
 
 You'll be asked for:
@@ -81,7 +79,7 @@ You'll be asked for:
   [resend.com](https://resend.com)
 - **Monitoring preferences** — poll interval, max lookback hours
 
-A singleton "local" user is created automatically; you'll never need to log in.
+The local runtime is single-user; there is no app-level login.
 
 ### 2. Add a stream
 
@@ -126,7 +124,7 @@ For running Sentinel as a service for multiple users:
 ### 1. Configure operator-level settings
 
 ```bash
-uv run sentinel init --hosted
+uv run sentinel-hosted init
 ```
 
 In addition to the local-mode prompts, you'll need:
@@ -141,8 +139,8 @@ A `SESSION_SECRET` is auto-generated and persisted on first run.
 ### 2. Run the daemon and web UI
 
 ```bash
-uv run sentinel run        # one terminal — daemon + Telegram bot listener
-uv run sentinel web        # another — public web UI
+uv run sentinel-hosted worker   # one terminal — worker + Telegram bot listener
+uv run sentinel-hosted web      # another — public web UI
 ```
 
 Users sign up by clicking "Sign in with Google" on `/login`. After
@@ -151,8 +149,8 @@ and Telegram link via the web UI — operator-level secrets stay private.
 
 ### CLI for operators
 
-`sentinel stream add/list/remove --user-email <user@example.com>` lets
-the operator manage a specific user's streams from the shell.
+The hosted admin CLI currently handles runtime setup plus starting the web
+and worker processes.
 
 ---
 
@@ -174,14 +172,15 @@ require OAuth (XOAUTH2), not yet supported.
 
 ## Configuration
 
-The database lives at `./sentinel.db` by default. Override with:
+The local runtime defaults to `./sentinel-local.db`. The hosted runtime
+defaults to `./sentinel-hosted.db`. Override either with:
 
 ```bash
 export DATABASE_PATH=/var/lib/sentinel/sentinel.db
 ```
 
-This is the only environment variable Sentinel reads. Everything else
-lives in the database and is editable via the CLI or web UI.
+`DATABASE_PATH` is intentionally runtime-scoped: point the local and hosted
+processes at different files if you run both on one machine.
 
 ## Roadmap
 

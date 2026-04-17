@@ -20,6 +20,10 @@ config/mailboxes.yaml
 
 # Database
 sentinel.db
+sentinel*.db
+*.db-shm
+*.db-wal
+*.db-journal
 
 # Logs
 logs/
