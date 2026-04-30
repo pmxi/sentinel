@@ -29,6 +29,9 @@ sentinel*.db
 logs/
 *.log
 
+# Trained models and offline data products
+artifacts/
+
 
 # I think it's useful to keep vscode settings.
 # .vscode/
