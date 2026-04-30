@@ -70,6 +70,8 @@ def _register_builtins() -> None:
     from sentinel_lib.streams.email.stream import EmailStream
     from sentinel_lib.streams.rss.config import RSSStreamConfig
     from sentinel_lib.streams.rss.stream import RSSStream
+    from sentinel_lib.streams.sitemap_news.config import SitemapNewsStreamConfig
+    from sentinel_lib.streams.sitemap_news.stream import SitemapNewsStream
 
     register(
         StreamSpec(
@@ -90,6 +92,13 @@ def _register_builtins() -> None:
             stream_type="bluesky",
             config_cls=BlueskyStreamConfig,
             stream_cls=BlueskyStream,
+        )
+    )
+    register(
+        StreamSpec(
+            stream_type="sitemap_news",
+            config_cls=SitemapNewsStreamConfig,
+            stream_cls=SitemapNewsStream,
         )
     )
 
