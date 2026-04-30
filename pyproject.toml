@@ -38,3 +38,8 @@ packages = [
     "src/sentinel_lib",
     "src/sentinel_local",
 ]
+
+[dependency-groups]
+dev = [
+    "mediacloud>=5.0.0",
+]

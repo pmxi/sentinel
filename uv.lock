@@ -431,6 +431,11 @@ dependencies = [
     { name = "twilio" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "mediacloud" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.10" },
@@ -451,6 +456,9 @@ requires-dist = [
     { name = "sentence-transformers", specifier = ">=5.4.1" },
     { name = "twilio" },
 ]
+
+[package.metadata.requires-dev]
+dev = [{ name = "mediacloud", specifier = ">=5.0.0" }]
 
 [[package]]
 name = "feedparser"
@@ -888,6 +896,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
+]
+
+[[package]]
+name = "mediacloud"
+version = "5.0.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a0/b6/b8792d88f712584eae1b8b7c12c82878446a8fbc8f22ea667e54a90b95d5/mediacloud-5.0.0.tar.gz", hash = "sha256:e873ecea86ee72374b2af66472569304e5652a4ad4e4527d00927ef71b1c1023", size = 26481, upload-time = "2026-04-20T19:00:35.973Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f0/ca/606debeddda0dfcc406f21cb0b41a421fc3dc29f6e3ae243483e5484ccfa/mediacloud-5.0.0-py3-none-any.whl", hash = "sha256:a87efa85b33975464ef0d6d85b2ee9a30d9040e4bf7c5ddb08799837c6f8a23e", size = 30254, upload-time = "2026-04-20T19:00:34.742Z" },
 ]
 
 [[package]]

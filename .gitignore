@@ -21,6 +21,7 @@ config/mailboxes.yaml
 # Database
 sentinel.db
 sentinel*.db
+tools/sources/sources.db
 *.db-shm
 *.db-wal
 *.db-journal
