@@ -64,6 +64,8 @@ def _register_builtins() -> None:
     imports until first call to avoid circular refs at module load."""
     if _REGISTRY:
         return
+    from sentinel_lib.streams.bluesky.config import BlueskyStreamConfig
+    from sentinel_lib.streams.bluesky.stream import BlueskyStream
     from sentinel_lib.streams.email.mail_config import MailAccountConfig
     from sentinel_lib.streams.email.stream import EmailStream
     from sentinel_lib.streams.rss.config import RSSStreamConfig
@@ -81,6 +83,13 @@ def _register_builtins() -> None:
             stream_type="rss",
             config_cls=RSSStreamConfig,
             stream_cls=RSSStream,
+        )
+    )
+    register(
+        StreamSpec(
+            stream_type="bluesky",
+            config_cls=BlueskyStreamConfig,
+            stream_cls=BlueskyStream,
         )
     )
 
