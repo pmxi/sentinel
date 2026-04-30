@@ -10,10 +10,13 @@ from getpass import getpass
 from pathlib import Path
 from typing import Optional
 
+from sentinel_lib.streams.bluesky.config import BlueskyStreamConfig
 from sentinel_lib.streams.email.mail_config import AccountSettings, AuthConfig, AuthMethod, MailAccountConfig, MailProvider
 from sentinel_lib.streams.rss.config import RSSStreamConfig
+from sentinel_lib.streams.sitemap_news.config import SitemapNewsStreamConfig
 from sentinel_local.config import settings
 from sentinel_local.database import LocalDatabase
+from sentinel_local.dev_firehose import FirehoseConfig, run_firehose
 from sentinel_local.monitor import LocalMonitor
 from sentinel_local.services.settings import LocalSetupService
 from sentinel_local.services.streams import LocalStreamService
@@ -63,6 +66,7 @@ def cmd_init(_args: argparse.Namespace) -> None:
     print("  - Add an RSS feed: sentinel stream add --type rss")
     print("  - Start monitor:   sentinel run")
     print("  - Open web UI:     sentinel web")
+    print("  - Drive test load: sentinel dev firehose --rate 20 --count 200")
 
 
 def cmd_stream_list(_args: argparse.Namespace) -> None:
@@ -88,12 +92,18 @@ def cmd_stream_add(args: argparse.Namespace) -> None:
     service = LocalStreamService(db)
     stream_type = args.type
     if not stream_type:
-        print("Stream types: (1) email  (2) rss")
+        print("Stream types: (1) email  (2) rss  (3) bluesky  (4) sitemap_news")
         choice = _prompt("Choose stream type", default="1")
-        stream_type = {"1": "email", "2": "rss", "email": "email", "rss": "rss"}.get(
-            choice.lower(),
-            "email",
-        )
+        stream_type = {
+            "1": "email",
+            "2": "rss",
+            "3": "bluesky",
+            "4": "sitemap_news",
+            "email": "email",
+            "rss": "rss",
+            "bluesky": "bluesky",
+            "sitemap_news": "sitemap_news",
+        }.get(choice.lower(), "email")
 
     name = _prompt("Stream name (e.g. 'personal', 'hn-frontpage')")
     if not name:
@@ -103,6 +113,15 @@ def cmd_stream_add(args: argparse.Namespace) -> None:
         config_json = _prompt_email_stream()
     elif stream_type == "rss":
         config_json = _prompt_rss_stream()
+    elif stream_type == "bluesky":
+        config_json = BlueskyStreamConfig().model_dump_json()
+    elif stream_type == "sitemap_news":
+        sitemap_url = _prompt("Sitemap URL (e.g. https://www.bloomberg.com/sitemaps/news/latest.xml)")
+        publication = _prompt("Publication display name", default=name)
+        config_json = SitemapNewsStreamConfig(
+            sitemap_url=sitemap_url,
+            publication_name=publication,
+        ).model_dump_json()
     else:
         raise SystemExit(f"Unknown stream type: {stream_type!r}")
 
@@ -205,6 +224,29 @@ def cmd_web(args: argparse.Namespace) -> None:
     run_web(host=args.host, port=args.port, debug=args.debug)
 
 
+def cmd_dev_firehose(args: argparse.Namespace) -> None:
+    count = None if args.count == 0 else args.count
+    config = FirehoseConfig(
+        rate=args.rate,
+        count=count,
+        source_type=args.source_type,
+        stream_name=args.stream_name,
+        classify_delay_ms=args.classify_delay_ms,
+        important_every=args.important_every,
+    )
+    target = "until interrupted" if count is None else f"for {count} items"
+    print(
+        f"Emitting synthetic {config.source_type} traffic into {settings.DATABASE_PATH} "
+        f"at {config.rate:.2f} items/sec {target}. Press Ctrl-C to stop."
+    )
+    try:
+        emitted = run_firehose(settings.DATABASE_PATH, config)
+    except KeyboardInterrupt:
+        print("\nStopped.")
+        return
+    print(f"Emitted {emitted} synthetic item(s).")
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sentinel")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -224,12 +266,55 @@ def build_parser() -> argparse.ArgumentParser:
     stream_sub.add_parser("list").set_defaults(func=cmd_stream_list)
 
     add = stream_sub.add_parser("add")
-    add.add_argument("--type", choices=["email", "rss"], help="Stream type")
+    add.add_argument("--type", choices=["email", "rss", "bluesky", "sitemap_news"], help="Stream type")
     add.set_defaults(func=cmd_stream_add)
 
     rm = stream_sub.add_parser("remove")
     rm.add_argument("name")
     rm.set_defaults(func=cmd_stream_remove)
+
+    dev = sub.add_parser("dev", help="Developer helpers for local testing")
+    dev_sub = dev.add_subparsers(dest="dev_cmd", required=True)
+
+    firehose = dev_sub.add_parser(
+        "firehose",
+        help="Emit synthetic dashboard traffic into the local sqlite db",
+    )
+    firehose.add_argument(
+        "--rate",
+        type=float,
+        default=20.0,
+        help="Synthetic items per second (default: 20)",
+    )
+    firehose.add_argument(
+        "--count",
+        type=int,
+        default=200,
+        help="How many items to emit; use 0 to run until interrupted (default: 200)",
+    )
+    firehose.add_argument(
+        "--source-type",
+        default="rss",
+        help="Source label shown in the dashboard (default: rss)",
+    )
+    firehose.add_argument(
+        "--stream-name",
+        default="dev-firehose",
+        help="Stream label shown in the dashboard (default: dev-firehose)",
+    )
+    firehose.add_argument(
+        "--classify-delay-ms",
+        type=int,
+        default=120,
+        help="Delay between received and classified events (default: 120)",
+    )
+    firehose.add_argument(
+        "--important-every",
+        type=int,
+        default=5,
+        help="Mark every Nth item as important; 0 disables important items (default: 5)",
+    )
+    firehose.set_defaults(func=cmd_dev_firehose)
 
     return parser
 

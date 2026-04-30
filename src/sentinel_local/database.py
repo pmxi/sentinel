@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sqlite3
+import threading
 from datetime import datetime
 from pathlib import Path
 from types import TracebackType
@@ -18,14 +19,22 @@ class LocalDatabase:
 
     def __init__(self, db_path: str = "sentinel-local.db"):
         self.db_path = Path(db_path)
+        # sqlite3.Connection is not safe for concurrent use across threads even
+        # with check_same_thread=False; the monitor fans many stream coroutines
+        # into asyncio.to_thread, so all DB access must serialize on this lock.
+        self._lock = threading.RLock()
         self.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
+        # Reclaim space from any future deletes incrementally instead of
+        # holding free pages forever. Only takes effect on a fresh DB; an
+        # existing file needs `VACUUM` once to convert.
+        self.conn.execute("PRAGMA auto_vacuum = INCREMENTAL")
         self._create_tables()
 
     def _create_tables(self) -> None:
-        with self.conn:
+        with self._lock, self.conn:
             self.conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -106,9 +115,10 @@ class LocalDatabase:
             self._set_schema_version(_CURRENT_SCHEMA_VERSION)
 
     def _get_schema_version(self) -> int:
-        row = self.conn.execute(
-            "SELECT value FROM schema_meta WHERE key = 'schema_version'"
-        ).fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT value FROM schema_meta WHERE key = 'schema_version'"
+            ).fetchone()
         if row is None:
             return 0
         try:
@@ -117,15 +127,16 @@ class LocalDatabase:
             return 0
 
     def _set_schema_version(self, version: int) -> None:
-        self.conn.execute(
-            """INSERT INTO schema_meta (key, value)
-               VALUES ('schema_version', ?)
-               ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
-            (str(version),),
-        )
+        with self._lock:
+            self.conn.execute(
+                """INSERT INTO schema_meta (key, value)
+                   VALUES ('schema_version', ?)
+                   ON CONFLICT(key) DO UPDATE SET value = excluded.value""",
+                (str(version),),
+            )
 
     def set_app_setting(self, key: str, value: str) -> None:
-        with self.conn:
+        with self._lock, self.conn:
             self.conn.execute(
                 """INSERT INTO app_settings (key, value, updated_at)
                    VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -136,22 +147,24 @@ class LocalDatabase:
             )
 
     def get_app_setting(self, key: str) -> Optional[str]:
-        row = self.conn.execute(
-            "SELECT value FROM app_settings WHERE key = ?",
-            (key,),
-        ).fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT value FROM app_settings WHERE key = ?",
+                (key,),
+            ).fetchone()
         return row["value"] if row else None
 
     def get_all_app_settings(self) -> Dict[str, str]:
-        rows = self.conn.execute("SELECT key, value FROM app_settings").fetchall()
+        with self._lock:
+            rows = self.conn.execute("SELECT key, value FROM app_settings").fetchall()
         return {row["key"]: row["value"] for row in rows}
 
     def delete_app_setting(self, key: str) -> None:
-        with self.conn:
+        with self._lock, self.conn:
             self.conn.execute("DELETE FROM app_settings WHERE key = ?", (key,))
 
     def set_local_setting(self, key: str, value: str) -> None:
-        with self.conn:
+        with self._lock, self.conn:
             self.conn.execute(
                 """INSERT INTO local_settings (key, value, updated_at)
                    VALUES (?, ?, CURRENT_TIMESTAMP)
@@ -162,22 +175,24 @@ class LocalDatabase:
             )
 
     def get_local_setting(self, key: str) -> Optional[str]:
-        row = self.conn.execute(
-            "SELECT value FROM local_settings WHERE key = ?",
-            (key,),
-        ).fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT value FROM local_settings WHERE key = ?",
+                (key,),
+            ).fetchone()
         return row["value"] if row else None
 
     def get_all_local_settings(self) -> Dict[str, str]:
-        rows = self.conn.execute("SELECT key, value FROM local_settings").fetchall()
+        with self._lock:
+            rows = self.conn.execute("SELECT key, value FROM local_settings").fetchall()
         return {row["key"]: row["value"] for row in rows}
 
     def delete_local_setting(self, key: str) -> None:
-        with self.conn:
+        with self._lock, self.conn:
             self.conn.execute("DELETE FROM local_settings WHERE key = ?", (key,))
 
     def upsert_stream(self, name: str, stream_type: str, config_json: str) -> None:
-        with self.conn:
+        with self._lock, self.conn:
             self.conn.execute(
                 """INSERT INTO streams (name, stream_type, config_json, updated_at)
                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
@@ -189,20 +204,22 @@ class LocalDatabase:
             )
 
     def get_stream(self, name: str) -> Optional[Dict[str, str]]:
-        row = self.conn.execute(
-            "SELECT name, stream_type, config_json FROM streams WHERE name = ?",
-            (name,),
-        ).fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT name, stream_type, config_json FROM streams WHERE name = ?",
+                (name,),
+            ).fetchone()
         return dict(row) if row else None
 
     def list_streams(self) -> List[Dict[str, str]]:
-        rows = self.conn.execute(
-            "SELECT name, stream_type, config_json FROM streams ORDER BY name"
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT name, stream_type, config_json FROM streams ORDER BY name"
+            ).fetchall()
         return [dict(row) for row in rows]
 
     def delete_stream(self, name: str) -> None:
-        with self.conn:
+        with self._lock, self.conn:
             self.conn.execute("DELETE FROM streams WHERE name = ?", (name,))
 
     def mark_item_processed(
@@ -213,7 +230,7 @@ class LocalDatabase:
         author: str = "",
         stream_name: str = "",
     ) -> None:
-        with self.conn:
+        with self._lock, self.conn:
             self.conn.execute(
                 """INSERT OR IGNORE INTO processed_items
                        (source_type, item_id, title, author, stream_name)
@@ -222,32 +239,36 @@ class LocalDatabase:
             )
 
     def is_item_processed(self, source_type: str, item_id: str) -> bool:
-        row = self.conn.execute(
-            "SELECT 1 FROM processed_items WHERE source_type = ? AND item_id = ?",
-            (source_type, item_id),
-        ).fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT 1 FROM processed_items WHERE source_type = ? AND item_id = ?",
+                (source_type, item_id),
+            ).fetchone()
         return row is not None
 
     def get_processed_count(self) -> int:
-        row = self.conn.execute("SELECT COUNT(*) AS c FROM processed_items").fetchone()
+        with self._lock:
+            row = self.conn.execute("SELECT COUNT(*) AS c FROM processed_items").fetchone()
         return int(row["c"])
 
     def recent_processed_items(self, limit: int = 25) -> List[Dict[str, Any]]:
-        rows = self.conn.execute(
-            "SELECT source_type, item_id, title, author, stream_name, processed_at "
-            "FROM processed_items ORDER BY processed_at DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT source_type, item_id, title, author, stream_name, processed_at "
+                "FROM processed_items ORDER BY processed_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
         return [dict(row) for row in rows]
 
     def get_monitoring_start_time(self) -> Optional[datetime]:
-        row = self.conn.execute(
-            "SELECT value FROM monitoring_state WHERE key = 'monitoring_start_time'"
-        ).fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT value FROM monitoring_state WHERE key = 'monitoring_start_time'"
+            ).fetchone()
         return parse_iso_datetime(row["value"], assume_local=True) if row else None
 
     def set_monitoring_start_time(self, timestamp: datetime) -> None:
-        with self.conn:
+        with self._lock, self.conn:
             self.conn.execute(
                 """INSERT INTO monitoring_state (key, value)
                    VALUES ('monitoring_start_time', ?)
@@ -258,13 +279,14 @@ class LocalDatabase:
             )
 
     def get_last_check_time(self) -> Optional[datetime]:
-        row = self.conn.execute(
-            "SELECT value FROM monitoring_state WHERE key = 'last_check_time'"
-        ).fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT value FROM monitoring_state WHERE key = 'last_check_time'"
+            ).fetchone()
         return parse_iso_datetime(row["value"], assume_local=True) if row else None
 
     def update_last_check_time(self, timestamp: datetime) -> None:
-        with self.conn:
+        with self._lock, self.conn:
             self.conn.execute(
                 """INSERT INTO monitoring_state (key, value)
                    VALUES ('last_check_time', ?)
@@ -274,36 +296,35 @@ class LocalDatabase:
                 (format_iso_datetime(timestamp),),
             )
 
-    _LIVE_EVENTS_RETENTION_SECONDS = 3600
-
     def emit_live_event(self, event_type: str, payload_json: str) -> int:
-        with self.conn:
+        # Append-only: the firehose rate is fine, storage is cheap, and the
+        # accumulated history is genuinely useful for labeling and offline
+        # analysis. No retention sweep — let the table grow.
+        with self._lock, self.conn:
             cursor = self.conn.execute(
                 "INSERT INTO live_events (event_type, payload_json) VALUES (?, ?)",
                 (event_type, payload_json),
             )
-            self.conn.execute(
-                "DELETE FROM live_events WHERE created_at < datetime('now', ?)",
-                (f"-{self._LIVE_EVENTS_RETENTION_SECONDS} seconds",),
-            )
             return int(cursor.lastrowid)
 
     def fetch_live_events_since(self, after_id: int, limit: int = 100) -> List[Dict[str, Any]]:
-        rows = self.conn.execute(
-            "SELECT id, event_type, payload_json, created_at "
-            "FROM live_events WHERE id > ? ORDER BY id ASC LIMIT ?",
-            (after_id, limit),
-        ).fetchall()
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT id, event_type, payload_json, created_at "
+                "FROM live_events WHERE id > ? ORDER BY id ASC LIMIT ?",
+                (after_id, limit),
+            ).fetchall()
         return [dict(row) for row in rows]
 
     def latest_live_event_id(self) -> int:
-        row = self.conn.execute(
-            "SELECT COALESCE(MAX(id), 0) AS mx FROM live_events"
-        ).fetchone()
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT COALESCE(MAX(id), 0) AS mx FROM live_events"
+            ).fetchone()
         return int(row["mx"])
 
     def create_telegram_link_token(self, token: str, expires_at: datetime) -> None:
-        with self.conn:
+        with self._lock, self.conn:
             self.conn.execute(
                 """INSERT INTO telegram_link_tokens (token, expires_at)
                    VALUES (?, ?)""",
@@ -311,7 +332,7 @@ class LocalDatabase:
             )
 
     def consume_telegram_link_token(self, token: str) -> bool:
-        with self.conn:
+        with self._lock, self.conn:
             row = self.conn.execute(
                 "SELECT expires_at FROM telegram_link_tokens WHERE token = ?",
                 (token,),
@@ -325,7 +346,7 @@ class LocalDatabase:
             return parse_iso_datetime(row["expires_at"], assume_local=True) >= utc_now()
 
     def purge_expired_telegram_link_tokens(self) -> int:
-        with self.conn:
+        with self._lock, self.conn:
             rows = self.conn.execute(
                 "SELECT token, expires_at FROM telegram_link_tokens"
             ).fetchall()
@@ -344,7 +365,8 @@ class LocalDatabase:
             return cursor.rowcount
 
     def close(self) -> None:
-        self.conn.close()
+        with self._lock:
+            self.conn.close()
 
     def __enter__(self) -> "LocalDatabase":
         return self

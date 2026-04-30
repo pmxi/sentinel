@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import signal
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from openai import (
@@ -23,6 +24,7 @@ from sentinel_lib.streams import Item, Stream, build_stream, ensure_loaded
 from sentinel_local.config import settings
 from sentinel_local.database import LocalDatabase
 from sentinel_local.live_bus import LiveEvent, LiveEventBus
+from sentinel_local.scorer import BatchScorer, LocalTextScorer
 from sentinel_local.services.preferences import LocalPreferences
 from sentinel_local.services.streams import LocalStreamService
 from sentinel_local.telegram_bot import start_in_thread as start_telegram_listener
@@ -31,6 +33,11 @@ from sentinel_lib.time_utils import utc_now
 logger = get_logger("sentinel.local.monitor")
 
 _RESTART_DELAY_SECONDS = 30
+
+# Temporary global kill switch: route every item through the no-LLM fast
+# path, regardless of source. Flip to False (or delete) when classification
+# is wired back in.
+_CLASSIFICATION_DISABLED = True
 
 
 class LocalMonitor:
@@ -47,6 +54,10 @@ class LocalMonitor:
             api_key=settings.LLM_API_KEY or "",
             model=settings.LLM_MODEL,
         )
+        local_scorer = LocalTextScorer.maybe_load(Path("artifacts/classifier-v1.joblib"))
+        self.scorer: Optional[BatchScorer] = (
+            BatchScorer(local_scorer) if local_scorer is not None else None
+        )
         self._shutdown = asyncio.Event()
         self._tasks: List[asyncio.Task] = []
 
@@ -56,6 +67,9 @@ class LocalMonitor:
 
         if settings.TELEGRAM_BOT_TOKEN:
             start_telegram_listener(settings.DATABASE_PATH)
+
+        if self.scorer is not None:
+            await self.scorer.start()
 
         if self.db.get_monitoring_start_time() is None:
             self.db.set_monitoring_start_time(utc_now())
@@ -105,12 +119,33 @@ class LocalMonitor:
                     classifier=self.classifier,
                     preferences=preferences,
                     bus=self.bus,
+                    scorer=self.scorer,
                 )
+                # Concurrency cap per stream. Without this the firehose
+                # serializes on score()/process() and the BatchScorer
+                # queue never accumulates enough to actually batch.
+                sem = asyncio.Semaphore(64)
+                in_flight: set[asyncio.Task] = set()
+
+                async def _handle(item: Item) -> None:
+                    async with sem:
+                        try:
+                            await processor.process(item)
+                        finally:
+                            # Skip the per-item liveness write for firehose
+                            # streams; otherwise hundreds of writes/sec.
+                            if not (item.metadata or {}).get("skip_classification"):
+                                await asyncio.to_thread(self.db.update_last_check_time, utc_now())
+
                 async for item in stream.items():
                     if self._shutdown.is_set():
-                        return
-                    await processor.process(item)
-                    await asyncio.to_thread(self.db.update_last_check_time, utc_now())
+                        break
+                    t = asyncio.create_task(_handle(item))
+                    in_flight.add(t)
+                    t.add_done_callback(in_flight.discard)
+
+                if in_flight:
+                    await asyncio.gather(*in_flight, return_exceptions=True)
                 return
             except asyncio.CancelledError:
                 raise
@@ -154,6 +189,8 @@ class LocalMonitor:
                 await task
             except (asyncio.CancelledError, Exception):
                 pass
+        if self.scorer is not None:
+            await self.scorer.stop()
 
 
 class LocalItemProcessor:
@@ -164,6 +201,7 @@ class LocalItemProcessor:
         classifier: OpenAIItemClassifier,
         preferences: LocalPreferences,
         bus: Optional[LiveEventBus],
+        scorer: Optional[BatchScorer] = None,
     ):
         notifier = None
         if preferences.has_telegram() and settings.TELEGRAM_BOT_TOKEN:
@@ -173,16 +211,35 @@ class LocalItemProcessor:
                     chat_id=preferences.TELEGRAM_CHAT_ID,
                 )
             )
+        self.observer = _LocalProcessingObserver(db, bus)
         self.processor = ItemProcessor(
             classifier=classifier,
             store=_LocalProcessedItemStore(db),
             notifier=notifier,
-            observer=_LocalProcessingObserver(db, bus),
+            observer=self.observer,
             is_retryable_classifier_error=_is_transient_classification_error,
         )
         self.notes = preferences.CLASSIFICATION_NOTES
+        self.scorer = scorer
 
     async def process(self, item: Item) -> bool:
+        # Bypass when:
+        # - the item's source is firehose-class (skip_classification), or
+        # - the global kill switch is on (we're running headless w/o LLM).
+        # In both cases just emit a received event for the dashboard.
+        if _CLASSIFICATION_DISABLED or (item.metadata or {}).get("skip_classification"):
+            if self.scorer is not None:
+                try:
+                    score = await self.scorer.score(item)
+                    md = dict(item.metadata or {})
+                    md["_classifier_score"] = score
+                    item.metadata = md
+                except Exception as exc:
+                    logger.warning("scorer failed for %s: %s", item.id, exc)
+            await self.observer.publish(
+                ProcessingEvent(event_type="item_received", item=item)
+            )
+            return False
         return await self.processor.process(item, notes=self.notes)
 
 
@@ -242,10 +299,12 @@ def _item_event_payload(item: Item) -> Dict[str, Any]:
         "source_type": item.source_type,
         "item_id": item.id,
         "title": item.title,
+        "body": item.body,
         "author": item.author,
         "url": item.url,
         "stream_name": (item.metadata or {}).get("stream_name", ""),
         "received_at": item.received_at.isoformat() if item.received_at else None,
+        "score": (item.metadata or {}).get("_classifier_score"),
     }
 
 

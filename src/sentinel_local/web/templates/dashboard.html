@@ -18,10 +18,37 @@
 </section>
 
 <section id="live-feed">
-  <h2>Live feed <span id="live-status" class="muted">connecting…</span></h2>
-  <ul id="live-list" class="live-list">
-    <li class="live-empty">Waiting for the next item…</li>
-  </ul>
+  <h2>
+    Live feed
+    <span id="live-status" class="muted">connecting…</span>
+    <button type="button" id="live-pause" class="live-pause">Pause</button>
+  </h2>
+  <div class="live-cols">
+    <div class="live-col">
+      <div class="live-col-head">
+        <span>Firehose</span>
+        <span id="rate-fire" class="col-rate"></span>
+      </div>
+      <div id="scroll-fire" class="live-scroll">
+        <ul id="list-fire" class="live-list">
+          <li class="live-empty">Waiting for the next item…</li>
+        </ul>
+        <button type="button" id="jump-fire" class="live-jump" hidden>↓ <span id="jumpn-fire">0</span> new</button>
+      </div>
+    </div>
+    <div class="live-col">
+      <div class="live-col-head">
+        <span>Filtered (P ≥ <input type="number" id="threshold" min="0" max="1" step="0.05" value="0.30">)</span>
+        <span id="rate-filter" class="col-rate"></span>
+      </div>
+      <div id="scroll-filter" class="live-scroll">
+        <ul id="list-filter" class="live-list">
+          <li class="live-empty">Waiting for the next match…</li>
+        </ul>
+        <button type="button" id="jump-filter" class="live-jump" hidden>↓ <span id="jumpn-filter">0</span> new</button>
+      </div>
+    </div>
+  </div>
 </section>
 
 <section>
@@ -50,92 +77,153 @@
 
 <script>
 (function () {
-  const list = document.getElementById("live-list");
-  const status = document.getElementById("live-status");
-  const MAX_ITEMS = 50;
+  const MAX_ITEMS = 200;
+  const FOLLOW_THRESHOLD_PX = 40;
 
-  function keyFor(data) {
-    return data.source_type + "::" + data.item_id;
+  const status = document.getElementById("live-status");
+  const pauseBtn = document.getElementById("live-pause");
+  const thresholdInput = document.getElementById("threshold");
+
+  let paused = false;
+  // Rolling buffer of recent items (with scores). Keeps `MAX_ITEMS` so the
+  // filtered column can re-render retroactively when the threshold changes.
+  const buffer = [];
+
+  function makeColumn(listEl, scrollEl, jumpBtnEl, jumpNEl, rateEl) {
+    const col = {listEl, scrollEl, jumpBtnEl, jumpNEl, rateEl,
+                 hidden: 0, recent: []};
+    col.isFollowing = () =>
+      scrollEl.scrollHeight - scrollEl.scrollTop - scrollEl.clientHeight <= FOLLOW_THRESHOLD_PX;
+    col.append = (rowEl) => {
+      const empty = listEl.querySelector(".live-empty");
+      if (empty) empty.remove();
+      const wasFollowing = col.isFollowing();
+      listEl.appendChild(rowEl);
+      while (listEl.children.length > MAX_ITEMS) listEl.removeChild(listEl.firstChild);
+      if (wasFollowing) {
+        scrollEl.scrollTop = scrollEl.scrollHeight;
+      } else {
+        col.hidden += 1;
+        jumpNEl.textContent = col.hidden;
+        jumpBtnEl.hidden = false;
+      }
+      col.recent.push(performance.now());
+    };
+    col.refill = (items) => {
+      listEl.innerHTML = items.length ? "" : '<li class="live-empty">Waiting for the next match…</li>';
+      for (const it of items.slice(-MAX_ITEMS)) listEl.appendChild(renderRow(it));
+      scrollEl.scrollTop = scrollEl.scrollHeight;
+      col.hidden = 0;
+      jumpBtnEl.hidden = true;
+    };
+    scrollEl.addEventListener("scroll", () => {
+      if (col.isFollowing()) { col.hidden = 0; jumpBtnEl.hidden = true; }
+    });
+    jumpBtnEl.addEventListener("click", () => {
+      scrollEl.scrollTop = scrollEl.scrollHeight;
+      col.hidden = 0;
+      jumpBtnEl.hidden = true;
+    });
+    return col;
   }
 
-  function renderRow(data, classified) {
+  const fire = makeColumn(
+    document.getElementById("list-fire"),
+    document.getElementById("scroll-fire"),
+    document.getElementById("jump-fire"),
+    document.getElementById("jumpn-fire"),
+    document.getElementById("rate-fire"),
+  );
+  const filter = makeColumn(
+    document.getElementById("list-filter"),
+    document.getElementById("scroll-filter"),
+    document.getElementById("jump-filter"),
+    document.getElementById("jumpn-filter"),
+    document.getElementById("rate-filter"),
+  );
+
+  function scoreBand(s) {
+    if (s == null) return "none";
+    if (s < 0.2) return "very-low";
+    if (s < 0.3) return "low";
+    if (s < 0.5) return "mid";
+    return "high";
+  }
+
+  function renderRow(data) {
     const li = document.createElement("li");
-    li.dataset.key = keyFor(data);
-    li.className = "live-item" + (classified ? " classified" : " pending")
-      + (classified && data.priority === "important" ? " important" : "");
-
-    const priority = classified
-      ? (data.priority === "important" ? "IMPORTANT" : "normal")
-      : "classifying…";
-
-    const authorText = document.createTextNode(data.author || data.source_type);
-    const author = document.createElement("span");
-    author.className = "live-author";
-    author.appendChild(authorText);
+    li.className = "live-item";
 
     const title = document.createElement("span");
     title.className = "live-title";
     if (data.url) {
       const a = document.createElement("a");
-      a.href = data.url;
-      a.target = "_blank";
-      a.rel = "noopener";
+      a.href = data.url; a.target = "_blank"; a.rel = "noopener";
       a.textContent = data.title || "(no title)";
       title.appendChild(a);
     } else {
       title.textContent = data.title || "(no title)";
     }
 
+    const score = document.createElement("span");
+    score.className = "live-score band-" + scoreBand(data.score);
+    score.textContent = (data.score == null) ? "—" : data.score.toFixed(2);
+
     const meta = document.createElement("span");
     meta.className = "live-meta";
-    meta.textContent = data.source_type
-      + (data.stream_name ? " · " + data.stream_name : "")
-      + " · " + priority;
+    // Skip author for bluesky (it's an opaque DID); for sitemap_news the
+    // publication is already in stream_name, so author is duplicative.
+    const showAuthor = data.author && data.source_type !== "bluesky" && data.author !== data.stream_name;
+    const parts = [data.source_type];
+    if (data.stream_name) parts.push(data.stream_name);
+    if (showAuthor) parts.push(data.author);
+    meta.textContent = parts.join(" · ");
 
-    const summary = document.createElement("div");
-    summary.className = "live-summary";
-    summary.textContent = classified ? (data.summary || "") : "";
-
-    li.appendChild(author);
-    li.appendChild(title);
-    li.appendChild(meta);
-    li.appendChild(summary);
+    li.appendChild(title); li.appendChild(score); li.appendChild(meta);
     return li;
   }
 
-  function upsert(data, classified) {
-    // Drop the empty placeholder once real events arrive.
-    const empty = list.querySelector(".live-empty");
-    if (empty) empty.remove();
+  function handle(data) {
+    if (paused) return;
+    buffer.push(data);
+    while (buffer.length > MAX_ITEMS) buffer.shift();
 
-    const key = keyFor(data);
-    const existing = list.querySelector('[data-key="' + CSS.escape(key) + '"]');
-    const row = renderRow(data, classified);
-    if (existing) {
-      list.replaceChild(row, existing);
-    } else {
-      list.insertBefore(row, list.firstChild);
-      while (list.children.length > MAX_ITEMS) {
-        list.removeChild(list.lastChild);
-      }
+    fire.append(renderRow(data));
+    const t = parseFloat(thresholdInput.value) || 0;
+    if (data.score != null && data.score >= t) {
+      filter.append(renderRow(data));
     }
   }
 
-  const es = new EventSource("{{ url_for('events_stream') }}");
+  function updateRate(col) {
+    const cutoff = performance.now() - 5000;
+    while (col.recent.length && col.recent[0] < cutoff) col.recent.shift();
+    const perSec = col.recent.length / 5;
+    col.rateEl.textContent = perSec >= 0.1 ? `${perSec.toFixed(1)}/s` : "";
+  }
+  setInterval(() => { updateRate(fire); updateRate(filter); }, 500);
 
-  es.addEventListener("open", () => {
-    status.textContent = "live";
-    status.className = "ok";
+  pauseBtn.addEventListener("click", () => {
+    paused = !paused;
+    pauseBtn.textContent = paused ? "Resume" : "Pause";
+    pauseBtn.classList.toggle("active", paused);
   });
-  es.addEventListener("error", () => {
-    status.textContent = "reconnecting…";
-    status.className = "warn";
+
+  // Threshold change re-filters the buffered items so the user sees an
+  // immediate effect without waiting for new traffic.
+  thresholdInput.addEventListener("input", () => {
+    const t = parseFloat(thresholdInput.value) || 0;
+    filter.refill(buffer.filter(d => d.score != null && d.score >= t));
   });
+
+  const es = new EventSource("{{ url_for('events_stream') }}");
+  es.addEventListener("open", () => { status.textContent = "live"; status.className = "ok"; });
+  es.addEventListener("error", () => { status.textContent = "reconnecting…"; status.className = "warn"; });
   es.addEventListener("item_received", (ev) => {
-    try { upsert(JSON.parse(ev.data), false); } catch (e) { console.error(e); }
+    try { handle(JSON.parse(ev.data)); } catch (e) { console.error(e); }
   });
   es.addEventListener("item_classified", (ev) => {
-    try { upsert(JSON.parse(ev.data), true); } catch (e) { console.error(e); }
+    try { handle(JSON.parse(ev.data)); } catch (e) { console.error(e); }
   });
 })();
 </script>

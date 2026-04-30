@@ -29,8 +29,9 @@ from sentinel_local.web.imap_probe import probe_imap
 logger = get_logger(__name__)
 
 
-def create_app(db_path: Optional[str] = None) -> Flask:
+def create_app(db_path: Optional[str] = None, debug: bool = False) -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
+    app.debug = debug
     app.config["DB_PATH"] = db_path or settings.DATABASE_PATH
     _bootstrap_settings(app)
     ensure_loaded()
@@ -323,7 +324,12 @@ def _maybe_start_embedded_monitor(app: Flask) -> Optional[LiveEventBus]:
         return None
     import os
 
-    if os.environ.get("WERKZEUG_RUN_MAIN") == "false":
+    # Under Werkzeug's reloader the parent process re-execs a child with
+    # WERKZEUG_RUN_MAIN=true; the parent itself never sets it. Starting the
+    # monitor in both processes spins up two Telegram long-pollers, which
+    # Telegram rejects with HTTP 409. Only run in the child (or when the
+    # reloader is off entirely).
+    if app.debug and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
         return None
 
     bus = LiveEventBus()
@@ -345,25 +351,35 @@ def _sse_push_loop(db_path: str, cursor: int, bus: LiveEventBus):
         nonlocal cursor
         yield "retry: 3000\n: connected\n\n"
         q = bus.subscribe()
+        heartbeat_countdown = 30
         try:
             db = LocalDatabase(db_path)
             try:
-                for row in db.fetch_live_events_since(cursor, limit=500):
-                    cursor = int(row["id"])
-                    yield _sse_frame(cursor, row["event_type"], row["payload_json"])
+                while True:
+                    rows = db.fetch_live_events_since(cursor, limit=200)
+                    if rows:
+                        for row in rows:
+                            cursor = int(row["id"])
+                            yield _sse_frame(cursor, row["event_type"], row["payload_json"])
+                        heartbeat_countdown = 30
+                        continue
+
+                    try:
+                        event = q.get(timeout=0.5)
+                    except queue.Empty:
+                        heartbeat_countdown -= 1
+                        if heartbeat_countdown <= 0:
+                            yield ": keepalive\n\n"
+                            heartbeat_countdown = 30
+                        continue
+
+                    if event.event_id <= cursor:
+                        continue
+                    cursor = event.event_id
+                    yield _sse_frame(cursor, event.event_type, event.payload_json)
+                    heartbeat_countdown = 30
             finally:
                 db.close()
-
-            while True:
-                try:
-                    event = q.get(timeout=15)
-                except queue.Empty:
-                    yield ": keepalive\n\n"
-                    continue
-                if event.event_id <= cursor:
-                    continue
-                cursor = event.event_id
-                yield _sse_frame(cursor, event.event_type, event.payload_json)
         finally:
             bus.unsubscribe(q)
 
@@ -460,7 +476,7 @@ def _base_prompt_preview() -> str:
 
 
 def run(host: str = "127.0.0.1", port: int = 8765, debug: bool = False) -> None:
-    app = create_app()
+    app = create_app(debug=debug)
     app.run(host=host, port=port, debug=debug)
 
 
