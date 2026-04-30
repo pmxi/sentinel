@@ -37,7 +37,13 @@ NEWS_NS = "http://www.google.com/schemas/sitemap-news/0.9"
 USER_AGENT = "Mozilla/5.0 (compatible; SentinelDiscoveryBot/0.1; news-sitemap-finder)"
 HTTP_TIMEOUT = aiohttp.ClientTimeout(total=30)
 PER_WALK_DELAY = 1.0
-INDEX_CHILD_FETCH_LIMIT = 4
+INDEX_CHILD_FETCH_LIMIT = 8
+
+# Index children whose path encodes a year (or year-month) are almost
+# always archives of stale content, not the live news sitemap. Deprioritize
+# them — they still get fetched if there's room under the per-index cap,
+# but news-keyword and plain children come first.
+_ARCHIVE_PATH_RE = re.compile(r"(?<![0-9])(?:19|20)\d{2}(?:[-_/]\d{1,2})?(?![0-9])")
 
 
 def _now_iso() -> str:
@@ -170,19 +176,24 @@ def classify(body: bytes) -> SitemapInfo:
 
 
 def pick_index_children(children: list[str], max_count: int = INDEX_CHILD_FETCH_LIMIT) -> list[str]:
-    """Heuristic ordering. Prefer children whose path hints at news, but
-    do NOT exclude others — Asahi has none of the keywords yet all 8
-    children are valid news sitemaps. Return at most max_count, with the
-    keyword-matching ones first."""
+    """Three-tier ordering. (1) keyword-matching paths first, (2) then
+    paths with no archive year, (3) then archive-shaped paths last.
+    We don't exclude any tier outright — Asahi has none of the keywords
+    yet all 8 children are valid news sitemaps. The cap is applied to
+    the merged list."""
     keywords = ("news", "latest", "recent", "current", "headlines", "article")
     matched: list[str] = []
-    other: list[str] = []
+    plain: list[str] = []
+    archive: list[str] = []
     for u in children:
-        if any(k in u.lower() for k in keywords):
+        ul = u.lower()
+        if _ARCHIVE_PATH_RE.search(ul):
+            archive.append(u)
+        elif any(k in ul for k in keywords):
             matched.append(u)
         else:
-            other.append(u)
-    return (matched + other)[:max_count]
+            plain.append(u)
+    return (matched + plain + archive)[:max_count]
 
 
 async def walk_source(
