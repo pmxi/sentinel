@@ -126,18 +126,3 @@ with Google OAuth, per-user storage, and a worker/web split. It is **not in
 active development** — use the single-user setup above unless you have a
 reason to dig into the hosted code.
 
----
-
-# TODO
-
-Figure out X scraping. That's the most valuable data source we haven't unlocked.
-
-https://huggingface.co/Qwen/Qwen3-Embedding-0.6B
-
-Improve cascade classifier to be
-    logistic regression -> local LLM -> API LLM
-
-Figure out Instagram scraping.
-
-
-uv run hf auth login
