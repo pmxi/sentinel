@@ -23,10 +23,10 @@ dependencies = [
 ]
 
 [project.scripts]
-sentinel = "sentinel_local.cli:main"
-sentinel-hosted = "sentinel_hosted.cli:main"
-sentinel-hosted-web = "sentinel_hosted.web.app:main"
-sentinel-hosted-worker = "sentinel_hosted.worker:main"
+sentinel = "sentinel.local.cli:main"
+sentinel-hosted = "sentinel.hosted.cli:main"
+sentinel-hosted-web = "sentinel.hosted.web.app:main"
+sentinel-hosted-worker = "sentinel.hosted.worker:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -34,9 +34,7 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = [
-    "src/sentinel_hosted",
-    "src/sentinel_lib",
-    "src/sentinel_local",
+    "src/sentinel",
 ]
 
 [dependency-groups]
