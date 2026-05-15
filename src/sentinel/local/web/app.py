@@ -29,17 +29,17 @@ from sentinel.local.web.imap_probe import probe_imap
 logger = get_logger(__name__)
 
 
-def create_app(db_path: Optional[str] = None, debug: bool = False) -> Flask:
+def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.debug = debug
-    app.config["DB_PATH"] = db_path or settings.DATABASE_PATH
+    app.config["DATABASE_URL"] = database_url or settings.require_database_url()
     _bootstrap_settings(app)
     ensure_loaded()
     app.secret_key = settings.SESSION_SECRET or "sentinel-local"
     app.extensions["live_bus"] = _maybe_start_embedded_monitor(app)
 
     def open_db() -> LocalDatabase:
-        return LocalDatabase(app.config["DB_PATH"])
+        return LocalDatabase(app.config["DATABASE_URL"])
 
     @app.context_processor
     def inject_runtime_context():
@@ -139,7 +139,11 @@ def create_app(db_path: Optional[str] = None, debug: bool = False) -> Flask:
         except (ValueError, TypeError):
             cursor = 0
 
-        generate = _sse_push_loop(app.config["DB_PATH"], cursor, bus) if bus is not None else _sse_poll_loop(app.config["DB_PATH"], cursor)
+        generate = (
+            _sse_push_loop(app.config["DATABASE_URL"], cursor, bus)
+            if bus is not None
+            else _sse_poll_loop(app.config["DATABASE_URL"], cursor)
+        )
         return Response(
             stream_with_context(generate)(),
             mimetype="text/event-stream",
@@ -311,7 +315,7 @@ def create_app(db_path: Optional[str] = None, debug: bool = False) -> Flask:
 
 
 def _bootstrap_settings(app: Flask) -> None:
-    db = LocalDatabase(app.config["DB_PATH"])
+    db = LocalDatabase(app.config["DATABASE_URL"])
     try:
         settings.load(db)
     finally:
@@ -336,7 +340,7 @@ def _maybe_start_embedded_monitor(app: Flask) -> Optional[LiveEventBus]:
 
     def _run_monitor() -> None:
         try:
-            db = LocalDatabase(app.config["DB_PATH"])
+            db = LocalDatabase(app.config["DATABASE_URL"])
             monitor = LocalMonitor(db, bus=bus)
             asyncio.run(monitor.run())
         except Exception as exc:
@@ -346,14 +350,14 @@ def _maybe_start_embedded_monitor(app: Flask) -> Optional[LiveEventBus]:
     return bus
 
 
-def _sse_push_loop(db_path: str, cursor: int, bus: LiveEventBus):
+def _sse_push_loop(database_url: str, cursor: int, bus: LiveEventBus):
     def generate():
         nonlocal cursor
         yield "retry: 3000\n: connected\n\n"
         q = bus.subscribe()
         heartbeat_countdown = 30
         try:
-            db = LocalDatabase(db_path)
+            db = LocalDatabase(database_url)
             try:
                 while True:
                     rows = db.fetch_live_events_since(cursor, limit=200)
@@ -386,12 +390,12 @@ def _sse_push_loop(db_path: str, cursor: int, bus: LiveEventBus):
     return generate
 
 
-def _sse_poll_loop(db_path: str, cursor: int):
+def _sse_poll_loop(database_url: str, cursor: int):
     def generate():
         nonlocal cursor
         yield "retry: 3000\n: connected\n\n"
         heartbeat_countdown = 30
-        db = LocalDatabase(db_path)
+        db = LocalDatabase(database_url)
         try:
             while True:
                 rows = db.fetch_live_events_since(cursor, limit=200)

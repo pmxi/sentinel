@@ -33,13 +33,12 @@ PURGE_INTERVAL_S = 300  # clean up expired link tokens every ~5 min
 class TelegramBotListener:
     """Single-instance listener for the shared operator bot.
 
-    The listener owns one sqlite connection in its own thread (sqlite
-    connections aren't safely shared across threads). It holds an offset
-    between polls so Telegram doesn't re-deliver the same update twice.
+    The listener owns one database connection in its own thread. It holds an
+    offset between polls so Telegram doesn't re-deliver the same update twice.
     """
 
-    def __init__(self, db_path: str):
-        self.db_path = db_path
+    def __init__(self, database_url: str):
+        self.database_url = database_url
         self._offset: Optional[int] = None
         self._stop = threading.Event()
         self._last_purge = 0.0
@@ -53,7 +52,7 @@ class TelegramBotListener:
             return
 
         logger.info("Telegram bot listener starting (long-poll)")
-        db = LocalDatabase(self.db_path)
+        db = LocalDatabase(self.database_url)
         try:
             while not self._stop.is_set():
                 try:
@@ -163,9 +162,9 @@ class TelegramBotListener:
             logger.warning(f"failed to reply to chat {chat_id}: {e}")
 
 
-def start_in_thread(db_path: str) -> TelegramBotListener:
+def start_in_thread(database_url: str) -> TelegramBotListener:
     """Spawn the listener on a daemon thread and return the controller."""
-    listener = TelegramBotListener(db_path)
+    listener = TelegramBotListener(database_url)
     t = threading.Thread(
         target=listener.run_forever, name="telegram-bot-listener", daemon=True
     )

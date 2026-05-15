@@ -24,7 +24,7 @@ from sentinel.local.web.app import run as run_web
 
 
 def _open_db() -> LocalDatabase:
-    return LocalDatabase(settings.DATABASE_PATH)
+    return LocalDatabase(settings.require_database_url())
 
 
 def _prompt(label: str, default: Optional[str] = None) -> str:
@@ -236,11 +236,11 @@ def cmd_dev_firehose(args: argparse.Namespace) -> None:
     )
     target = "until interrupted" if count is None else f"for {count} items"
     print(
-        f"Emitting synthetic {config.source_type} traffic into {settings.DATABASE_PATH} "
+        f"Emitting synthetic {config.source_type} traffic into {_database_label()} "
         f"at {config.rate:.2f} items/sec {target}. Press Ctrl-C to stop."
     )
     try:
-        emitted = run_firehose(settings.DATABASE_PATH, config)
+        emitted = run_firehose(settings.require_database_url(), config)
     except KeyboardInterrupt:
         print("\nStopped.")
         return
@@ -278,7 +278,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     firehose = dev_sub.add_parser(
         "firehose",
-        help="Emit synthetic dashboard traffic into the local sqlite db",
+        help="Emit synthetic dashboard traffic into the local database",
     )
     firehose.add_argument(
         "--rate",
@@ -317,6 +317,16 @@ def build_parser() -> argparse.ArgumentParser:
     firehose.set_defaults(func=cmd_dev_firehose)
 
     return parser
+
+
+def _database_label() -> str:
+    url = settings.require_database_url()
+    if "@" not in url:
+        return url
+    scheme_and_user, host_and_db = url.rsplit("@", maxsplit=1)
+    if ":" not in scheme_and_user:
+        return url
+    return f"{scheme_and_user.rsplit(':', maxsplit=1)[0]}:***@{host_and_db}"
 
 
 def main() -> None:

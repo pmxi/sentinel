@@ -4,8 +4,8 @@ In local mode the web process runs the monitor in-background and learns about
 events via this in-memory bus — no db polling needed, sub-millisecond fan-out
 from supervisor to SSE subscribers.
 
-In hosted mode the web process and the supervisor are separate processes and
-can't share this bus; they fall back to polling `live_events` in sqlite.
+If the web process and the supervisor are separate processes, they can't share
+this bus; they fall back to polling the durable `live_events` table.
 
 Publishers (the monitor) are O(N subscribers) per event. Subscribers block
 on a per-connection queue. Slow consumers drop events rather than blocking

@@ -8,6 +8,8 @@ dependencies = [
     "google-api-python-client==2.88.0",
     "pydantic>=2.0.0",
     "openai>=1.70.0",
+    "psycopg[binary]>=3.2.0",
+    "python-dotenv>=1.0.1",
     "requests==2.31.0",
     "twilio",
     "msgraph-sdk",

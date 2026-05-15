@@ -66,7 +66,7 @@ class LocalMonitor:
         self._install_signal_handlers()
 
         if settings.TELEGRAM_BOT_TOKEN:
-            start_telegram_listener(settings.DATABASE_PATH)
+            start_telegram_listener(settings.require_database_url())
 
         if self.scorer is not None:
             await self.scorer.start()

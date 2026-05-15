@@ -81,7 +81,7 @@ the supervisor. Don't run both at once — you'll get two supervisors and
 duplicate notifications.
 
 For UI load testing, you do not need to wait on real RSS publishers. Emit a
-synthetic firehose straight into the local sqlite store:
+synthetic firehose straight into the local database:
 
 ```bash
 uv run sentinel dev firehose --rate 20 --count 200
@@ -111,10 +111,11 @@ require OAuth (XOAUTH2), not yet supported.
 
 ## Configuration
 
-Defaults to `./sentinel-local.db`. Override with:
+Sentinel uses PostgreSQL for the active single-user runtime. Configure it with
+`DATABASE_URL`:
 
 ```bash
-export DATABASE_PATH=/var/lib/sentinel/sentinel.db
+export DATABASE_URL=postgresql://sentinel_user:REDACTED@localhost:5433/sentinel
 ```
 
 ---
@@ -125,4 +126,3 @@ The repo also includes a separate multi-tenant runtime (`sentinel-hosted`)
 with Google OAuth, per-user storage, and a worker/web split. It is **not in
 active development** — use the single-user setup above unless you have a
 reason to dig into the hosted code.
-

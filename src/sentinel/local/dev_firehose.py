@@ -1,7 +1,7 @@
 """Synthetic local firehose for exercising the web UI.
 
 This bypasses slow upstream publishers and LLM latency by writing dashboard-
-compatible events directly into the local sqlite store at a configurable rate.
+compatible events directly into the local PostgreSQL store at a configurable rate.
 """
 
 from __future__ import annotations
@@ -44,7 +44,7 @@ class FirehoseConfig:
     important_every: int = 5
 
 
-def run_firehose(db_path: str, config: FirehoseConfig) -> int:
+def run_firehose(database_url: str, config: FirehoseConfig) -> int:
     if config.rate <= 0:
         raise ValueError("rate must be greater than 0")
     if config.count is not None and config.count < 0:
@@ -55,7 +55,7 @@ def run_firehose(db_path: str, config: FirehoseConfig) -> int:
     emitted = 0
     interval_seconds = 1.0 / config.rate
 
-    with LocalDatabase(db_path) as db:
+    with LocalDatabase(database_url) as db:
         if db.get_monitoring_start_time() is None:
             db.set_monitoring_start_time(utc_now())
 
