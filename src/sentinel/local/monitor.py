@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import signal
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -66,6 +67,15 @@ class LocalMonitor:
         # (stream_type, config_json) per running stream — config drift
         # detection without re-parsing JSON every refresh.
         self._stream_config_sig: Dict[str, tuple[str, str]] = {}
+        # Throttle for the per-item liveness write to monitoring_state.
+        # Without this, every emitted item at scale (50+/s across thousands
+        # of streams) triggers a serialized DB upsert.
+        self._last_check_ts_monotonic: float = 0.0
+        self._last_check_min_interval_s: float = 5.0
+        # Shared preferences cache. With thousands of streams each calling
+        # LocalPreferences.load() at startup, the supervisor would otherwise
+        # serialize through the single DB connection for ~60s.
+        self._preferences_cache: Optional[LocalPreferences] = None
 
     async def run(self) -> None:
         logger.info("Starting local Sentinel supervisor")
@@ -176,10 +186,18 @@ class LocalMonitor:
             **extra,
         )
 
+    def _get_preferences(self) -> LocalPreferences:
+        # Cached. Refreshes only on full supervisor restart; rare relative
+        # to stream churn. (If you need live preference reloads, invalidate
+        # this from the same callback that handles the settings update.)
+        if self._preferences_cache is None:
+            self._preferences_cache = LocalPreferences.load(self.db)
+        return self._preferences_cache
+
     async def _run_stream(self, stream: Stream) -> None:
         while not self._shutdown.is_set():
             try:
-                preferences = await asyncio.to_thread(LocalPreferences.load, self.db)
+                preferences = self._get_preferences()
                 processor = LocalItemProcessor(
                     db=self.db,
                     classifier=self.classifier,
@@ -198,10 +216,12 @@ class LocalMonitor:
                         try:
                             await processor.process(item)
                         finally:
-                            # Skip the per-item liveness write for firehose
-                            # streams; otherwise hundreds of writes/sec.
+                            # Coalesce monitoring_state.last_check_time writes.
+                            # Skip on firehose items (skip_classification) and
+                            # throttle the rest so high-rate streams don't
+                            # serialize on the connection lock.
                             if not (item.metadata or {}).get("skip_classification"):
-                                await asyncio.to_thread(self.db.update_last_check_time, utc_now())
+                                self._maybe_update_last_check_time()
 
                 async for item in stream.items():
                     if self._shutdown.is_set():
@@ -246,6 +266,19 @@ class LocalMonitor:
     def _request_shutdown(self, sig: int) -> None:
         logger.info("Received signal %s. Initiating local shutdown.", sig)
         self._shutdown.set()
+
+    def _maybe_update_last_check_time(self) -> None:
+        """Coalesce monitoring_state writes. Benign race across streams: the
+        UPSERT is idempotent so duplicate writes within the window are
+        harmless. Avoids one DB round-trip per emitted item."""
+        now = time.monotonic()
+        if now - self._last_check_ts_monotonic < self._last_check_min_interval_s:
+            return
+        self._last_check_ts_monotonic = now
+        try:
+            self.db.update_last_check_time(utc_now())
+        except Exception as exc:
+            logger.warning("update_last_check_time failed: %s", exc)
 
     async def _cancel_all(self) -> None:
         tasks = list(self._stream_tasks.values())
