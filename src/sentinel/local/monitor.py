@@ -420,7 +420,10 @@ class _LocalProcessingObserver(ProcessingObserver):
             )
         if event.error:
             payload["error"] = event.error
-        payload_json = json.dumps(payload)
+        # Strip NUL chars — Postgres jsonb refuses   and some Bluesky
+        # posts include literal NUL bytes that propagate through json.dumps
+        # as ` `. Stripping at the source keeps later jsonb casts safe.
+        payload_json = json.dumps(payload).replace("\\u0000", "").replace("\x00", "")
 
         self._ensure_started()
         # Bounded? No — but the batcher drains aggressively and back-pressure
