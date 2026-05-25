@@ -80,6 +80,11 @@ class LocalMonitor:
         # LocalPreferences.load() at startup, the supervisor would otherwise
         # serialize through the single DB connection for ~60s.
         self._preferences_cache: Optional[LocalPreferences] = None
+        # One batching observer shared across every stream's processor.
+        # The per-stream observer-per-processor pattern was a non-starter
+        # at thousands of streams because each instance would run its own
+        # batcher task and contend on the DB lock.
+        self._observer: Optional[_LocalProcessingObserver] = None
 
     async def run(self) -> None:
         logger.info("Starting local Sentinel supervisor")
@@ -202,12 +207,15 @@ class LocalMonitor:
         while not self._shutdown.is_set():
             try:
                 preferences = self._get_preferences()
+                if self._observer is None:
+                    self._observer = _LocalProcessingObserver(self.db, self.bus)
                 processor = LocalItemProcessor(
                     db=self.db,
                     classifier=self.classifier,
                     preferences=preferences,
                     bus=self.bus,
                     scorer=self.scorer,
+                    observer=self._observer,
                 )
                 # Concurrency cap per stream. Without this the firehose
                 # serializes on score()/process() and the BatchScorer
@@ -308,6 +316,7 @@ class LocalItemProcessor:
         preferences: LocalPreferences,
         bus: Optional[LiveEventBus],
         scorer: Optional[BatchScorer] = None,
+        observer: Optional["_LocalProcessingObserver"] = None,
     ):
         notifier = None
         if preferences.has_telegram() and settings.TELEGRAM_BOT_TOKEN:
@@ -317,7 +326,9 @@ class LocalItemProcessor:
                     chat_id=preferences.TELEGRAM_CHAT_ID,
                 )
             )
-        self.observer = _LocalProcessingObserver(db, bus)
+        # Reuse a shared observer if provided (supervisor's batching writer);
+        # otherwise build a private one (legacy callers).
+        self.observer = observer or _LocalProcessingObserver(db, bus)
         self.processor = ItemProcessor(
             classifier=classifier,
             store=_LocalProcessedItemStore(db),
@@ -368,14 +379,36 @@ class _LocalProcessedItemStore(ProcessedItemStore):
 
 
 class _LocalProcessingObserver(ProcessingObserver):
+    """Async batching writer for live_events.
+
+    Per-row INSERT through a single shared connection serializes through
+    the connection lock and caps throughput at single-digit writes/sec
+    once thousands of streams contend. We instead accept events into an
+    asyncio.Queue, drain in batches of up to BATCH_MAX or every
+    BATCH_INTERVAL_S, and flush via a single multi-row INSERT...VALUES
+    RETURNING id call.
+
+    The bus.publish step uses the DB-assigned id once the batch returns.
+    """
+
+    BATCH_MAX = 500
+    BATCH_INTERVAL_S = 0.25
+
     def __init__(self, db: LocalDatabase, bus: Optional[LiveEventBus]):
         self.db = db
         self.bus = bus
+        self._queue: "asyncio.Queue[tuple[str, str]]" = asyncio.Queue()
+        self._task: Optional[asyncio.Task] = None
+        self._dropped: int = 0
+        self._last_dropped_log: float = 0.0
+
+    def _ensure_started(self) -> None:
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._flush_loop(), name="live-events-batcher")
 
     async def publish(self, event: ProcessingEvent) -> None:
-        await asyncio.to_thread(self._publish_sync, event)
-
-    def _publish_sync(self, event: ProcessingEvent) -> None:
+        # Build the payload on the event-loop thread (no IO). Enqueue and
+        # return immediately — DB writes happen in the background batcher.
         payload = _item_event_payload(event.item)
         if event.classification is not None:
             payload.update(
@@ -387,17 +420,50 @@ class _LocalProcessingObserver(ProcessingObserver):
             )
         if event.error:
             payload["error"] = event.error
-
         payload_json = json.dumps(payload)
-        event_id = self.db.emit_live_event(event.event_type, payload_json)
-        if self.bus is not None:
-            self.bus.publish(
-                LiveEvent(
-                    event_id=event_id,
-                    event_type=event.event_type,
-                    payload_json=payload_json,
+
+        self._ensure_started()
+        # Bounded? No — but the batcher drains aggressively and back-pressure
+        # naturally builds as the producers see slow awaits if needed.
+        self._queue.put_nowait((event.event_type, payload_json))
+
+    async def _flush_loop(self) -> None:
+        while True:
+            try:
+                batch = await self._drain_one_batch()
+                if not batch:
+                    continue
+                ids = await asyncio.to_thread(
+                    self.db.emit_live_events_bulk, batch
                 )
-            )
+                if self.bus is not None:
+                    for (event_type, payload_json), event_id in zip(batch, ids):
+                        self.bus.publish(
+                            LiveEvent(
+                                event_id=event_id,
+                                event_type=event_type,
+                                payload_json=payload_json,
+                            )
+                        )
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.exception("live-events batch flush failed: %s", exc)
+                await asyncio.sleep(0.5)
+
+    async def _drain_one_batch(self) -> List[tuple[str, str]]:
+        first = await self._queue.get()
+        batch: List[tuple[str, str]] = [first]
+        deadline = asyncio.get_running_loop().time() + self.BATCH_INTERVAL_S
+        while len(batch) < self.BATCH_MAX:
+            remaining = deadline - asyncio.get_running_loop().time()
+            if remaining <= 0:
+                break
+            try:
+                batch.append(await asyncio.wait_for(self._queue.get(), timeout=remaining))
+            except asyncio.TimeoutError:
+                break
+        return batch
 
 
 def _item_event_payload(item: Item) -> Dict[str, Any]:

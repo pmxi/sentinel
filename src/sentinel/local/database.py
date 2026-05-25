@@ -360,6 +360,26 @@ class LocalDatabase:
             ).fetchone()
             return int(row["id"])
 
+    def emit_live_events_bulk(self, events: List[tuple[str, str]]) -> List[int]:
+        """Bulk insert. Each event is (event_type, payload_json).
+        Returns the assigned ids in input order. Used by the high-throughput
+        path where per-row INSERT round-trips are the bottleneck."""
+        if not events:
+            return []
+        with self._lock:
+            # Single INSERT...VALUES with one round-trip. Postgres assigns
+            # the IDENTITY values in row order which we preserve via RETURNING.
+            placeholders = ",".join("(%s,%s)" for _ in events)
+            flat: List[Any] = []
+            for et, pj in events:
+                flat.append(et); flat.append(pj)
+            rows = self.conn.execute(
+                f"INSERT INTO live_events (event_type, payload_json) "
+                f"VALUES {placeholders} RETURNING id",
+                flat,
+            ).fetchall()
+        return [int(r["id"]) for r in rows]
+
     def fetch_live_events_since(self, after_id: int, limit: int = 100) -> List[Dict[str, Any]]:
         with self._lock:
             rows = self.conn.execute(
