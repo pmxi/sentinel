@@ -154,6 +154,87 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
             },
         )
 
+    @app.route("/alerts")
+    def alerts_page():
+        """Recent items the classifier flagged as IMPORTANT."""
+        try:
+            limit = min(max(int(request.args.get("limit", "50")), 5), 500)
+        except (TypeError, ValueError):
+            limit = 50
+        priority_filter = request.args.get("priority", "important")
+        if priority_filter not in ("important", "normal", "all"):
+            priority_filter = "important"
+
+        db = open_db()
+        try:
+            with db.conn.cursor() as cur:
+                cur.execute("SELECT MAX(id) FROM live_events")
+                row = cur.fetchone()
+                max_id = (row["max"] if isinstance(row, dict) else row[0]) or 0
+                # Look at a relatively wide id window so a quiet hour
+                # doesn't blank the page.
+                low_id = max(0, max_id - 200000)
+                where_pri = "" if priority_filter == "all" else (
+                    f"AND payload_json::jsonb ->> 'priority' = '{priority_filter}'"
+                )
+                cur.execute(
+                    f"""
+                    SELECT
+                        id,
+                        created_at,
+                        payload_json::jsonb ->> 'priority'      AS priority,
+                        payload_json::jsonb ->> 'source_type'   AS source_type,
+                        payload_json::jsonb ->> 'stream_name'   AS stream_name,
+                        payload_json::jsonb ->> 'title'         AS title,
+                        payload_json::jsonb ->> 'url'           AS url,
+                        payload_json::jsonb ->> 'summary'       AS summary,
+                        payload_json::jsonb ->> 'reasoning'     AS reasoning
+                    FROM live_events
+                    WHERE id > %s
+                      AND event_type = 'item_classified'
+                      {where_pri}
+                    ORDER BY id DESC
+                    LIMIT %s
+                    """,
+                    (low_id, limit),
+                )
+                rows = cur.fetchall()
+
+                # Summary stats over the same window
+                cur.execute(
+                    """
+                    SELECT
+                        payload_json::jsonb ->> 'priority' AS priority,
+                        COUNT(*)
+                    FROM live_events
+                    WHERE id > %s AND event_type = 'item_classified'
+                    GROUP BY 1
+                    """,
+                    (low_id,),
+                )
+                counts = {r[0] if isinstance(r, tuple) else r["priority"]:
+                          r[1] if isinstance(r, tuple) else r["count"]
+                          for r in cur.fetchall()}
+        finally:
+            db.close()
+
+        items = []
+        for r in rows:
+            d = r if isinstance(r, dict) else {
+                "id": r[0], "created_at": r[1], "priority": r[2],
+                "source_type": r[3], "stream_name": r[4],
+                "title": r[5], "url": r[6], "summary": r[7], "reasoning": r[8],
+            }
+            items.append(d)
+
+        return render_template(
+            "alerts.html",
+            items=items,
+            priority_filter=priority_filter,
+            limit=limit,
+            counts=counts,
+        )
+
     @app.route("/streams/activity")
     def streams_activity():
         """Per-stream emission stats over a recent window.
