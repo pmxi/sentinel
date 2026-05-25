@@ -29,7 +29,7 @@ from xml.etree import ElementTree as ET
 
 import aiohttp
 
-from tools.sources.db import DEFAULT_DB_PATH, open_db
+from tools.sources.db import open_db
 
 logger = logging.getLogger("discover_sitemaps")
 
@@ -282,8 +282,9 @@ INSERT INTO source_sitemaps
     (source_id, sitemap_url, kind, discovered_via, http_status, fresh_entries_24h,
      latest_pub_date, etag, last_modified, last_checked_at, last_ok_at, error)
 VALUES
-    (:source_id, :sitemap_url, :kind, :discovered_via, :http_status, :fresh_entries_24h,
-     :latest_pub_date, :etag, :last_modified, :last_checked_at, :last_ok_at, :error)
+    (%(source_id)s, %(sitemap_url)s, %(kind)s, %(discovered_via)s, %(http_status)s,
+     %(fresh_entries_24h)s, %(latest_pub_date)s, %(etag)s, %(last_modified)s,
+     %(last_checked_at)s, %(last_ok_at)s, %(error)s)
 ON CONFLICT(source_id, sitemap_url) DO UPDATE SET
     kind=excluded.kind,
     discovered_via=excluded.discovered_via,
@@ -299,38 +300,31 @@ ON CONFLICT(source_id, sitemap_url) DO UPDATE SET
 
 
 def select_sources(conn, args) -> list[tuple[int, str]]:
-    if args.domains:
-        placeholders = ",".join("?" * len(args.domains))
-        rows = conn.execute(
-            f"""
-            SELECT id, canonical_domain FROM sources
-            WHERE canonical_domain IN ({placeholders})
-              AND stories_per_week IS NOT NULL
-            ORDER BY stories_per_week DESC
-            """,
-            args.domains,
-        ).fetchall()
-        # Dedup by canonical_domain (catalog has multiple source ids per domain).
-        seen: set[str] = set()
-        deduped: list[tuple[int, str]] = []
-        for r in rows:
-            if r["canonical_domain"] in seen:
-                continue
-            seen.add(r["canonical_domain"])
-            deduped.append((r["id"], r["canonical_domain"]))
-        return deduped
-    rows = conn.execute(
-        """
-        SELECT id, canonical_domain FROM sources
-        WHERE canonical_domain IS NOT NULL
-          AND stories_per_week >= ?
-        ORDER BY stories_per_week DESC
-        LIMIT ?
-        """,
-        (args.min_spw, args.limit),
-    ).fetchall()
-    seen = set()
-    deduped = []
+    with conn.cursor() as cur:
+        if args.domains:
+            cur.execute(
+                """
+                SELECT id, canonical_domain FROM sources
+                WHERE canonical_domain = ANY(%s)
+                  AND stories_per_week IS NOT NULL
+                ORDER BY stories_per_week DESC
+                """,
+                (args.domains,),
+            )
+        else:
+            cur.execute(
+                """
+                SELECT id, canonical_domain FROM sources
+                WHERE canonical_domain IS NOT NULL
+                  AND stories_per_week >= %s
+                ORDER BY stories_per_week DESC
+                LIMIT %s
+                """,
+                (args.min_spw, args.limit),
+            )
+        rows = cur.fetchall()
+    seen: set[str] = set()
+    deduped: list[tuple[int, str]] = []
     for r in rows:
         if r["canonical_domain"] in seen:
             continue
@@ -340,7 +334,7 @@ def select_sources(conn, args) -> list[tuple[int, str]]:
 
 
 async def main_async(args) -> int:
-    conn = open_db(DEFAULT_DB_PATH)
+    conn = open_db()
 
     sources = select_sources(conn, args)
     if not sources:
@@ -348,9 +342,11 @@ async def main_async(args) -> int:
         return 1
 
     started_at = _now_iso()
-    cur = conn.execute("INSERT INTO discovery_runs (started_at) VALUES (?)", (started_at,))
-    run_id = cur.lastrowid
-    conn.commit()
+    row = conn.execute(
+        "INSERT INTO discovery_runs (started_at) VALUES (%s) RETURNING id",
+        (started_at,),
+    ).fetchone()
+    run_id = row["id"]
 
     logger.info("walking %d sources (concurrency=%d)", len(sources), args.concurrency)
 
@@ -389,9 +385,8 @@ async def main_async(args) -> int:
             if i % 25 == 0 or i == len(tasks):
                 logger.info("completed %d/%d", i, len(tasks))
 
-    with conn:
-        for row in all_rows:
-            conn.execute(UPSERT_SQL, row)
+    with conn.cursor() as cur:
+        cur.executemany(UPSERT_SQL, all_rows)
 
     n_news_fresh = sum(1 for r in all_rows if r["kind"] == "news" and r["fresh_entries_24h"] > 0)
     n_news_any = sum(1 for r in all_rows if r["kind"] == "news")
@@ -401,11 +396,11 @@ async def main_async(args) -> int:
     n_error = sum(1 for r in all_rows if r["kind"] == "error")
     sources_with_news = len({r["source_id"] for r in all_rows if r["kind"] == "news" and r["fresh_entries_24h"] > 0})
 
-    cur = conn.execute(
-        "UPDATE discovery_runs SET finished_at=?, sources_checked=?, news_sitemaps_found=? WHERE id=?",
+    conn.execute(
+        "UPDATE discovery_runs SET finished_at=%s, sources_checked=%s, "
+        "news_sitemaps_found=%s WHERE id=%s",
         (_now_iso(), len(sources), n_news_fresh, run_id),
     )
-    conn.commit()
     conn.close()
 
     print()

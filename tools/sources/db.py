@@ -1,18 +1,25 @@
-"""SQLite store for the Mediacloud source catalog."""
+"""Postgres store for the Mediacloud source catalog (schema `sources`)."""
 
 from __future__ import annotations
 
-import sqlite3
+import os
 from pathlib import Path
 
-DEFAULT_DB_PATH = Path(__file__).parent / "sources.db"
+import psycopg
+from psycopg.rows import dict_row
+
 SCHEMA_PATH = Path(__file__).parent / "schema.sql"
+DATABASE_URL_ENV = "DATABASE_URL"
 
 
-def open_db(path: Path = DEFAULT_DB_PATH) -> sqlite3.Connection:
-    conn = sqlite3.connect(str(path))
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.executescript(SCHEMA_PATH.read_text())
+def open_db(database_url: str | None = None) -> psycopg.Connection:
+    url = database_url or os.environ.get(DATABASE_URL_ENV)
+    if not url:
+        raise RuntimeError(
+            f"set {DATABASE_URL_ENV} to the sentinel postgres connection string"
+        )
+    conn = psycopg.connect(url, row_factory=dict_row)
+    conn.autocommit = True
+    conn.execute(SCHEMA_PATH.read_text())
+    conn.execute("SET search_path TO sources, public")
     return conn

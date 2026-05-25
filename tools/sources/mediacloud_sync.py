@@ -1,12 +1,14 @@
-"""Sync the Mediacloud source catalog into a local SQLite mirror.
+"""Sync the Mediacloud source catalog into the sentinel postgres `sources` schema.
 
 Usage:
-    MEDIACLOUD_API_KEY=... uv run python -m tools.sources.mediacloud_sync
+    DATABASE_URL=postgresql://... MEDIACLOUD_API_KEY=... \\
+        uv run python -m tools.sources.mediacloud_sync
 
 Pulls every collection (~1.7k) and every source (~1M) and upserts them
-into tools/sources/sources.db. Idempotent: a fresh run replaces row
-contents but preserves stable upstream ids. Source<->collection
-membership is intentionally not synced in v1 (see README).
+into sources.collections / sources.sources. Idempotent: a fresh run
+replaces row contents but preserves stable upstream ids.
+Source<->collection membership is intentionally not synced in v1
+(see README).
 """
 
 from __future__ import annotations
@@ -14,14 +16,15 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import sqlite3
 import sys
 from datetime import datetime, timezone
 from typing import Any, Iterable
 
+import psycopg
+
 from tools.sources.canonicalize import canonical_domain
 from tools.sources.client import MediacloudClient
-from tools.sources.db import DEFAULT_DB_PATH, open_db
+from tools.sources.db import open_db
 
 logger = logging.getLogger("mediacloud_sync")
 
@@ -119,34 +122,28 @@ def _project_source(s: dict[str, Any], now: str) -> tuple:
     )
 
 
-def _upsert(conn: sqlite3.Connection, table: str, columns: tuple[str, ...], rows: Iterable[tuple]) -> int:
-    placeholders = ",".join("?" * len(columns))
+def _upsert(conn: psycopg.Connection, table: str, columns: tuple[str, ...], rows: Iterable[tuple]) -> int:
+    placeholders = ",".join(["%s"] * len(columns))
     column_list = ",".join(columns)
     update_clause = ",".join(f"{c}=excluded.{c}" for c in columns if c != "id")
     sql = (
         f"INSERT INTO {table} ({column_list}) VALUES ({placeholders}) "
         f"ON CONFLICT(id) DO UPDATE SET {update_clause}"
     )
-    count = 0
-    cur = conn.cursor()
-    for row in rows:
-        cur.execute(sql, row)
-        count += 1
-    return count
+    with conn.cursor() as cur:
+        cur.executemany(sql, rows)
+        return cur.rowcount
 
 
-def sync_collections(conn: sqlite3.Connection, client: MediacloudClient) -> int:
+def sync_collections(conn: psycopg.Connection, client: MediacloudClient) -> int:
     now = _now_iso()
-    rows = []
-    for c in client.iter_collections():
-        rows.append(_project_collection(c, now))
-    with conn:
-        n = _upsert(conn, "collections", COLLECTION_COLUMNS, rows)
+    rows = [_project_collection(c, now) for c in client.iter_collections()]
+    n = _upsert(conn, "collections", COLLECTION_COLUMNS, rows)
     logger.info("synced %d collections", n)
     return n
 
 
-def sync_sources(conn: sqlite3.Connection, client: MediacloudClient) -> int:
+def sync_sources(conn: psycopg.Connection, client: MediacloudClient) -> int:
     now = _now_iso()
     total = 0
     batch: list[tuple] = []
@@ -154,57 +151,58 @@ def sync_sources(conn: sqlite3.Connection, client: MediacloudClient) -> int:
     for s in client.iter_sources():
         batch.append(_project_source(s, now))
         if len(batch) >= BATCH_SIZE:
-            with conn:
-                _upsert(conn, "sources", SOURCE_COLUMNS, batch)
+            _upsert(conn, "sources", SOURCE_COLUMNS, batch)
             total += len(batch)
             batch.clear()
             if total % PROGRESS_INTERVAL == 0 or total < PROGRESS_INTERVAL:
                 logger.info("synced %d sources so far...", total)
     if batch:
-        with conn:
-            _upsert(conn, "sources", SOURCE_COLUMNS, batch)
+        _upsert(conn, "sources", SOURCE_COLUMNS, batch)
         total += len(batch)
     logger.info("synced %d sources total", total)
     return total
 
 
-def print_summary(conn: sqlite3.Connection, db_path) -> None:
-    cur = conn.cursor()
-    n_coll = cur.execute("SELECT COUNT(*) FROM collections").fetchone()[0]
-    n_src = cur.execute("SELECT COUNT(*) FROM sources").fetchone()[0]
-    n_with_volume = cur.execute(
-        "SELECT COUNT(*) FROM sources WHERE stories_per_week IS NOT NULL"
-    ).fetchone()[0]
-    n_dedup_domains = cur.execute(
-        "SELECT COUNT(DISTINCT canonical_domain) FROM sources WHERE canonical_domain IS NOT NULL"
-    ).fetchone()[0]
-    print()
-    print(f"DB: {db_path}")
-    print(f"Collections:           {n_coll:>10,}")
-    print(f"Sources:               {n_src:>10,}")
-    print(f"  with stories/week:   {n_with_volume:>10,}")
-    print(f"  unique domains:      {n_dedup_domains:>10,}")
-    print()
-    print("Top 10 languages by source count:")
-    for lang, n in cur.execute(
-        "SELECT primary_language, COUNT(*) FROM sources "
-        "WHERE primary_language IS NOT NULL "
-        "GROUP BY primary_language ORDER BY COUNT(*) DESC LIMIT 10"
-    ):
-        print(f"  {lang or '(none)':<8} {n:>8,}")
-    print()
-    print("Top 10 countries by source count:")
-    for country, n in cur.execute(
-        "SELECT pub_country, COUNT(*) FROM sources "
-        "WHERE pub_country IS NOT NULL "
-        "GROUP BY pub_country ORDER BY COUNT(*) DESC LIMIT 10"
-    ):
-        print(f"  {country or '(none)':<8} {n:>8,}")
+def print_summary(conn: psycopg.Connection) -> None:
+    with conn.cursor() as cur:
+        cur.execute("SELECT COUNT(*) AS c FROM collections")
+        n_coll = cur.fetchone()["c"]
+        cur.execute("SELECT COUNT(*) AS c FROM sources")
+        n_src = cur.fetchone()["c"]
+        cur.execute("SELECT COUNT(*) AS c FROM sources WHERE stories_per_week IS NOT NULL")
+        n_with_volume = cur.fetchone()["c"]
+        cur.execute(
+            "SELECT COUNT(DISTINCT canonical_domain) AS c FROM sources "
+            "WHERE canonical_domain IS NOT NULL"
+        )
+        n_dedup_domains = cur.fetchone()["c"]
+        print()
+        print(f"Collections:           {n_coll:>10,}")
+        print(f"Sources:               {n_src:>10,}")
+        print(f"  with stories/week:   {n_with_volume:>10,}")
+        print(f"  unique domains:      {n_dedup_domains:>10,}")
+        print()
+        print("Top 10 languages by source count:")
+        cur.execute(
+            "SELECT primary_language AS k, COUNT(*) AS c FROM sources "
+            "WHERE primary_language IS NOT NULL "
+            "GROUP BY primary_language ORDER BY c DESC LIMIT 10"
+        )
+        for row in cur.fetchall():
+            print(f"  {row['k'] or '(none)':<8} {row['c']:>8,}")
+        print()
+        print("Top 10 countries by source count:")
+        cur.execute(
+            "SELECT pub_country AS k, COUNT(*) AS c FROM sources "
+            "WHERE pub_country IS NOT NULL "
+            "GROUP BY pub_country ORDER BY c DESC LIMIT 10"
+        )
+        for row in cur.fetchall():
+            print(f"  {row['k'] or '(none)':<8} {row['c']:>8,}")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", default=str(DEFAULT_DB_PATH), help="path to SQLite DB")
     parser.add_argument(
         "--collections-only",
         action="store_true",
@@ -221,17 +219,14 @@ def main() -> int:
     quota = client.quota()
     logger.info("API quota: %s", quota)
 
-    from pathlib import Path
-
-    db_path = Path(args.db)
-    conn = open_db(db_path)
+    conn = open_db()
 
     started_at = _now_iso()
-    cur = conn.execute(
-        "INSERT INTO sync_runs (started_at) VALUES (?)", (started_at,)
-    )
-    run_id = cur.lastrowid
-    conn.commit()
+    row = conn.execute(
+        "INSERT INTO sync_runs (started_at) VALUES (%s) RETURNING id",
+        (started_at,),
+    ).fetchone()
+    run_id = row["id"]
 
     error: str | None = None
     n_coll = 0
@@ -246,12 +241,12 @@ def main() -> int:
         raise
     finally:
         conn.execute(
-            "UPDATE sync_runs SET finished_at=?, collections_synced=?, sources_synced=?, error=? WHERE id=?",
+            "UPDATE sync_runs SET finished_at=%s, collections_synced=%s, "
+            "sources_synced=%s, error=%s WHERE id=%s",
             (_now_iso(), n_coll, n_src, error, run_id),
         )
-        conn.commit()
 
-    print_summary(conn, db_path)
+    print_summary(conn)
     conn.close()
     return 0
 
