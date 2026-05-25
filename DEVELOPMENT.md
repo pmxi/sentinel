@@ -12,3 +12,6 @@ Figure out Instagram scraping.
 
 uv run hf auth login
 
+
+ssh -L 5433:localhost:5432 oracle
+oracle is the ssh host where the postgres db lives.
