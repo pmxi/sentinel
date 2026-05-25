@@ -37,7 +37,7 @@ class OpenAIItemClassifier:
         self,
         *,
         api_key: str,
-        model: str = "gpt-5.4",
+        model: str = "gpt-4o-mini",
         criteria_provider: Callable[[str], str] | None = None,
     ):
         if not api_key:
@@ -123,6 +123,19 @@ def _default_criteria_for(source_type: str) -> str:
             "- Releases or announcements the user clearly cares about (based on their notes)\n\n"
             "NORMAL RSS items:\n"
             "- Routine posts, opinion pieces, speculative coverage, marketing"
+        )
+    if source_type == "sitemap_news":
+        return (
+            "These are news headlines pulled from publisher sitemaps. Most are routine "
+            "and should be NORMAL.\n\n"
+            "IMPORTANT news items:\n"
+            "- Major breaking news (international crises, large-scale disasters, top-tier political events)\n"
+            "- Events with material economic or security consequences\n"
+            "- Stories the user clearly cares about based on their notes\n\n"
+            "NORMAL news items:\n"
+            "- Routine local news, sports scores, celebrity gossip, lifestyle pieces\n"
+            "- Opinion columns, listicles, and product reviews\n"
+            "- Any story without time-critical impact on the user"
         )
     return (
         "IMPORTANT items are those the user would genuinely want to be alerted about right now. "

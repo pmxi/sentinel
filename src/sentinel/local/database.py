@@ -389,6 +389,15 @@ class LocalDatabase:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def prune_live_events_older_than(self, hours: int) -> int:
+        """Drop live_events rows older than `hours`. Returns rows deleted."""
+        with self._lock:
+            cur = self.conn.execute(
+                "DELETE FROM live_events WHERE created_at < NOW() - %s::interval",
+                (f"{int(hours)} hours",),
+            )
+            return cur.rowcount or 0
+
     def latest_live_event_id(self) -> int:
         with self._lock:
             row = self.conn.execute(

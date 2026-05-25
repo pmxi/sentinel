@@ -40,10 +40,11 @@ _STREAM_REFRESH_SECONDS = 30
 _LIVE_EVENTS_RETENTION_HOURS = 24
 _LIVE_EVENTS_PRUNE_INTERVAL_S = 3600
 
-# Temporary global kill switch: route every item through the no-LLM fast
-# path, regardless of source. Flip to False (or delete) when classification
-# is wired back in.
-_CLASSIFICATION_DISABLED = True
+# Global classification kill switch. When True, route everything through
+# the no-LLM fast path (just emit item_received). Individual sources can
+# still opt out per-item via item.metadata['skip_classification'] = True
+# (BlueskyStream does this — too high-volume for per-item LLM calls).
+_CLASSIFICATION_DISABLED = False
 
 
 class LocalMonitor:
@@ -102,14 +103,16 @@ class LocalMonitor:
         await self._refresh_streams(initial=True)
 
         refresh_task = asyncio.create_task(self._refresh_loop(), name="stream-refresh")
+        prune_task = asyncio.create_task(self._prune_live_events_loop(), name="live-events-prune")
         try:
             await self._shutdown.wait()
         finally:
-            refresh_task.cancel()
-            try:
-                await refresh_task
-            except (asyncio.CancelledError, Exception):
-                pass
+            for t in (refresh_task, prune_task):
+                t.cancel()
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
             await self._cancel_all()
 
     async def _refresh_loop(self) -> None:
@@ -124,6 +127,24 @@ class LocalMonitor:
                 await self._refresh_streams()
             except Exception as exc:
                 logger.warning("stream refresh failed: %s", exc)
+
+    async def _prune_live_events_loop(self) -> None:
+        """Keep live_events bounded — at high firehose rate the table will
+        otherwise grow to tens of GB within hours and inserts collapse."""
+        while not self._shutdown.is_set():
+            try:
+                await asyncio.wait_for(self._shutdown.wait(), timeout=_LIVE_EVENTS_PRUNE_INTERVAL_S)
+                return
+            except asyncio.TimeoutError:
+                pass
+            try:
+                deleted = await asyncio.to_thread(
+                    self.db.prune_live_events_older_than, _LIVE_EVENTS_RETENTION_HOURS
+                )
+                if deleted:
+                    logger.info("pruned %d live_events older than %dh", deleted, _LIVE_EVENTS_RETENTION_HOURS)
+            except Exception as exc:
+                logger.warning("live_events prune failed: %s", exc)
 
     async def _refresh_streams(self, initial: bool = False) -> None:
         rows = await asyncio.to_thread(self.db.list_streams)
