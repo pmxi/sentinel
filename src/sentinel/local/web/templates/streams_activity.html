@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Stream activity — Sentinel{% endblock %}
+{% block content %}
+<section>
+  <h2>Stream activity</h2>
+
+  <p style="margin: 0 0 1em 0;">
+    <strong>{{ distinct_streams }}</strong> streams emitted ·
+    <strong>{{ total }}</strong> items in the last {{ window }} live_events ·
+    <strong>{{ "%.1f"|format(total_rate_per_sec) }}</strong> items/s overall
+  </p>
+
+  <form method="get" action="{{ url_for('streams_activity') }}" style="margin-bottom: 1em;">
+    <label>Window (live_events to scan):
+      <select name="window">
+        <option value="5000"   {% if window == 5000 %}selected{% endif %}>5k</option>
+        <option value="20000"  {% if window == 20000 %}selected{% endif %}>20k (default)</option>
+        <option value="50000"  {% if window == 50000 %}selected{% endif %}>50k</option>
+        <option value="100000" {% if window == 100000 %}selected{% endif %}>100k</option>
+        <option value="200000" {% if window == 200000 %}selected{% endif %}>200k</option>
+      </select>
+    </label>
+    <button type="submit">Refresh</button>
+    <a href="{{ url_for('streams_page') }}" style="margin-left: 1em;">configured streams →</a>
+  </form>
+
+  {% if activity %}
+    <table>
+      <thead><tr><th>Stream</th><th>Type</th><th>Items in window</th><th>Items/min</th><th>Last seen</th></tr></thead>
+      <tbody>
+      {% for a in activity %}
+        <tr>
+          <td>{{ a.stream }}</td>
+          <td>{{ a.source_type }}</td>
+          <td style="text-align: right;">{{ a.count }}</td>
+          <td style="text-align: right;">{{ "%.1f"|format(a.rate_per_min) }}</td>
+          <td>
+            {% if a.age_secs is none %}
+              —
+            {% elif a.age_secs < 60 %}
+              {{ a.age_secs|int }}s ago
+            {% elif a.age_secs < 3600 %}
+              {{ (a.age_secs / 60)|int }}m ago
+            {% else %}
+              {{ (a.age_secs / 3600)|int }}h ago
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  {% else %}
+    <p>No item_received events in the last {{ window }} live_events.</p>
+  {% endif %}
+</section>
+{% endblock %}

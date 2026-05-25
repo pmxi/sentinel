@@ -154,6 +154,93 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
             },
         )
 
+    @app.route("/streams/activity")
+    def streams_activity():
+        """Per-stream emission stats over a recent window.
+
+        Reads the last `window` rows of `live_events` (default 20k) and
+        groups item_received events by stream_name. Cheap because the
+        outer filter uses live_events' `id` BTREE index — the JSONB
+        extraction only runs on the windowed subset.
+        """
+        try:
+            window = min(max(int(request.args.get("window", "20000")), 1000), 200000)
+        except (TypeError, ValueError):
+            window = 20000
+
+        db = open_db()
+        try:
+            with db.conn.cursor() as cur:
+                cur.execute("SELECT MAX(id) FROM live_events")
+                row = cur.fetchone()
+                max_id = (row["max"] if isinstance(row, dict) else row[0]) or 0
+                low_id = max(0, max_id - window)
+                cur.execute(
+                    """
+                    SELECT
+                        payload_json::jsonb ->> 'stream_name'  AS stream,
+                        payload_json::jsonb ->> 'source_type'  AS source_type,
+                        MAX(created_at)                        AS last_seen,
+                        MIN(created_at)                        AS first_seen,
+                        COUNT(*)                               AS n
+                    FROM live_events
+                    WHERE id > %s
+                      AND event_type = 'item_received'
+                    GROUP BY 1, 2
+                    ORDER BY n DESC
+                    """,
+                    (low_id,),
+                )
+                rows = cur.fetchall()
+                # Total emissions in window for context
+                cur.execute(
+                    "SELECT COUNT(*) AS c FROM live_events WHERE id > %s AND event_type = 'item_received'",
+                    (low_id,),
+                )
+                total_row = cur.fetchone()
+                total = (total_row["c"] if isinstance(total_row, dict) else total_row[0]) or 0
+        finally:
+            db.close()
+
+        # Compute rate per stream in items/min
+        now = utc_now()
+        activity: List[Dict[str, Any]] = []
+        for r in rows:
+            d = r if isinstance(r, dict) else {
+                "stream": r[0], "source_type": r[1],
+                "last_seen": r[2], "first_seen": r[3], "n": r[4],
+            }
+            first = d["first_seen"]
+            last = d["last_seen"]
+            window_secs = max(1.0, (last - first).total_seconds()) if (first and last) else 60.0
+            rate_per_min = d["n"] * 60.0 / window_secs if window_secs > 0 else 0
+            age_secs = (now - last).total_seconds() if last else None
+            activity.append({
+                "stream": d["stream"] or "(unknown)",
+                "source_type": d["source_type"] or "?",
+                "count": d["n"],
+                "rate_per_min": rate_per_min,
+                "last_seen": last,
+                "age_secs": age_secs,
+            })
+
+        # Total rate estimate across the whole window
+        if activity:
+            window_first = min((a["last_seen"] for a in activity if a["last_seen"]), default=now)
+            total_window_secs = max(1.0, (now - window_first).total_seconds())
+            total_rate_per_sec = total / total_window_secs
+        else:
+            total_rate_per_sec = 0
+
+        return render_template(
+            "streams_activity.html",
+            activity=activity,
+            window=window,
+            total=total,
+            total_rate_per_sec=total_rate_per_sec,
+            distinct_streams=len(activity),
+        )
+
     @app.route("/streams")
     def streams_page():
         db = open_db()
