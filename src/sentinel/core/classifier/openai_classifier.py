@@ -165,16 +165,21 @@ def _default_criteria_for(source_type: str) -> str:
         )
     if source_type == "sitemap_news":
         return (
-            "These are news headlines pulled from publisher sitemaps. Most are routine "
-            "and should be NORMAL.\n\n"
-            "IMPORTANT news items:\n"
-            "- Major breaking news (international crises, large-scale disasters, top-tier political events)\n"
-            "- Events with material economic or security consequences\n"
-            "- Stories the user clearly cares about based on their notes\n\n"
-            "NORMAL news items:\n"
-            "- Routine local news, sports scores, celebrity gossip, lifestyle pieces\n"
-            "- Opinion columns, listicles, and product reviews\n"
-            "- Any story without time-critical impact on the user"
+            "These are news headlines pulled from publisher sitemaps. The DEFAULT is NORMAL.\n"
+            "Mark IMPORTANT only if a reasonable global news consumer would want to be ALERTED right now.\n\n"
+            "IMPORTANT (high bar — reserve for genuinely consequential events):\n"
+            "- Active armed conflict updates, terrorist incidents, mass-casualty events\n"
+            "- Major natural disasters (earthquakes, hurricanes, floods) with casualties or large impact\n"
+            "- Geopolitically significant announcements (treaties, sanctions, leadership changes in major powers)\n"
+            "- Market-moving economic events (central bank actions, large corporate collapses, currency crises)\n"
+            "- Public health emergencies (outbreaks, pandemics, recalls of widely-used products)\n"
+            "- Cybersecurity incidents affecting major infrastructure or hundreds of millions of users\n\n"
+            "NORMAL (the vast majority):\n"
+            "- Local news, regional politics, individual crimes\n"
+            "- Sports, entertainment, celebrity, gaming, product launches\n"
+            "- Opinion pieces, analysis, listicles, lifestyle content\n"
+            "- Routine government activity, business mergers below crisis-scale\n"
+            "- Anything that wouldn't warrant a breaking-news push notification"
         )
     return (
         "IMPORTANT items are those the user would genuinely want to be alerted about right now. "
