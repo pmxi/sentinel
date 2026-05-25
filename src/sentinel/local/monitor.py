@@ -423,11 +423,15 @@ class _LocalProcessingObserver(ProcessingObserver):
 
     BATCH_MAX = 500
     BATCH_INTERVAL_S = 0.25
+    # Bound the queue. At sustained high item rates, an unbounded queue
+    # consumes memory faster than we can drain. We prefer dropping events
+    # (with a log) over OOMing the supervisor.
+    QUEUE_MAX = 50_000
 
     def __init__(self, db: LocalDatabase, bus: Optional[LiveEventBus]):
         self.db = db
         self.bus = bus
-        self._queue: "asyncio.Queue[tuple[str, str]]" = asyncio.Queue()
+        self._queue: "asyncio.Queue[tuple[str, str]]" = asyncio.Queue(maxsize=self.QUEUE_MAX)
         self._task: Optional[asyncio.Task] = None
         self._dropped: int = 0
         self._last_dropped_log: float = 0.0
@@ -458,9 +462,17 @@ class _LocalProcessingObserver(ProcessingObserver):
             payload_json = payload_json.replace(chr(0), "")
 
         self._ensure_started()
-        # Bounded? No — but the batcher drains aggressively and back-pressure
-        # naturally builds as the producers see slow awaits if needed.
-        self._queue.put_nowait((event.event_type, payload_json))
+        # Drop on overflow rather than block. Producers must not be
+        # back-pressured — a blocked publish stalls the supervising stream
+        # tasks and cascades. Log dropped counts at most once per 10s.
+        try:
+            self._queue.put_nowait((event.event_type, payload_json))
+        except asyncio.QueueFull:
+            self._dropped += 1
+            now = asyncio.get_running_loop().time()
+            if now - self._last_dropped_log > 10:
+                logger.warning("live_events queue full; dropped %d events so far", self._dropped)
+                self._last_dropped_log = now
 
     async def _flush_loop(self) -> None:
         while True:
