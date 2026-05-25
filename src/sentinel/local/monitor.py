@@ -44,7 +44,7 @@ _LIVE_EVENTS_PRUNE_INTERVAL_S = 3600
 # the no-LLM fast path (just emit item_received). Individual sources can
 # still opt out per-item via item.metadata['skip_classification'] = True
 # (BlueskyStream does this — too high-volume for per-item LLM calls).
-_CLASSIFICATION_DISABLED = False
+_CLASSIFICATION_DISABLED = True
 
 
 class LocalMonitor:
