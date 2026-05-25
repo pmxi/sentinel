@@ -91,6 +91,15 @@ class LocalMonitor:
         logger.info("Starting local Sentinel supervisor")
         self._install_signal_handlers()
 
+        # asyncio.to_thread uses the loop's default ThreadPoolExecutor which
+        # caps at min(32, cpu+4) by default. At thousands of streams calling
+        # to_thread for blocking OpenAI requests (~1-7s each), 32 workers
+        # bottleneck the whole pipeline. Bump to 256 for headroom.
+        import concurrent.futures
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(concurrent.futures.ThreadPoolExecutor(max_workers=256))
+        logger.info("default executor sized to 256 workers")
+
         if settings.TELEGRAM_BOT_TOKEN:
             start_telegram_listener(settings.require_database_url())
 
