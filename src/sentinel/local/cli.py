@@ -220,6 +220,9 @@ def _prompt_rss_stream() -> str:
 
 def cmd_sources_materialize(args: argparse.Namespace) -> None:
     kinds = tuple(args.kind) if args.kind else ("news",)
+    # --sitemaps-only and --feeds-only are mutually exclusive shortcuts.
+    include_sitemaps = not args.feeds_only
+    include_feeds = not args.sitemaps_only
     flt = MaterializeFilter(
         language=args.language,
         country=args.country,
@@ -230,6 +233,8 @@ def cmd_sources_materialize(args: argparse.Namespace) -> None:
     result = materialize(
         database_url=settings.require_database_url(),
         flt=flt,
+        include_sitemaps=include_sitemaps,
+        include_feeds=include_feeds,
         dry_run=args.dry_run,
         prune=args.prune,
     )
@@ -308,19 +313,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mat.add_argument("--language", help="Filter sources by primary_language (e.g. 'en')")
     mat.add_argument("--country", help="Filter sources by pub_country (e.g. 'USA')")
-    mat.add_argument("--min-fresh", type=int, default=1, help="Minimum fresh_entries_24h (default 1)")
-    mat.add_argument("--limit", type=int, default=10, help="Max sitemaps to materialize (default 10)")
+    mat.add_argument(
+        "--min-fresh", type=int, default=1,
+        help="Minimum fresh_entries_24h for sitemap candidates (default 1)",
+    )
+    mat.add_argument(
+        "--limit", type=int, default=10,
+        help="Max candidates *per source kind* to materialize (default 10). "
+             "With both sitemaps and feeds enabled, the actual stream count "
+             "can be up to 2x this.",
+    )
     mat.add_argument(
         "--kind",
         action="append",
         default=None,
         help="source_sitemaps.kind to include (repeatable; default: news)",
     )
+    sf = mat.add_mutually_exclusive_group()
+    sf.add_argument(
+        "--sitemaps-only", action="store_true",
+        help="Only materialize sitemap_news streams from source_sitemaps",
+    )
+    sf.add_argument(
+        "--feeds-only", action="store_true",
+        help="Only materialize rss streams from source_feeds",
+    )
     mat.add_argument("--dry-run", action="store_true", help="Print plan without writing")
     mat.add_argument(
         "--prune",
         action="store_true",
-        help="Delete src:* streams no longer matching the filter",
+        help="Delete src:* / src-feed:* streams no longer matching the filter",
     )
     mat.set_defaults(func=cmd_sources_materialize, kind=None)
 
