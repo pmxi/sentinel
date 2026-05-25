@@ -183,15 +183,23 @@
     return li;
   }
 
-  function handle(data) {
+  function handle(data, eventType) {
     if (paused) return;
-    buffer.push(data);
-    while (buffer.length > MAX_ITEMS) buffer.shift();
-
-    fire.append(renderRow(data));
-    const t = parseFloat(thresholdInput.value) || 0;
-    if (data.score != null && data.score >= t) {
-      filter.append(renderRow(data));
+    if (eventType === "item_received") {
+      buffer.push(data);
+      while (buffer.length > MAX_ITEMS) buffer.shift();
+      fire.append(renderRow(data));
+      const t = parseFloat(thresholdInput.value) || 0;
+      if (data.score != null && data.score >= t) {
+        filter.append(renderRow(data));
+      }
+    } else if (eventType === "item_classified") {
+      // Filtered column: LLM-classified IMPORTANT items, regardless of
+      // local score. The local scorer is optional (gated HF model) so
+      // priority is the primary signal in production.
+      if (data.priority === "important") {
+        filter.append(renderRow(data));
+      }
     }
   }
 
@@ -220,10 +228,10 @@
   es.addEventListener("open", () => { status.textContent = "live"; status.className = "ok"; });
   es.addEventListener("error", () => { status.textContent = "reconnecting…"; status.className = "warn"; });
   es.addEventListener("item_received", (ev) => {
-    try { handle(JSON.parse(ev.data)); } catch (e) { console.error(e); }
+    try { handle(JSON.parse(ev.data), "item_received"); } catch (e) { console.error(e); }
   });
   es.addEventListener("item_classified", (ev) => {
-    try { handle(JSON.parse(ev.data)); } catch (e) { console.error(e); }
+    try { handle(JSON.parse(ev.data), "item_classified"); } catch (e) { console.error(e); }
   });
 })();
 </script>
