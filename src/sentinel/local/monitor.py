@@ -247,10 +247,10 @@ class LocalMonitor:
                     scorer=self.scorer,
                     observer=self._observer,
                 )
-                # Concurrency cap per stream. Without this the firehose
-                # serializes on score()/process() and the BatchScorer
-                # queue never accumulates enough to actually batch.
-                sem = asyncio.Semaphore(64)
+                # Concurrency cap per stream. With many streams (700+),
+                # 64-per-stream multiplied = 45k+ items potentially in-flight.
+                # 8 is enough to overlap I/O without ballooning queue memory.
+                sem = asyncio.Semaphore(8)
                 in_flight: set[asyncio.Task] = set()
 
                 async def _handle(item: Item) -> None:
