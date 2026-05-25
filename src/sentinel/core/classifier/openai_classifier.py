@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
+import time
 from collections.abc import Callable
 
 import httpx
-from openai import AsyncOpenAI
+from openai import APIError, APIStatusError, AsyncOpenAI, RateLimitError
 from pydantic import BaseModel
 
 from sentinel.core.logging_config import get_logger
@@ -16,10 +18,17 @@ logger = get_logger(__name__)
 
 _MAX_BODY_CHARS = 50_000
 
-# Concurrency on the underlying httpx pool. With async OpenAI calls,
-# this is the real cap on simultaneous in-flight classifications.
-_HTTPX_MAX_CONNECTIONS = 256
-_HTTPX_MAX_KEEPALIVE = 64
+# Pool size on the underlying httpx client. Larger than _MAX_INFLIGHT below
+# so brief bursts don't block on connection acquisition.
+_HTTPX_MAX_CONNECTIONS = 128
+_HTTPX_MAX_KEEPALIVE = 32
+
+# Hard cap on concurrent OpenAI requests. The right value depends on the
+# OpenAI org's RPM/TPM limits — gpt-4o-mini Tier 1 is ~500 RPM. With each
+# request taking ~1-2s under normal conditions, 32 concurrent gives ~1k RPM.
+# Higher = better steady-state throughput; too high = throttling that
+# silently extends per-request latency to many seconds.
+_MAX_INFLIGHT = 48
 
 
 class _ClassificationResponse(BaseModel):
@@ -65,17 +74,30 @@ class OpenAIItemClassifier:
         self.client = AsyncOpenAI(api_key=api_key, http_client=http_client)
         self.model = model
         self._criteria_provider = criteria_provider or _default_criteria_for
+        # Global concurrency cap. Without it the per-stream sem (64) lets
+        # thousands of streams overrun OpenAI's effective RPM limit and
+        # every call queues for many seconds.
+        self._inflight = asyncio.Semaphore(_MAX_INFLIGHT)
 
     async def classify(self, item: Item, notes: str = "") -> ClassificationResult:
-        response = await self.client.responses.parse(
-            model=self.model,
-            input=self._build_prompt(item, notes),
-            text_format=_ClassificationResponse,
-        )
-        parsed = response.output_parsed
-        if parsed is None:
-            raise ValueError("OpenAI Responses API returned no parsed output")
-        return parsed.to_result()
+        async with self._inflight:
+            t0 = time.monotonic()
+            try:
+                response = await self.client.responses.parse(
+                    model=self.model,
+                    input=self._build_prompt(item, notes),
+                    text_format=_ClassificationResponse,
+                )
+            except RateLimitError as exc:
+                logger.warning("OpenAI rate-limited after %.1fs: %s", time.monotonic() - t0, exc)
+                raise
+            except (APIError, APIStatusError) as exc:
+                logger.warning("OpenAI API error after %.1fs: %s", time.monotonic() - t0, exc)
+                raise
+            parsed = response.output_parsed
+            if parsed is None:
+                raise ValueError("OpenAI Responses API returned no parsed output")
+            return parsed.to_result()
 
     def _build_prompt(self, item: Item, notes: str) -> str:
         extra = (notes or "").strip()
