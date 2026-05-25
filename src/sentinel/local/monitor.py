@@ -35,6 +35,10 @@ logger = get_logger("sentinel.local.monitor")
 
 _RESTART_DELAY_SECONDS = 30
 _STREAM_REFRESH_SECONDS = 30
+# live_events is append-only and grows fast under firehose traffic
+# (~1k/s at full Tier-A scale). Retention is hours, not days.
+_LIVE_EVENTS_RETENTION_HOURS = 24
+_LIVE_EVENTS_PRUNE_INTERVAL_S = 3600
 
 # Temporary global kill switch: route every item through the no-LLM fast
 # path, regardless of source. Flip to False (or delete) when classification

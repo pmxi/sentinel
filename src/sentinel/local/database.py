@@ -348,9 +348,11 @@ class LocalDatabase:
             )
 
     def emit_live_event(self, event_type: str, payload_json: str) -> int:
-        # Append-only: the accumulated history is useful for labeling and
-        # offline analysis. Retention should be handled as an explicit policy.
-        with self._lock, self.conn.transaction():
+        # Append-only. With autocommit=True the connection auto-COMMITs each
+        # statement; the previous explicit conn.transaction() context manager
+        # forced an extra BEGIN+COMMIT roundtrip per call which collapsed
+        # throughput at high item rates.
+        with self._lock:
             row = self.conn.execute(
                 "INSERT INTO live_events (event_type, payload_json) "
                 "VALUES (%s, %s) RETURNING id",
