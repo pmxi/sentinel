@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 
-from openai import OpenAI
+import httpx
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 
 from sentinel.core.logging_config import get_logger
@@ -15,6 +15,11 @@ from sentinel.core.streams.base import Item
 logger = get_logger(__name__)
 
 _MAX_BODY_CHARS = 50_000
+
+# Concurrency on the underlying httpx pool. With async OpenAI calls,
+# this is the real cap on simultaneous in-flight classifications.
+_HTTPX_MAX_CONNECTIONS = 256
+_HTTPX_MAX_KEEPALIVE = 64
 
 
 class _ClassificationResponse(BaseModel):
@@ -31,7 +36,13 @@ class _ClassificationResponse(BaseModel):
 
 
 class OpenAIItemClassifier:
-    """Concrete classifier that delegates to the OpenAI Responses API."""
+    """Concrete classifier that delegates to the OpenAI Responses API.
+
+    Uses the async client so each classify call yields the event loop
+    instead of consuming a thread for the entire OpenAI roundtrip. At
+    scale (hundreds of in-flight classifications) the previous
+    asyncio.to_thread approach saturated the default executor and
+    capped throughput at ~1-3 classifications/sec."""
 
     def __init__(
         self,
@@ -42,15 +53,21 @@ class OpenAIItemClassifier:
     ):
         if not api_key:
             raise ValueError("api_key is required")
-        self.client = OpenAI(api_key=api_key)
+        # Override the SDK's default httpx client so we can raise the
+        # connection pool ceiling (defaults are tiny relative to our scale).
+        http_client = httpx.AsyncClient(
+            limits=httpx.Limits(
+                max_connections=_HTTPX_MAX_CONNECTIONS,
+                max_keepalive_connections=_HTTPX_MAX_KEEPALIVE,
+            ),
+            timeout=httpx.Timeout(60.0, connect=10.0),
+        )
+        self.client = AsyncOpenAI(api_key=api_key, http_client=http_client)
         self.model = model
         self._criteria_provider = criteria_provider or _default_criteria_for
 
     async def classify(self, item: Item, notes: str = "") -> ClassificationResult:
-        return await asyncio.to_thread(self._classify_sync, item, notes)
-
-    def _classify_sync(self, item: Item, notes: str) -> ClassificationResult:
-        response = self.client.responses.parse(
+        response = await self.client.responses.parse(
             model=self.model,
             input=self._build_prompt(item, notes),
             text_format=_ClassificationResponse,
