@@ -161,7 +161,65 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
             rows = LocalStreamService(db).list_stream_rows()
         finally:
             db.close()
-        return render_template("streams.html", streams=rows)
+
+        # Filters
+        q = (request.args.get("q") or "").strip().lower()
+        type_filter = (request.args.get("type") or "").strip().lower()
+        status = (request.args.get("status") or "").strip().lower()  # 'enabled'|'disabled'|'error'
+
+        type_counts: dict[str, int] = {}
+        enabled_count = 0
+        error_count = 0
+        for r in rows:
+            type_counts[r["stream_type"]] = type_counts.get(r["stream_type"], 0) + 1
+            if r["enabled"]:
+                enabled_count += 1
+            if r["error"]:
+                error_count += 1
+
+        def keep(r) -> bool:
+            if type_filter and r["stream_type"] != type_filter:
+                return False
+            if status == "enabled" and not r["enabled"]:
+                return False
+            if status == "disabled" and r["enabled"]:
+                return False
+            if status == "error" and not r["error"]:
+                return False
+            if q:
+                hay = (r["name"] + " " + (r["detail"] or "")).lower()
+                if q not in hay:
+                    return False
+            return True
+
+        filtered = [r for r in rows if keep(r)]
+
+        # Pagination
+        try:
+            page = max(1, int(request.args.get("page", "1")))
+        except ValueError:
+            page = 1
+        per_page = 100
+        total = len(filtered)
+        pages = max(1, (total + per_page - 1) // per_page)
+        page = min(page, pages)
+        start = (page - 1) * per_page
+        page_rows = filtered[start:start + per_page]
+
+        return render_template(
+            "streams.html",
+            streams=page_rows,
+            page=page,
+            pages=pages,
+            total=total,
+            grand_total=len(rows),
+            type_counts=sorted(type_counts.items(), key=lambda kv: -kv[1]),
+            enabled_count=enabled_count,
+            error_count=error_count,
+            q=q,
+            type_filter=type_filter,
+            status=status,
+        )
 
     @app.route("/streams/new")
     def new_stream_page():
