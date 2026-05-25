@@ -19,6 +19,11 @@ from sentinel.local.database import LocalDatabase
 from sentinel.local.dev_firehose import FirehoseConfig, run_firehose
 from sentinel.local.monitor import LocalMonitor
 from sentinel.local.services.settings import LocalSetupService
+from sentinel.local.services.sources_materialize import (
+    MaterializeFilter,
+    format_plan,
+    materialize,
+)
 from sentinel.local.services.streams import LocalStreamService
 from sentinel.local.web.app import run as run_web
 
@@ -213,6 +218,24 @@ def _prompt_rss_stream() -> str:
     return config.model_dump_json()
 
 
+def cmd_sources_materialize(args: argparse.Namespace) -> None:
+    kinds = tuple(args.kind) if args.kind else ("news",)
+    flt = MaterializeFilter(
+        language=args.language,
+        country=args.country,
+        min_fresh=args.min_fresh,
+        limit=args.limit,
+        kinds=kinds,
+    )
+    result = materialize(
+        database_url=settings.require_database_url(),
+        flt=flt,
+        dry_run=args.dry_run,
+        prune=args.prune,
+    )
+    print(format_plan(result, dry_run=args.dry_run))
+
+
 def cmd_run(_args: argparse.Namespace) -> None:
     db = _open_db()
     settings.load(db)
@@ -272,6 +295,34 @@ def build_parser() -> argparse.ArgumentParser:
     rm = stream_sub.add_parser("remove")
     rm.add_argument("name")
     rm.set_defaults(func=cmd_stream_remove)
+
+    sources = sub.add_parser(
+        "sources",
+        help="Manage the Media Cloud sitemap catalog",
+    )
+    sources_sub = sources.add_subparsers(dest="sources_cmd", required=True)
+
+    mat = sources_sub.add_parser(
+        "materialize",
+        help="Materialize catalog sitemaps into sitemap_news streams",
+    )
+    mat.add_argument("--language", help="Filter sources by primary_language (e.g. 'en')")
+    mat.add_argument("--country", help="Filter sources by pub_country (e.g. 'USA')")
+    mat.add_argument("--min-fresh", type=int, default=1, help="Minimum fresh_entries_24h (default 1)")
+    mat.add_argument("--limit", type=int, default=10, help="Max sitemaps to materialize (default 10)")
+    mat.add_argument(
+        "--kind",
+        action="append",
+        default=None,
+        help="source_sitemaps.kind to include (repeatable; default: news)",
+    )
+    mat.add_argument("--dry-run", action="store_true", help="Print plan without writing")
+    mat.add_argument(
+        "--prune",
+        action="store_true",
+        help="Delete src:* streams no longer matching the filter",
+    )
+    mat.set_defaults(func=cmd_sources_materialize, kind=None)
 
     dev = sub.add_parser("dev", help="Developer helpers for local testing")
     dev_sub = dev.add_subparsers(dest="dev_cmd", required=True)

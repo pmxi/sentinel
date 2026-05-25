@@ -96,6 +96,37 @@ class SitemapNewsStream(Stream):
             raw = await resp.read()
         return parse_sitemap_bytes(raw)
 
+    def _to_item(self, entry: SitemapEntry) -> Item:
+        # Per-item publication name from the XML wins over the
+        # stream-level config; the config value is just a fallback for
+        # publishers that omit <news:publication><news:name>.
+        publication = entry.publication_name or self.config.publication_name or self.name
+        body_lines = [
+            f"Publication: {publication}",
+            f"Title: {entry.title}",
+            f"Published: {entry.published.isoformat() if entry.published else 'unknown'}",
+            f"URL: {entry.url}",
+        ]
+        if entry.language:
+            body_lines.append(f"Language: {entry.language}")
+        if entry.keywords:
+            body_lines.append(f"Keywords: {', '.join(entry.keywords)}")
+        return Item(
+            id=entry.url,
+            source_type="sitemap_news",
+            title=entry.title,
+            body="\n".join(body_lines) + "\n",
+            author=publication,
+            url=entry.url,
+            received_at=entry.published or utc_now(),
+            metadata={
+                "stream_name": self.name,
+                "publication": publication,
+                "language": entry.language,
+                "keywords": entry.keywords,
+            },
+        )
+
 
 def parse_sitemap_bytes(raw: bytes) -> list[SitemapEntry]:
     """Parse a Google News sitemap body into entries.
@@ -166,37 +197,6 @@ def parse_sitemap_bytes(raw: bytes) -> list[SitemapEntry]:
             title = url.rsplit("/", 1)[-1].replace("-", " ").strip() or "(no title)"
         out.append(SitemapEntry(url, title, published, keywords, publication_name, language))
     return out
-
-    def _to_item(self, entry: SitemapEntry) -> Item:
-        # Per-item publication name from the XML wins over the
-        # stream-level config; the config value is just a fallback for
-        # publishers that omit <news:publication><news:name>.
-        publication = entry.publication_name or self.config.publication_name or self.name
-        body_lines = [
-            f"Publication: {publication}",
-            f"Title: {entry.title}",
-            f"Published: {entry.published.isoformat() if entry.published else 'unknown'}",
-            f"URL: {entry.url}",
-        ]
-        if entry.language:
-            body_lines.append(f"Language: {entry.language}")
-        if entry.keywords:
-            body_lines.append(f"Keywords: {', '.join(entry.keywords)}")
-        return Item(
-            id=entry.url,
-            source_type="sitemap_news",
-            title=entry.title,
-            body="\n".join(body_lines) + "\n",
-            author=publication,
-            url=entry.url,
-            received_at=entry.published or utc_now(),
-            metadata={
-                "stream_name": self.name,
-                "publication": publication,
-                "language": entry.language,
-                "keywords": entry.keywords,
-            },
-        )
 
 
 def _local_name(tag: str) -> str:
