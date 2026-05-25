@@ -11,6 +11,7 @@ import asyncio
 from datetime import UTC, datetime
 from typing import Any, AsyncIterator
 
+import aiohttp
 import feedparser  # type: ignore
 
 from sentinel.core.logging_config import get_logger
@@ -19,6 +20,12 @@ from sentinel.core.streams.rss.config import RSSStreamConfig
 from sentinel.core.time_utils import utc_now
 
 logger = get_logger(__name__)
+
+_FETCH_TIMEOUT = aiohttp.ClientTimeout(total=30)
+_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+)
 
 
 class RSSStream(Stream):
@@ -45,31 +52,44 @@ class RSSStream(Stream):
             f"(poll every {self.config.poll_seconds}s)"
         )
 
-        while True:
-            try:
-                parsed = await asyncio.to_thread(feedparser.parse, feed_url)
-                entries = getattr(parsed, "entries", []) or []
-                logger.debug(
-                    f"[{self.name}] fetched {len(entries)} entries from {feed_url}"
-                )
-                for entry in entries[: self.config.max_entries_per_poll]:
-                    item = self._entry_to_item(entry, parsed.feed)
-                    if item is None:
-                        continue
-                    if item.id in self._seen:
-                        continue
-                    self._seen.add(item.id)
-                    # On the very first poll after startup, prime the seen
-                    # set but don't emit — otherwise every restart would
-                    # re-flood the classifier with backlog.
-                    if self._first_poll:
-                        continue
-                    yield item
-                self._first_poll = False
-            except Exception as e:
-                logger.exception(f"[{self.name}] RSS poll failed: {e}")
+        # Async fetch + sync parse on bytes. The previous
+        # feedparser.parse(URL) does its own blocking urllib fetch under
+        # asyncio.to_thread, which exhausts the event loop's threadpool
+        # under thousands of concurrent RSS streams. Doing the HTTP fetch
+        # with aiohttp keeps the event loop free; feedparser.parse(bytes)
+        # is pure-Python and runs fine in a thread.
+        async with aiohttp.ClientSession(headers={"User-Agent": _USER_AGENT}) as session:
+            while True:
+                try:
+                    raw = await self._fetch(session, feed_url)
+                    parsed = await asyncio.to_thread(feedparser.parse, raw)
+                    entries = getattr(parsed, "entries", []) or []
+                    logger.debug(
+                        f"[{self.name}] fetched {len(entries)} entries from {feed_url}"
+                    )
+                    for entry in entries[: self.config.max_entries_per_poll]:
+                        item = self._entry_to_item(entry, parsed.feed)
+                        if item is None:
+                            continue
+                        if item.id in self._seen:
+                            continue
+                        self._seen.add(item.id)
+                        # On the very first poll after startup, prime the seen
+                        # set but don't emit — otherwise every restart would
+                        # re-flood the classifier with backlog.
+                        if self._first_poll:
+                            continue
+                        yield item
+                    self._first_poll = False
+                except Exception as e:
+                    logger.warning(f"[{self.name}] RSS poll failed: {e}")
 
-            await asyncio.sleep(self.config.poll_seconds)
+                await asyncio.sleep(self.config.poll_seconds)
+
+    async def _fetch(self, session: aiohttp.ClientSession, url: str) -> bytes:
+        async with session.get(url, timeout=_FETCH_TIMEOUT, allow_redirects=True) as resp:
+            resp.raise_for_status()
+            return await resp.read()
 
     def _entry_to_item(self, entry: Any, feed_meta: Any) -> Item | None:
         entry_id = (
