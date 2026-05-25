@@ -273,10 +273,15 @@ def plan(
 
 def apply(conn: psycopg.Connection, result: MaterializeResult) -> None:
     names_to_cand = {assign_names(result.candidates)[c]: c for c in result.candidates}
+    upsert_params = [
+        (name, names_to_cand[name].stream_type, _config_payload(names_to_cand[name]))
+        for name in result.to_add + result.to_update
+    ]
     with conn.cursor() as cur:
-        for name in result.to_add + result.to_update:
-            c = names_to_cand[name]
-            cur.execute(
+        # Single executemany so we round-trip once for 1000s of upserts
+        # instead of once per row (a ~10-100x speedup over a slow link).
+        if upsert_params:
+            cur.executemany(
                 """
                 INSERT INTO streams (name, stream_type, config_json, updated_at)
                 VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
@@ -285,10 +290,11 @@ def apply(conn: psycopg.Connection, result: MaterializeResult) -> None:
                     config_json = excluded.config_json,
                     updated_at  = CURRENT_TIMESTAMP
                 """,
-                (name, c.stream_type, _config_payload(c)),
+                upsert_params,
             )
-        for name in result.to_prune:
-            cur.execute("DELETE FROM streams WHERE name = %s", (name,))
+        if result.to_prune:
+            cur.executemany("DELETE FROM streams WHERE name = %s",
+                            [(name,) for name in result.to_prune])
 
 
 def materialize(
