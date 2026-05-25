@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import functools
+import logging
 import threading
+import time
 from datetime import datetime
 from types import TracebackType
-from typing import Any, Dict, List, Optional, Type
+from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
 
 import psycopg
 from psycopg.rows import dict_row
@@ -13,6 +16,39 @@ from psycopg.rows import dict_row
 from sentinel.core.time_utils import format_iso_datetime, parse_iso_datetime, utc_now
 
 _CURRENT_SCHEMA_VERSION = 1
+_RECONNECT_BACKOFF_BASE = 0.5
+_MAX_RECONNECT_ATTEMPTS = 3
+
+logger = logging.getLogger(__name__)
+
+F = TypeVar("F", bound=Callable[..., Any])
+
+
+def _with_reconnect(method: F) -> F:
+    """Wrap a LocalDatabase method so transient psycopg connection errors
+    drop the cached conn, reconnect, and retry once. Without this, a single
+    postgres restart leaves the supervisor's long-lived connection dead
+    forever (no automatic reconnection)."""
+    @functools.wraps(method)
+    def wrapper(self: "LocalDatabase", *args, **kwargs):
+        last_exc: Optional[BaseException] = None
+        for attempt in range(_MAX_RECONNECT_ATTEMPTS):
+            try:
+                return method(self, *args, **kwargs)
+            except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
+                last_exc = exc
+                logger.warning(
+                    "postgres call %s failed (attempt %d/%d): %s; reconnecting",
+                    method.__name__, attempt + 1, _MAX_RECONNECT_ATTEMPTS, exc,
+                )
+                try:
+                    self._reconnect()
+                except Exception as recon_exc:
+                    logger.warning("reconnect failed: %s", recon_exc)
+                    time.sleep(_RECONNECT_BACKOFF_BASE * (2 ** attempt))
+        assert last_exc is not None
+        raise last_exc
+    return wrapper  # type: ignore[return-value]
 
 
 class LocalDatabase:
@@ -26,6 +62,15 @@ class LocalDatabase:
         self.conn = psycopg.connect(database_url, row_factory=dict_row)
         self.conn.autocommit = True
         self._create_tables()
+
+    def _reconnect(self) -> None:
+        with self._lock:
+            try:
+                self.conn.close()
+            except Exception:
+                pass
+            self.conn = psycopg.connect(self.database_url, row_factory=dict_row)
+            self.conn.autocommit = True
 
     def _create_tables(self) -> None:
         with self._lock, self.conn.transaction():
@@ -378,3 +423,19 @@ def _parse_datetime(value: Any) -> datetime:
     if isinstance(value, datetime):
         return value
     return parse_iso_datetime(str(value), assume_local=True)
+
+
+# Auto-wrap every public, non-context-manager method on LocalDatabase with
+# @_with_reconnect so transient `psycopg.OperationalError` recovers transparently.
+# `close`, `_reconnect`, `__init__`, dunders, and private methods stay raw.
+_RECONNECT_EXEMPT: set[str] = {
+    "close", "_reconnect", "__init__", "__enter__", "__exit__",
+}
+for _name, _attr in list(vars(LocalDatabase).items()):
+    if _name in _RECONNECT_EXEMPT or _name.startswith("_"):
+        continue
+    if isinstance(_attr, (staticmethod, classmethod, property)):
+        continue
+    if callable(_attr):
+        setattr(LocalDatabase, _name, _with_reconnect(_attr))
+del _name, _attr

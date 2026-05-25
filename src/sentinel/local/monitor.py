@@ -33,6 +33,7 @@ from sentinel.core.time_utils import utc_now
 logger = get_logger("sentinel.local.monitor")
 
 _RESTART_DELAY_SECONDS = 30
+_STREAM_REFRESH_SECONDS = 30
 
 # Temporary global kill switch: route every item through the no-LLM fast
 # path, regardless of source. Flip to False (or delete) when classification
@@ -59,7 +60,12 @@ class LocalMonitor:
             BatchScorer(local_scorer) if local_scorer is not None else None
         )
         self._shutdown = asyncio.Event()
-        self._tasks: List[asyncio.Task] = []
+        # Live registry of running stream tasks.  Hot-reload diffs this
+        # against the DB snapshot every _STREAM_REFRESH_SECONDS.
+        self._stream_tasks: Dict[str, asyncio.Task] = {}
+        # (stream_type, config_json) per running stream — config drift
+        # detection without re-parsing JSON every refresh.
+        self._stream_config_sig: Dict[str, tuple[str, str]] = {}
 
     async def run(self) -> None:
         logger.info("Starting local Sentinel supervisor")
@@ -74,30 +80,90 @@ class LocalMonitor:
         if self.db.get_monitoring_start_time() is None:
             self.db.set_monitoring_start_time(utc_now())
 
-        rows = await asyncio.to_thread(self.db.list_streams)
-        for row in rows:
-            try:
-                stream = self._build_stream(row)
-            except Exception as exc:
-                logger.error(
-                    "Failed to build stream %r (type=%s): %s",
-                    row["name"],
-                    row["stream_type"],
-                    exc,
-                )
-                continue
-            task = asyncio.create_task(
-                self._run_stream(stream),
-                name=f"local-stream:{row['name']}",
-            )
-            self._tasks.append(task)
+        await self._refresh_streams(initial=True)
 
-        if not self._tasks:
-            logger.info("No local streams configured. Waiting for shutdown signal.")
-        else:
-            logger.info("Supervising %d local stream task(s)", len(self._tasks))
-        await self._shutdown.wait()
-        await self._cancel_all()
+        refresh_task = asyncio.create_task(self._refresh_loop(), name="stream-refresh")
+        try:
+            await self._shutdown.wait()
+        finally:
+            refresh_task.cancel()
+            try:
+                await refresh_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            await self._cancel_all()
+
+    async def _refresh_loop(self) -> None:
+        """Periodically diff DB-configured streams against running tasks."""
+        while not self._shutdown.is_set():
+            try:
+                await asyncio.wait_for(self._shutdown.wait(), timeout=_STREAM_REFRESH_SECONDS)
+                return
+            except asyncio.TimeoutError:
+                pass
+            try:
+                await self._refresh_streams()
+            except Exception as exc:
+                logger.warning("stream refresh failed: %s", exc)
+
+    async def _refresh_streams(self, initial: bool = False) -> None:
+        rows = await asyncio.to_thread(self.db.list_streams)
+        desired: Dict[str, Dict[str, Any]] = {r["name"]: r for r in rows}
+
+        # Cancel tasks for streams that no longer exist.
+        removed = [n for n in self._stream_tasks if n not in desired]
+        for name in removed:
+            await self._stop_stream(name, reason="removed from DB")
+
+        added = 0
+        updated = 0
+        for name, row in desired.items():
+            sig = (row["stream_type"], row["config_json"])
+            running = self._stream_tasks.get(name)
+            if running is None or running.done():
+                self._start_stream(name, row)
+                added += 1
+                continue
+            if self._stream_config_sig.get(name) != sig:
+                await self._stop_stream(name, reason="config changed")
+                self._start_stream(name, row)
+                updated += 1
+
+        if initial:
+            logger.info("Supervising %d local stream task(s)", len(self._stream_tasks))
+        elif added or updated or removed:
+            logger.info(
+                "Stream refresh: +%d  ~%d  -%d  (running=%d)",
+                added, updated, len(removed), len(self._stream_tasks),
+            )
+
+    def _start_stream(self, name: str, row: Dict[str, Any]) -> None:
+        try:
+            stream = self._build_stream(row)
+        except Exception as exc:
+            logger.error(
+                "Failed to build stream %r (type=%s): %s",
+                name, row["stream_type"], exc,
+            )
+            return
+        task = asyncio.create_task(
+            self._run_stream(stream),
+            name=f"local-stream:{name}",
+        )
+        self._stream_tasks[name] = task
+        self._stream_config_sig[name] = (row["stream_type"], row["config_json"])
+
+    async def _stop_stream(self, name: str, *, reason: str) -> None:
+        task = self._stream_tasks.pop(name, None)
+        self._stream_config_sig.pop(name, None)
+        if task is None or task.done():
+            return
+        logger.info("Stopping stream %r (%s)", name, reason)
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
 
     def _build_stream(self, row: Dict[str, Any]) -> Stream:
         extra: Dict[str, Any] = {}
@@ -182,13 +248,16 @@ class LocalMonitor:
         self._shutdown.set()
 
     async def _cancel_all(self) -> None:
-        for task in self._tasks:
+        tasks = list(self._stream_tasks.values())
+        for task in tasks:
             task.cancel()
-        for task in self._tasks:
+        for task in tasks:
             try:
                 await task
             except (asyncio.CancelledError, Exception):
                 pass
+        self._stream_tasks.clear()
+        self._stream_config_sig.clear()
         if self.scorer is not None:
             await self.scorer.stop()
 
