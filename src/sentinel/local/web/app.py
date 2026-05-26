@@ -154,6 +154,11 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
             },
         )
 
+    @app.route("/live")
+    def live_page():
+        """Real-time multi-source traffic monitor."""
+        return render_template("live.html")
+
     @app.route("/alerts")
     def alerts_page():
         """Recent items the classifier flagged as IMPORTANT."""
