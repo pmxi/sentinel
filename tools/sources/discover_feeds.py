@@ -5,7 +5,7 @@ Per source, in order:
   2. If no links found, probe common paths (/feed, /rss, /feed.xml, /atom.xml, /index.xml)
   3. Optionally fall back to Media Cloud feed_list (one API call per source)
 
-A candidate URL is only persisted to sources.source_feeds after a fetch
+A candidate URL is only persisted to sources.source_feed after a fetch
 returns a body that feedparser can parse as RSS / Atom / RDF.
 
 Usage:
@@ -296,7 +296,7 @@ class MediacloudFeedFetcher:
 
 
 UPSERT_SQL = """
-INSERT INTO source_feeds
+INSERT INTO source_feed
     (source_id, feed_url, kind, discovered_via, http_status, title,
      latest_entry_date, entries_seen, etag, last_modified,
      last_checked_at, last_ok_at, error)
@@ -314,7 +314,7 @@ ON CONFLICT(source_id, feed_url) DO UPDATE SET
     etag = excluded.etag,
     last_modified = excluded.last_modified,
     last_checked_at = excluded.last_checked_at,
-    last_ok_at = COALESCE(excluded.last_ok_at, source_feeds.last_ok_at),
+    last_ok_at = COALESCE(excluded.last_ok_at, source_feed.last_ok_at),
     error = excluded.error
 """
 
@@ -343,7 +343,7 @@ def select_sources(conn, args) -> list[tuple[int, str]]:
         if args.domains:
             cur.execute(
                 """
-                SELECT id, canonical_domain, homepage FROM sources
+                SELECT id, canonical_domain, homepage FROM source
                 WHERE canonical_domain = ANY(%s)
                   AND homepage IS NOT NULL
                 ORDER BY stories_per_week DESC NULLS LAST
@@ -353,7 +353,7 @@ def select_sources(conn, args) -> list[tuple[int, str]]:
         else:
             cur.execute(
                 """
-                SELECT id, canonical_domain, homepage FROM sources
+                SELECT id, canonical_domain, homepage FROM source
                 WHERE homepage IS NOT NULL
                   AND canonical_domain IS NOT NULL
                   AND stories_per_week >= %s
@@ -384,7 +384,7 @@ async def main_async(args) -> int:
 
     started_at = _now_iso()
     row = conn.execute(
-        "INSERT INTO feed_discovery_runs (started_at) VALUES (%s) RETURNING id",
+        "INSERT INTO feed_discovery_run (started_at) VALUES (%s) RETURNING id",
         (started_at,),
     ).fetchone()
     run_id = row["id"]
@@ -444,7 +444,7 @@ async def main_async(args) -> int:
                 total_feeds += 1
 
     conn.execute(
-        "UPDATE feed_discovery_runs SET finished_at=%s, sources_checked=%s, "
+        "UPDATE feed_discovery_run SET finished_at=%s, sources_checked=%s, "
         "feeds_found=%s, mediacloud_fallbacks=%s WHERE id=%s",
         (_now_iso(), len(sources), total_feeds, mc_fallback_count, run_id),
     )

@@ -16,10 +16,10 @@ class LocalRuntimeService:
     def dashboard_snapshot(self) -> Dict[str, Any]:
         last_check = self.db.get_last_check_time()
         return {
-            "processed_count": self.db.get_processed_count(),
+            "processed_count": self.db.event_count(),
             "last_check": last_check,
             "monitoring_start": self.db.get_monitoring_start_time(),
-            "recent": self.db.recent_processed_items(limit=25),
+            "recent": self.db.recent_events(limit=25),
             "streams_count": len(self.db.list_streams()),
             "health": daemon_health(last_check),
         }

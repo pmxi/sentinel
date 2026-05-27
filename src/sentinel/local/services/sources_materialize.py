@@ -1,8 +1,8 @@
 """Materialize Media Cloud catalog rows into runtime `streams`.
 
 Two source surfaces feed this command:
-  * `sources.source_sitemaps` (kind='news' by default) -> sitemap_news streams
-  * `sources.source_feeds`    (kind in {rss, atom, rdf}) -> rss streams
+  * `sources.source_sitemap` (kind='news' by default) -> sitemap_news streams
+  * `sources.source_feed`    (kind in {rss, atom, rdf}) -> rss streams
 
 A stable naming scheme keeps re-runs idempotent:
   * sitemap streams:  `src:<canonical_domain>[:<8-char-url-hash>]`
@@ -104,8 +104,8 @@ def _select_sitemap_candidates(conn: psycopg.Connection, flt: MaterializeFilter)
                 COALESCE(s.label, s.name, s.canonical_domain) AS publication_name,
                 s.primary_language,
                 s.pub_country
-            FROM sources.source_sitemaps ss
-            JOIN sources.sources s ON s.id = ss.source_id
+            FROM sources.source_sitemap ss
+            JOIN sources.source s ON s.id = ss.source_id
             WHERE ss.kind = ANY(%(kinds)s)
               AND ss.fresh_entries_24h >= %(min_fresh)s
               AND s.canonical_domain IS NOT NULL
@@ -151,8 +151,8 @@ def _select_feed_candidates(conn: psycopg.Connection, flt: MaterializeFilter) ->
                 COALESCE(sf.title, s.label, s.name, s.canonical_domain) AS publication_name,
                 s.primary_language,
                 s.pub_country
-            FROM sources.source_feeds sf
-            JOIN sources.sources s ON s.id = sf.source_id
+            FROM sources.source_feed sf
+            JOIN sources.source s ON s.id = sf.source_id
             WHERE sf.kind IN ('rss', 'atom', 'rdf')
               AND s.canonical_domain IS NOT NULL
               AND (%(language)s::text IS NULL OR s.primary_language = %(language)s)
@@ -215,7 +215,7 @@ def _config_payload(c: Candidate) -> str:
 def _existing_managed(conn: psycopg.Connection, prefixes: tuple[str, ...]) -> dict[str, dict[str, str]]:
     with conn.cursor(row_factory=dict_row) as cur:
         sql = " UNION ALL ".join(
-            "SELECT name, stream_type, config_json FROM streams WHERE name LIKE %s"
+            "SELECT name, stream_type, config_json::text AS config_json FROM stream WHERE name LIKE %s"
             for _ in prefixes
         )
         cur.execute(sql, [p + "%" for p in prefixes])
@@ -283,17 +283,17 @@ def apply(conn: psycopg.Connection, result: MaterializeResult) -> None:
         if upsert_params:
             cur.executemany(
                 """
-                INSERT INTO streams (name, stream_type, config_json, updated_at)
-                VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                INSERT INTO stream (name, stream_type, config_json, updated_at)
+                VALUES (%s, %s, %s::jsonb, NOW())
                 ON CONFLICT(name) DO UPDATE SET
                     stream_type = excluded.stream_type,
                     config_json = excluded.config_json,
-                    updated_at  = CURRENT_TIMESTAMP
+                    updated_at  = NOW()
                 """,
                 upsert_params,
             )
         if result.to_prune:
-            cur.executemany("DELETE FROM streams WHERE name = %s",
+            cur.executemany("DELETE FROM stream WHERE name = %s",
                             [(name,) for name in result.to_prune])
 
 

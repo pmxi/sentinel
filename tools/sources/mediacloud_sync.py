@@ -5,7 +5,7 @@ Usage:
         uv run python -m tools.sources.mediacloud_sync
 
 Pulls every collection (~1.7k) and every source (~1M) and upserts them
-into sources.collections / sources.sources. Idempotent: a fresh run
+into sources.collection / sources.source. Idempotent: a fresh run
 replaces row contents but preserves stable upstream ids.
 Source<->collection membership is intentionally not synced in v1
 (see README).
@@ -73,10 +73,10 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _bool_to_int(value: Any) -> int | None:
+def _as_bool(value: Any) -> bool | None:
     if value is None:
         return None
-    return 1 if value else 0
+    return bool(value)
 
 
 def _project_collection(c: dict[str, Any], now: str) -> tuple:
@@ -86,10 +86,10 @@ def _project_collection(c: dict[str, Any], now: str) -> tuple:
         c.get("notes"),
         c.get("platform"),
         c.get("source_count"),
-        _bool_to_int(c.get("public")),
-        _bool_to_int(c.get("featured")),
-        _bool_to_int(c.get("managed")),
-        _bool_to_int(c.get("monitored")),
+        _as_bool(c.get("public")),
+        _as_bool(c.get("featured")),
+        _as_bool(c.get("managed")),
+        _as_bool(c.get("monitored")),
         c.get("modified_at"),
         now,
     )
@@ -111,7 +111,7 @@ def _project_source(s: dict[str, Any], now: str) -> tuple:
         s.get("stories_per_week"),
         s.get("stories_total"),
         s.get("collection_count"),
-        _bool_to_int(s.get("monitored")),
+        _as_bool(s.get("monitored")),
         s.get("last_story"),
         s.get("created_at"),
         s.get("modified_at"),
@@ -138,7 +138,7 @@ def _upsert(conn: psycopg.Connection, table: str, columns: tuple[str, ...], rows
 def sync_collections(conn: psycopg.Connection, client: MediacloudClient) -> int:
     now = _now_iso()
     rows = [_project_collection(c, now) for c in client.iter_collections()]
-    n = _upsert(conn, "collections", COLLECTION_COLUMNS, rows)
+    n = _upsert(conn, "collection", COLLECTION_COLUMNS, rows)
     logger.info("synced %d collections", n)
     return n
 
@@ -151,13 +151,13 @@ def sync_sources(conn: psycopg.Connection, client: MediacloudClient) -> int:
     for s in client.iter_sources():
         batch.append(_project_source(s, now))
         if len(batch) >= BATCH_SIZE:
-            _upsert(conn, "sources", SOURCE_COLUMNS, batch)
+            _upsert(conn, "source", SOURCE_COLUMNS, batch)
             total += len(batch)
             batch.clear()
             if total % PROGRESS_INTERVAL == 0 or total < PROGRESS_INTERVAL:
                 logger.info("synced %d sources so far...", total)
     if batch:
-        _upsert(conn, "sources", SOURCE_COLUMNS, batch)
+        _upsert(conn, "source", SOURCE_COLUMNS, batch)
         total += len(batch)
     logger.info("synced %d sources total", total)
     return total
@@ -165,14 +165,14 @@ def sync_sources(conn: psycopg.Connection, client: MediacloudClient) -> int:
 
 def print_summary(conn: psycopg.Connection) -> None:
     with conn.cursor() as cur:
-        cur.execute("SELECT COUNT(*) AS c FROM collections")
+        cur.execute("SELECT COUNT(*) AS c FROM collection")
         n_coll = cur.fetchone()["c"]
-        cur.execute("SELECT COUNT(*) AS c FROM sources")
+        cur.execute("SELECT COUNT(*) AS c FROM source")
         n_src = cur.fetchone()["c"]
-        cur.execute("SELECT COUNT(*) AS c FROM sources WHERE stories_per_week IS NOT NULL")
+        cur.execute("SELECT COUNT(*) AS c FROM source WHERE stories_per_week IS NOT NULL")
         n_with_volume = cur.fetchone()["c"]
         cur.execute(
-            "SELECT COUNT(DISTINCT canonical_domain) AS c FROM sources "
+            "SELECT COUNT(DISTINCT canonical_domain) AS c FROM source "
             "WHERE canonical_domain IS NOT NULL"
         )
         n_dedup_domains = cur.fetchone()["c"]
@@ -184,7 +184,7 @@ def print_summary(conn: psycopg.Connection) -> None:
         print()
         print("Top 10 languages by source count:")
         cur.execute(
-            "SELECT primary_language AS k, COUNT(*) AS c FROM sources "
+            "SELECT primary_language AS k, COUNT(*) AS c FROM source "
             "WHERE primary_language IS NOT NULL "
             "GROUP BY primary_language ORDER BY c DESC LIMIT 10"
         )
@@ -193,7 +193,7 @@ def print_summary(conn: psycopg.Connection) -> None:
         print()
         print("Top 10 countries by source count:")
         cur.execute(
-            "SELECT pub_country AS k, COUNT(*) AS c FROM sources "
+            "SELECT pub_country AS k, COUNT(*) AS c FROM source "
             "WHERE pub_country IS NOT NULL "
             "GROUP BY pub_country ORDER BY c DESC LIMIT 10"
         )
@@ -223,7 +223,7 @@ def main() -> int:
 
     started_at = _now_iso()
     row = conn.execute(
-        "INSERT INTO sync_runs (started_at) VALUES (%s) RETURNING id",
+        "INSERT INTO sync_run (started_at) VALUES (%s) RETURNING id",
         (started_at,),
     ).fetchone()
     run_id = row["id"]
@@ -241,7 +241,7 @@ def main() -> int:
         raise
     finally:
         conn.execute(
-            "UPDATE sync_runs SET finished_at=%s, collections_synced=%s, "
+            "UPDATE sync_run SET finished_at=%s, collections_synced=%s, "
             "sources_synced=%s, error=%s WHERE id=%s",
             (_now_iso(), n_coll, n_src, error, run_id),
         )

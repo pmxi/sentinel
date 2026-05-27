@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import queue
 import secrets
 import threading
@@ -133,7 +134,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
             else:
                 db = open_db()
                 try:
-                    cursor = db.latest_live_event_id()
+                    cursor = db.latest_event_id()
                 finally:
                     db.close()
         except (ValueError, TypeError):
@@ -173,64 +174,51 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         db = open_db()
         try:
             with db.conn.cursor() as cur:
-                cur.execute("SELECT MAX(id) FROM live_events")
-                row = cur.fetchone()
-                max_id = (row["max"] if isinstance(row, dict) else row[0]) or 0
-                # Look at a relatively wide id window so a quiet hour
-                # doesn't blank the page.
-                low_id = max(0, max_id - 200000)
                 where_pri = "" if priority_filter == "all" else (
-                    f"AND payload_json::jsonb ->> 'priority' = '{priority_filter}'"
+                    "AND c.priority = %s"
                 )
+                params: list[Any] = []
+                if priority_filter != "all":
+                    params.append(priority_filter)
+                params.append(limit)
                 cur.execute(
                     f"""
                     SELECT
-                        id,
-                        created_at,
-                        payload_json::jsonb ->> 'priority'      AS priority,
-                        payload_json::jsonb ->> 'source_type'   AS source_type,
-                        payload_json::jsonb ->> 'stream_name'   AS stream_name,
-                        payload_json::jsonb ->> 'title'         AS title,
-                        payload_json::jsonb ->> 'url'           AS url,
-                        payload_json::jsonb ->> 'summary'       AS summary,
-                        payload_json::jsonb ->> 'reasoning'     AS reasoning
-                    FROM live_events
-                    WHERE id > %s
-                      AND event_type = 'item_classified'
-                      {where_pri}
-                    ORDER BY id DESC
+                        e.id,
+                        c.classified_at        AS created_at,
+                        c.priority             AS priority,
+                        e.source_type          AS source_type,
+                        e.stream_name          AS stream_name,
+                        e.title                AS title,
+                        e.url                  AS url,
+                        c.summary              AS summary,
+                        c.reasoning            AS reasoning
+                    FROM classification c
+                    JOIN event e ON e.id = c.event_id
+                    WHERE TRUE {where_pri}
+                    ORDER BY c.classified_at DESC
                     LIMIT %s
                     """,
-                    (low_id, limit),
+                    params,
                 )
                 rows = cur.fetchall()
 
-                # Summary stats over the same window
                 cur.execute(
-                    """
-                    SELECT
-                        payload_json::jsonb ->> 'priority' AS priority,
-                        COUNT(*)
-                    FROM live_events
-                    WHERE id > %s AND event_type = 'item_classified'
-                    GROUP BY 1
-                    """,
-                    (low_id,),
+                    "SELECT priority, COUNT(*) AS c FROM classification GROUP BY 1"
                 )
-                counts = {r[0] if isinstance(r, tuple) else r["priority"]:
-                          r[1] if isinstance(r, tuple) else r["count"]
-                          for r in cur.fetchall()}
+                counts = {
+                    (r["priority"] if isinstance(r, dict) else r[0]):
+                    (r["c"] if isinstance(r, dict) else r[1])
+                    for r in cur.fetchall()
+                }
         finally:
             db.close()
 
-        items = []
-        for r in rows:
-            d = r if isinstance(r, dict) else {
-                "id": r[0], "created_at": r[1], "priority": r[2],
-                "source_type": r[3], "stream_name": r[4],
-                "title": r[5], "url": r[6], "summary": r[7], "reasoning": r[8],
-            }
-            items.append(d)
+        items = [dict(r) if isinstance(r, dict) else {
+            "id": r[0], "created_at": r[1], "priority": r[2],
+            "source_type": r[3], "stream_name": r[4],
+            "title": r[5], "url": r[6], "summary": r[7], "reasoning": r[8],
+        } for r in rows]
 
         return render_template(
             "alerts.html",
@@ -257,31 +245,28 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         db = open_db()
         try:
             with db.conn.cursor() as cur:
-                cur.execute("SELECT MAX(id) FROM live_events")
+                cur.execute("SELECT MAX(id) FROM event")
                 row = cur.fetchone()
                 max_id = (row["max"] if isinstance(row, dict) else row[0]) or 0
                 low_id = max(0, max_id - window)
                 cur.execute(
                     """
                     SELECT
-                        payload_json::jsonb ->> 'stream_name'  AS stream,
-                        payload_json::jsonb ->> 'source_type'  AS source_type,
-                        MAX(created_at)                        AS last_seen,
-                        MIN(created_at)                        AS first_seen,
-                        COUNT(*)                               AS n
-                    FROM live_events
+                        stream_name              AS stream,
+                        source_type,
+                        MAX(observed_at)         AS last_seen,
+                        MIN(observed_at)         AS first_seen,
+                        COUNT(*)                 AS n
+                    FROM event
                     WHERE id > %s
-                      AND event_type = 'item_received'
                     GROUP BY 1, 2
                     ORDER BY n DESC
                     """,
                     (low_id,),
                 )
                 rows = cur.fetchall()
-                # Total emissions in window for context
                 cur.execute(
-                    "SELECT COUNT(*) AS c FROM live_events WHERE id > %s AND event_type = 'item_received'",
-                    (low_id,),
+                    "SELECT COUNT(*) AS c FROM event WHERE id > %s", (low_id,),
                 )
                 total_row = cur.fetchone()
                 total = (total_row["c"] if isinstance(total_row, dict) else total_row[0]) or 0
@@ -581,6 +566,34 @@ def _maybe_start_embedded_monitor(app: Flask) -> Optional[LiveEventBus]:
     return bus
 
 
+def _row_to_sse_payload(row: Dict[str, Any]) -> tuple[str, str]:
+    """Render an event row (LEFT JOINed with classification) into the
+    (event_type, payload_json) pair the SSE client expects. If the row
+    has classification fields populated we send item_classified;
+    otherwise item_received."""
+    payload: Dict[str, Any] = {
+        "source_type": row.get("source_type"),
+        "item_id": row.get("item_id"),
+        "stream_name": row.get("stream_name"),
+        "title": row.get("title"),
+        "body": row.get("body"),
+        "url": row.get("url"),
+        "author": row.get("author"),
+        "received_at": row.get("received_at").isoformat() if row.get("received_at") else None,
+        "score": row.get("score"),
+    }
+    if row.get("priority"):
+        payload.update({
+            "priority": row.get("priority"),
+            "summary": row.get("summary") or "",
+            "reasoning": row.get("reasoning"),
+        })
+        event_type = "item_classified"
+    else:
+        event_type = "item_received"
+    return event_type, json.dumps(payload, default=str)
+
+
 def _sse_push_loop(database_url: str, cursor: int, bus: LiveEventBus):
     def generate():
         nonlocal cursor
@@ -591,11 +604,12 @@ def _sse_push_loop(database_url: str, cursor: int, bus: LiveEventBus):
             db = LocalDatabase(database_url)
             try:
                 while True:
-                    rows = db.fetch_live_events_since(cursor, limit=200)
+                    rows = db.fetch_events_since(cursor, limit=200)
                     if rows:
                         for row in rows:
                             cursor = int(row["id"])
-                            yield _sse_frame(cursor, row["event_type"], row["payload_json"])
+                            event_type, payload = _row_to_sse_payload(row)
+                            yield _sse_frame(cursor, event_type, payload)
                         heartbeat_countdown = 30
                         continue
 
@@ -629,11 +643,12 @@ def _sse_poll_loop(database_url: str, cursor: int):
         db = LocalDatabase(database_url)
         try:
             while True:
-                rows = db.fetch_live_events_since(cursor, limit=200)
+                rows = db.fetch_events_since(cursor, limit=200)
                 if rows:
                     for row in rows:
                         cursor = int(row["id"])
-                        yield _sse_frame(cursor, row["event_type"], row["payload_json"])
+                        event_type, payload = _row_to_sse_payload(row)
+                        yield _sse_frame(cursor, event_type, payload)
                     heartbeat_countdown = 30
                 else:
                     heartbeat_countdown -= 1

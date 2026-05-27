@@ -1,5 +1,5 @@
 """Walk robots.txt and sitemap indexes for sources from sources.db,
-recording validated Google News sitemap URLs in source_sitemaps.
+recording validated Google News sitemap URLs in source_sitemap.
 
 Classification is content-based, not URL-pattern based: a candidate is a
 "news" sitemap iff its body parses as a urlset *and* contains at least
@@ -278,7 +278,7 @@ def _row(
 
 
 UPSERT_SQL = """
-INSERT INTO source_sitemaps
+INSERT INTO source_sitemap
     (source_id, sitemap_url, kind, discovered_via, http_status, fresh_entries_24h,
      latest_pub_date, etag, last_modified, last_checked_at, last_ok_at, error)
 VALUES
@@ -294,7 +294,7 @@ ON CONFLICT(source_id, sitemap_url) DO UPDATE SET
     etag=excluded.etag,
     last_modified=excluded.last_modified,
     last_checked_at=excluded.last_checked_at,
-    last_ok_at=COALESCE(excluded.last_ok_at, source_sitemaps.last_ok_at),
+    last_ok_at=COALESCE(excluded.last_ok_at, source_sitemap.last_ok_at),
     error=excluded.error
 """
 
@@ -304,7 +304,7 @@ def select_sources(conn, args) -> list[tuple[int, str]]:
         if args.domains:
             cur.execute(
                 """
-                SELECT id, canonical_domain FROM sources
+                SELECT id, canonical_domain FROM source
                 WHERE canonical_domain = ANY(%s)
                   AND stories_per_week IS NOT NULL
                 ORDER BY stories_per_week DESC
@@ -314,7 +314,7 @@ def select_sources(conn, args) -> list[tuple[int, str]]:
         else:
             cur.execute(
                 """
-                SELECT id, canonical_domain FROM sources
+                SELECT id, canonical_domain FROM source
                 WHERE canonical_domain IS NOT NULL
                   AND stories_per_week >= %s
                 ORDER BY stories_per_week DESC
@@ -343,7 +343,7 @@ async def main_async(args) -> int:
 
     started_at = _now_iso()
     row = conn.execute(
-        "INSERT INTO discovery_runs (started_at) VALUES (%s) RETURNING id",
+        "INSERT INTO discovery_run (started_at) VALUES (%s) RETURNING id",
         (started_at,),
     ).fetchone()
     run_id = row["id"]
@@ -397,7 +397,7 @@ async def main_async(args) -> int:
     sources_with_news = len({r["source_id"] for r in all_rows if r["kind"] == "news" and r["fresh_entries_24h"] > 0})
 
     conn.execute(
-        "UPDATE discovery_runs SET finished_at=%s, sources_checked=%s, "
+        "UPDATE discovery_run SET finished_at=%s, sources_checked=%s, "
         "news_sitemaps_found=%s WHERE id=%s",
         (_now_iso(), len(sources), n_news_fresh, run_id),
     )

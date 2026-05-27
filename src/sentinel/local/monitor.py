@@ -391,6 +391,11 @@ class LocalItemProcessor:
 
 
 class _LocalProcessedItemStore(ProcessedItemStore):
+    """Dedup is now a UNIQUE constraint on `event(source_type,item_id)`.
+    is_processed() is the existence check; mark_processed() is a no-op
+    because the row already exists by the time we get here (the
+    observer's batched insert is what created it)."""
+
     def __init__(self, db: LocalDatabase):
         self.db = db
 
@@ -398,81 +403,118 @@ class _LocalProcessedItemStore(ProcessedItemStore):
         return await asyncio.to_thread(self.db.is_item_processed, item.source_type, item.id)
 
     async def mark_processed(self, item: Item) -> None:
-        await asyncio.to_thread(
-            self.db.mark_item_processed,
-            item.source_type,
-            item.id,
-            item.title,
-            item.author,
-            str(item.metadata.get("stream_name", "")) if item.metadata else "",
-        )
+        # No-op: event row already exists. We keep the method on the
+        # Protocol because the shared ItemProcessor calls it after a
+        # successful classification, but there's nothing to write here.
+        return None
+
+
+# Bluesky bodies often duplicate the title verbatim; storing both wastes
+# space without information gain.
+def _effective_body(item: Item) -> Optional[str]:
+    body = (item.body or "").strip()
+    title = (item.title or "").strip()
+    if not body or body == title:
+        return None
+    return body
 
 
 class _LocalProcessingObserver(ProcessingObserver):
-    """Async batching writer for live_events.
+    """Async batched writer for event + classification.
 
-    Per-row INSERT through a single shared connection serializes through
-    the connection lock and caps throughput at single-digit writes/sec
-    once thousands of streams contend. We instead accept events into an
-    asyncio.Queue, drain in batches of up to BATCH_MAX or every
-    BATCH_INTERVAL_S, and flush via a single multi-row INSERT...VALUES
-    RETURNING id call.
+    item_received  -> insert into event (also creates the dedup row)
+    item_classified -> insert into classification
+    item_failed     -> insert into classification_failure
 
-    The bus.publish step uses the DB-assigned id once the batch returns.
+    Item-received uses a batched multi-row INSERT through a 50k-bounded
+    asyncio.Queue. Drops events on overflow rather than blocking the
+    supervising stream tasks. Producers do not see back-pressure.
+
+    Classifications are written one at a time — they're rare relative
+    to the firehose, so batching them isn't worth the complexity.
     """
 
     BATCH_MAX = 500
     BATCH_INTERVAL_S = 0.25
-    # Bound the queue. At sustained high item rates, an unbounded queue
-    # consumes memory faster than we can drain. We prefer dropping events
-    # (with a log) over OOMing the supervisor.
     QUEUE_MAX = 50_000
 
     def __init__(self, db: LocalDatabase, bus: Optional[LiveEventBus]):
         self.db = db
         self.bus = bus
-        self._queue: "asyncio.Queue[tuple[str, str]]" = asyncio.Queue(maxsize=self.QUEUE_MAX)
+        # The queue holds (Item, score) tuples. We resolve to event_id
+        # only after the bulk insert returns.
+        self._queue: "asyncio.Queue[tuple[Item, Optional[float]]]" = asyncio.Queue(maxsize=self.QUEUE_MAX)
+        # event_id -> Item lookup used by item_classified events that
+        # arrive before our SSE bus sees the matching event_received.
+        # We don't keep this in memory long: the bus already does its
+        # own correlation client-side via item_id.
         self._task: Optional[asyncio.Task] = None
         self._dropped: int = 0
         self._last_dropped_log: float = 0.0
 
     def _ensure_started(self) -> None:
         if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._flush_loop(), name="live-events-batcher")
+            self._task = asyncio.create_task(self._flush_loop(), name="event-batcher")
 
     async def publish(self, event: ProcessingEvent) -> None:
-        # Build the payload on the event-loop thread (no IO). Enqueue and
-        # return immediately — DB writes happen in the background batcher.
-        payload = _item_event_payload(event.item)
-        if event.classification is not None:
-            payload.update(
-                {
-                    "priority": event.classification.priority.value,
-                    "summary": event.classification.summary or "",
-                    "reasoning": event.classification.reasoning,
-                }
-            )
-        if event.error:
-            payload["error"] = event.error
-        # Strip NUL chars from JSON output: Postgres jsonb rejects them
-        # and some Bluesky posts include literal NUL bytes which propagate
-        # through json.dumps as escaped sequences. Keeps later jsonb casts safe.
-        payload_json = json.dumps(payload).replace("\\u0000", "")
-        if chr(0) in payload_json:
-            payload_json = payload_json.replace(chr(0), "")
-
+        """Dispatch by event_type. Only item_received enters the batched
+        path; classification + failure write directly (low rate)."""
         self._ensure_started()
-        # Drop on overflow rather than block. Producers must not be
-        # back-pressured — a blocked publish stalls the supervising stream
-        # tasks and cascades. Log dropped counts at most once per 10s.
-        try:
-            self._queue.put_nowait((event.event_type, payload_json))
-        except asyncio.QueueFull:
-            self._dropped += 1
-            now = asyncio.get_running_loop().time()
-            if now - self._last_dropped_log > 10:
-                logger.warning("live_events queue full; dropped %d events so far", self._dropped)
-                self._last_dropped_log = now
+        if event.event_type == "item_received":
+            score = (event.item.metadata or {}).get("_classifier_score")
+            try:
+                self._queue.put_nowait((event.item, score))
+            except asyncio.QueueFull:
+                self._dropped += 1
+                now = asyncio.get_running_loop().time()
+                if now - self._last_dropped_log > 10:
+                    logger.warning("event queue full; dropped %d so far", self._dropped)
+                    self._last_dropped_log = now
+        elif event.event_type == "item_classified" and event.classification is not None:
+            await asyncio.to_thread(self._record_classification, event)
+        elif event.event_type == "item_failed" and event.error:
+            await asyncio.to_thread(self._record_failure, event)
+
+    def _record_classification(self, ev: ProcessingEvent) -> None:
+        # Look up the event_id by (source_type, item_id). The earlier
+        # insert_event call already established the row.
+        with self.db._lock:
+            row = self.db.conn.execute(
+                "SELECT id FROM event WHERE source_type=%s AND item_id=%s",
+                (ev.item.source_type, ev.item.id),
+            ).fetchone()
+        if not row:
+            return  # event got pruned or the insert was dropped
+        event_id = int(row["id"])
+        c = ev.classification
+        if c is None:
+            return
+        self.db.insert_classification(
+            event_id=event_id,
+            priority=c.priority.value,
+            summary=c.summary,
+            reasoning=c.reasoning,
+            model=_model_name_for_log(),
+        )
+        if self.bus is not None:
+            payload = _classification_payload(ev.item, c)
+            self.bus.publish(
+                LiveEvent(
+                    event_id=event_id,
+                    event_type="item_classified",
+                    payload_json=_safe_json(payload),
+                )
+            )
+
+    def _record_failure(self, ev: ProcessingEvent) -> None:
+        with self.db._lock:
+            row = self.db.conn.execute(
+                "SELECT id FROM event WHERE source_type=%s AND item_id=%s",
+                (ev.item.source_type, ev.item.id),
+            ).fetchone()
+        if not row:
+            return
+        self.db.insert_classification_failure(int(row["id"]), ev.error or "")
 
     async def _flush_loop(self) -> None:
         while True:
@@ -480,27 +522,47 @@ class _LocalProcessingObserver(ProcessingObserver):
                 batch = await self._drain_one_batch()
                 if not batch:
                     continue
-                ids = await asyncio.to_thread(
-                    self.db.emit_live_events_bulk, batch
-                )
+                rows = [
+                    {
+                        "source_type": item.source_type,
+                        "item_id": item.id,
+                        "stream_name": (item.metadata or {}).get("stream_name", "") or "",
+                        "title": item.title or "(no title)",
+                        "body": _effective_body(item),
+                        "url": item.url,
+                        "author": item.author or None,
+                        "received_at": item.received_at,
+                        "score": score,
+                        "metadata": _filter_metadata(item.metadata),
+                    }
+                    for item, score in batch
+                ]
+                ids = await asyncio.to_thread(self.db.insert_events_bulk, rows)
                 if self.bus is not None:
-                    for (event_type, payload_json), event_id in zip(batch, ids):
+                    # Bulk insert skips dedup hits; ids length may be < batch.
+                    # We don't try to correlate position-by-position — the bus
+                    # is best-effort for live UI. Just publish whatever
+                    # actually landed.
+                    n = min(len(ids), len(batch))
+                    for i in range(n):
+                        item, _score = batch[i]
+                        payload = _item_received_payload(item)
                         self.bus.publish(
                             LiveEvent(
-                                event_id=event_id,
-                                event_type=event_type,
-                                payload_json=payload_json,
+                                event_id=ids[i],
+                                event_type="item_received",
+                                payload_json=_safe_json(payload),
                             )
                         )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                logger.exception("live-events batch flush failed: %s", exc)
+                logger.exception("event batch flush failed: %s", exc)
                 await asyncio.sleep(0.5)
 
-    async def _drain_one_batch(self) -> List[tuple[str, str]]:
+    async def _drain_one_batch(self) -> List[tuple[Item, Optional[float]]]:
         first = await self._queue.get()
-        batch: List[tuple[str, str]] = [first]
+        batch: List[tuple[Item, Optional[float]]] = [first]
         deadline = asyncio.get_running_loop().time() + self.BATCH_INTERVAL_S
         while len(batch) < self.BATCH_MAX:
             remaining = deadline - asyncio.get_running_loop().time()
@@ -513,6 +575,52 @@ class _LocalProcessingObserver(ProcessingObserver):
         return batch
 
 
+_RESERVED_METADATA_KEYS = {"stream_name", "_classifier_score", "skip_classification"}
+
+
+def _filter_metadata(md: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    if not md:
+        return None
+    out = {k: v for k, v in md.items() if k not in _RESERVED_METADATA_KEYS}
+    return out or None
+
+
+def _safe_json(payload: Dict[str, Any]) -> str:
+    """json.dumps, then strip NUL bytes (some Bluesky posts contain them)."""
+    s = json.dumps(payload, default=str)
+    return s.replace("\\u0000", "").replace(chr(0), "") if (chr(0) in s or "\\u0000" in s) else s
+
+
+def _model_name_for_log() -> str:
+    return settings.LLM_MODEL or "unknown"
+
+
+def _item_received_payload(item: Item) -> Dict[str, Any]:
+    md = item.metadata or {}
+    return {
+        "source_type": item.source_type,
+        "item_id": item.id,
+        "stream_name": md.get("stream_name", ""),
+        "title": item.title,
+        "body": _effective_body(item),
+        "url": item.url,
+        "author": item.author,
+        "received_at": item.received_at.isoformat() if item.received_at else None,
+        "score": md.get("_classifier_score"),
+    }
+
+
+def _classification_payload(item: Item, c) -> Dict[str, Any]:
+    p = _item_received_payload(item)
+    p.update({
+        "priority": c.priority.value,
+        "summary": c.summary or "",
+        "reasoning": c.reasoning,
+    })
+    return p
+
+
+# Kept for any callers that imported it before the refactor.
 def _item_event_payload(item: Item) -> Dict[str, Any]:
     return {
         "source_type": item.source_type,
