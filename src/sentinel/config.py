@@ -28,10 +28,6 @@ class LocalSettings:
     LLM_API_KEY: str | None = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-5.4")
 
-    RESEND_API_KEY: str | None = os.getenv("RESEND_API_KEY")
-    EMAIL_FROM_ADDRESS: str | None = os.getenv("EMAIL_FROM_ADDRESS")
-    EMAIL_FROM_NAME: str = os.getenv("EMAIL_FROM_NAME", "")
-
     TELEGRAM_BOT_TOKEN: str | None = os.getenv("TELEGRAM_BOT_TOKEN")
     TELEGRAM_BOT_USERNAME: str | None = os.getenv("TELEGRAM_BOT_USERNAME")
 

@@ -11,7 +11,6 @@ from sentinel.database import LocalDatabase
 class LocalPreferences:
     TELEGRAM_CHAT_ID: str = ""
     CLASSIFICATION_NOTES: str = ""
-    EMAIL_NOTIFICATION_TO: str = ""
 
     @classmethod
     def load(cls, db: LocalDatabase) -> "LocalPreferences":
@@ -32,13 +31,6 @@ class LocalPreferencesService:
 
     def load(self) -> LocalPreferences:
         return LocalPreferences.load(self.db)
-
-    def save_email_notification_to(self, address: str) -> None:
-        address = address.strip()
-        if address:
-            self.db.set_local_setting("EMAIL_NOTIFICATION_TO", address)
-        else:
-            self.db.delete_local_setting("EMAIL_NOTIFICATION_TO")
 
     def save_classification_notes(self, notes: str) -> None:
         if notes.strip():

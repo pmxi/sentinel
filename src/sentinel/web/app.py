@@ -59,11 +59,6 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         db = open_db()
         try:
             service = LocalPreferencesService(db)
-            if request.method == "POST":
-                service.save_email_notification_to(
-                    request.form.get("EMAIL_NOTIFICATION_TO", "")
-                )
-                return redirect(url_for("preferences_page", saved=1))
             prefs = service.load()
         finally:
             db.close()
@@ -71,8 +66,6 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
             "preferences.html",
             telegram_chat_id=prefs.TELEGRAM_CHAT_ID,
             telegram_bot_username=settings.TELEGRAM_BOT_USERNAME,
-            email_notification_to=prefs.EMAIL_NOTIFICATION_TO,
-            saved=request.args.get("saved") == "1",
         )
 
     @app.route("/preferences/telegram/link", methods=["POST"])
