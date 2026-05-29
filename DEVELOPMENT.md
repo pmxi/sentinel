@@ -43,12 +43,12 @@ are separate processes sharing one DB.
 
 - [ ] **Phase 0 — Foundations**
   - [x] Roadmap doc (this file)
-  - [ ] Kill the interactive CLI; add `sentinel-web` / `sentinel-worker` entry
+  - [x] Kill the interactive CLI; add `sentinel-web` / `sentinel-worker` entry
         points; operator config from env
-  - [ ] Remove the dead Resend email-notification channel
-  - [ ] Rename `Local*` → tenant-neutral (`Database`, `Monitor`, `Settings`, …)
+  - [x] Remove the dead Resend email-notification channel
+  - [x] Rename `Local*` → tenant-neutral (`Database`, `Monitor`, `Settings`, …)
   - [ ] Register Google Cloud project + OAuth client; **start restricted-scope
-        verification** (long lead time — see external track)
+        verification** (long lead time — see external track) — *your task, non-code*
 - [ ] **Phase 1 — Multi-tenant data model**: `user` table; `user_id` FK on
       `stream`/`event`/`classification`; dedup `UNIQUE(item_id)` →
       `UNIQUE(user_id, item_id)`; per-user preferences/notes; encrypted Gmail
