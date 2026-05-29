@@ -197,7 +197,6 @@ class LocalDatabase:
         url: Optional[str],
         author: Optional[str],
         received_at: datetime,
-        score: Optional[float] = None,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Optional[int]:
         """Insert a new event. Returns its id, or None if (source_type, item_id)
@@ -207,13 +206,13 @@ class LocalDatabase:
             row = self.conn.execute(
                 """
                 INSERT INTO event (source_type, item_id, stream_name, title, body,
-                                   url, author, received_at, score, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                                   url, author, received_at, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
                 ON CONFLICT (source_type, item_id) DO NOTHING
                 RETURNING id
                 """,
                 (source_type, item_id, stream_name, title, body, url, author,
-                 received_at, score, metadata_json),
+                 received_at, metadata_json),
             ).fetchone()
         return int(row["id"]) if row else None
 
@@ -229,16 +228,16 @@ class LocalDatabase:
             params.append((
                 r["source_type"], r["item_id"], r["stream_name"], r["title"],
                 r.get("body"), r.get("url"), r.get("author"),
-                r["received_at"], r.get("score"),
+                r["received_at"],
                 json.dumps(md) if md else None,
             ))
-        placeholders = ",".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)"] * len(params))
+        placeholders = ",".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)"] * len(params))
         flat: List[Any] = [v for row in params for v in row]
         with self._lock:
             inserted = self.conn.execute(
                 f"""
                 INSERT INTO event (source_type, item_id, stream_name, title, body,
-                                   url, author, received_at, score, metadata)
+                                   url, author, received_at, metadata)
                 VALUES {placeholders}
                 ON CONFLICT (source_type, item_id) DO NOTHING
                 RETURNING id
@@ -277,7 +276,7 @@ class LocalDatabase:
                 """
                 SELECT e.id, e.source_type, e.item_id, e.stream_name, e.title,
                        e.body, e.url, e.author, e.received_at, e.observed_at,
-                       e.score, e.metadata,
+                       e.metadata,
                        c.priority, c.summary, c.reasoning, c.classified_at
                 FROM event e
                 LEFT JOIN classification c ON c.event_id = e.id

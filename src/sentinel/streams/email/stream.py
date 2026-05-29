@@ -17,7 +17,7 @@ from email.utils import parsedate_to_datetime
 from typing import AsyncIterator, Callable, List, Optional
 
 from sentinel.logging_config import get_logger
-from sentinel.streams.base import Item, Stream
+from sentinel.streams.base import Item
 from sentinel.streams.email.email_client_factory import EmailClientFactory
 from sentinel.streams.email.mail_config import MailAccountConfig
 from sentinel.streams.email.models import EmailData
@@ -31,7 +31,7 @@ logger = get_logger(__name__)
 _DEFAULT_POLL_SECONDS = 60
 
 
-class EmailStream(Stream):
+class EmailStream:
     source_type = "email"
 
     def __init__(
@@ -40,7 +40,7 @@ class EmailStream(Stream):
         config: MailAccountConfig,
         on_token_refreshed: Optional[Callable[[str], None]] = None,
     ):
-        super().__init__(name=name)
+        self.name = name
         self.config = config
         self.on_token_refreshed = on_token_refreshed
         self._cursor: datetime | None = None

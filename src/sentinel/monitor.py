@@ -6,7 +6,6 @@ import asyncio
 import json
 import signal
 import time
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from openai import (
@@ -21,11 +20,12 @@ from sentinel.logging_config import get_logger
 from sentinel.classifier import OpenAIItemClassifier
 from sentinel.notify import TelegramItemNotifier, TelegramNotifier
 from sentinel.processing import ItemProcessor, ProcessingEvent, ProcessingObserver, ProcessedItemStore
-from sentinel.streams import Item, Stream, build_stream, ensure_loaded
+from sentinel.streams import Item
+from sentinel.streams.email.mail_config import MailAccountConfig
+from sentinel.streams.email.stream import EmailStream
 from sentinel.config import settings
 from sentinel.database import LocalDatabase
 from sentinel.live_bus import LiveEvent, LiveEventBus
-from sentinel.scorer import BatchScorer, LocalTextScorer
 from sentinel.services.preferences import LocalPreferences
 from sentinel.services.streams import LocalStreamService
 from sentinel.telegram_bot import start_in_thread as start_telegram_listener
@@ -55,17 +55,12 @@ class LocalMonitor:
         database: LocalDatabase,
         bus: Optional[LiveEventBus] = None,
     ):
-        ensure_loaded()
         self.db = database
         self.bus = bus
         self.stream_service = LocalStreamService(database)
         self.classifier = OpenAIItemClassifier(
             api_key=settings.LLM_API_KEY or "",
             model=settings.LLM_MODEL,
-        )
-        local_scorer = LocalTextScorer.maybe_load(Path("artifacts/classifier-v1.joblib"))
-        self.scorer: Optional[BatchScorer] = (
-            BatchScorer(local_scorer) if local_scorer is not None else None
         )
         self._shutdown = asyncio.Event()
         # Live registry of running stream tasks.  Hot-reload diffs this
@@ -104,9 +99,6 @@ class LocalMonitor:
 
         if settings.TELEGRAM_BOT_TOKEN:
             start_telegram_listener(settings.require_database_url())
-
-        if self.scorer is not None:
-            await self.scorer.start()
 
         if self.db.get_monitoring_start_time() is None:
             self.db.set_monitoring_start_time(utc_now())
@@ -197,15 +189,12 @@ class LocalMonitor:
         except (asyncio.CancelledError, Exception):
             pass
 
-    def _build_stream(self, row: Dict[str, Any]) -> Stream:
-        extra: Dict[str, Any] = {}
-        if row["stream_type"] == "email":
-            extra["on_token_refreshed"] = lambda token_json, name=row["name"]: self.stream_service.persist_email_token(name, token_json)
-        return build_stream(
-            stream_type=row["stream_type"],
+    def _build_stream(self, row: Dict[str, Any]) -> EmailStream:
+        config = MailAccountConfig.model_validate_json(row["config_json"])
+        return EmailStream(
             name=row["name"],
-            config_json=row["config_json"],
-            **extra,
+            config=config,
+            on_token_refreshed=lambda token_json, name=row["name"]: self.stream_service.persist_email_token(name, token_json),
         )
 
     def _get_preferences(self) -> LocalPreferences:
@@ -216,7 +205,7 @@ class LocalMonitor:
             self._preferences_cache = LocalPreferences.load(self.db)
         return self._preferences_cache
 
-    async def _run_stream(self, stream: Stream) -> None:
+    async def _run_stream(self, stream: EmailStream) -> None:
         while not self._shutdown.is_set():
             try:
                 preferences = self._get_preferences()
@@ -227,7 +216,6 @@ class LocalMonitor:
                     classifier=self.classifier,
                     preferences=preferences,
                     bus=self.bus,
-                    scorer=self.scorer,
                     observer=self._observer,
                 )
                 # Concurrency cap per stream. With many streams (700+),
@@ -316,8 +304,6 @@ class LocalMonitor:
                 pass
         self._stream_tasks.clear()
         self._stream_config_sig.clear()
-        if self.scorer is not None:
-            await self.scorer.stop()
 
 
 class LocalItemProcessor:
@@ -328,7 +314,6 @@ class LocalItemProcessor:
         classifier: OpenAIItemClassifier,
         preferences: LocalPreferences,
         bus: Optional[LiveEventBus],
-        scorer: Optional[BatchScorer] = None,
         observer: Optional["_LocalProcessingObserver"] = None,
     ):
         notifier = None
@@ -350,7 +335,6 @@ class LocalItemProcessor:
             is_retryable_classifier_error=_is_transient_classification_error,
         )
         self.notes = preferences.CLASSIFICATION_NOTES
-        self.scorer = scorer
 
     async def process(self, item: Item) -> bool:
         # Bypass when:
@@ -358,14 +342,6 @@ class LocalItemProcessor:
         # - the global kill switch is on (we're running headless w/o LLM).
         # In both cases just emit a received event for the dashboard.
         if _CLASSIFICATION_DISABLED or (item.metadata or {}).get("skip_classification"):
-            if self.scorer is not None:
-                try:
-                    score = await self.scorer.score(item)
-                    md = dict(item.metadata or {})
-                    md["_classifier_score"] = score
-                    item.metadata = md
-                except Exception as exc:
-                    logger.warning("scorer failed for %s: %s", item.id, exc)
             await self.observer.publish(
                 ProcessingEvent(event_type="item_received", item=item)
             )
@@ -424,9 +400,7 @@ class _LocalProcessingObserver(ProcessingObserver):
     def __init__(self, db: LocalDatabase, bus: Optional[LiveEventBus]):
         self.db = db
         self.bus = bus
-        # The queue holds (Item, score) tuples. We resolve to event_id
-        # only after the bulk insert returns.
-        self._queue: "asyncio.Queue[tuple[Item, Optional[float]]]" = asyncio.Queue(maxsize=self.QUEUE_MAX)
+        self._queue: "asyncio.Queue[Item]" = asyncio.Queue(maxsize=self.QUEUE_MAX)
         # event_id -> Item lookup used by item_classified events that
         # arrive before our SSE bus sees the matching event_received.
         # We don't keep this in memory long: the bus already does its
@@ -444,9 +418,8 @@ class _LocalProcessingObserver(ProcessingObserver):
         path; classification + failure write directly (low rate)."""
         self._ensure_started()
         if event.event_type == "item_received":
-            score = (event.item.metadata or {}).get("_classifier_score")
             try:
-                self._queue.put_nowait((event.item, score))
+                self._queue.put_nowait(event.item)
             except asyncio.QueueFull:
                 self._dropped += 1
                 now = asyncio.get_running_loop().time()
@@ -515,10 +488,9 @@ class _LocalProcessingObserver(ProcessingObserver):
                         "url": item.url,
                         "author": item.author or None,
                         "received_at": item.received_at,
-                        "score": score,
                         "metadata": _filter_metadata(item.metadata),
                     }
-                    for item, score in batch
+                    for item in batch
                 ]
                 ids = await asyncio.to_thread(self.db.insert_events_bulk, rows)
                 if self.bus is not None:
@@ -528,7 +500,7 @@ class _LocalProcessingObserver(ProcessingObserver):
                     # actually landed.
                     n = min(len(ids), len(batch))
                     for i in range(n):
-                        item, _score = batch[i]
+                        item = batch[i]
                         payload = _item_received_payload(item)
                         self.bus.publish(
                             LiveEvent(
@@ -543,9 +515,9 @@ class _LocalProcessingObserver(ProcessingObserver):
                 logger.exception("event batch flush failed: %s", exc)
                 await asyncio.sleep(0.5)
 
-    async def _drain_one_batch(self) -> List[tuple[Item, Optional[float]]]:
+    async def _drain_one_batch(self) -> List[Item]:
         first = await self._queue.get()
-        batch: List[tuple[Item, Optional[float]]] = [first]
+        batch: List[Item] = [first]
         deadline = asyncio.get_running_loop().time() + self.BATCH_INTERVAL_S
         while len(batch) < self.BATCH_MAX:
             remaining = deadline - asyncio.get_running_loop().time()
@@ -558,7 +530,7 @@ class _LocalProcessingObserver(ProcessingObserver):
         return batch
 
 
-_RESERVED_METADATA_KEYS = {"stream_name", "_classifier_score", "skip_classification"}
+_RESERVED_METADATA_KEYS = {"stream_name", "skip_classification"}
 
 
 def _filter_metadata(md: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
@@ -589,7 +561,6 @@ def _item_received_payload(item: Item) -> Dict[str, Any]:
         "url": item.url,
         "author": item.author,
         "received_at": item.received_at.isoformat() if item.received_at else None,
-        "score": md.get("_classifier_score"),
     }
 
 
@@ -601,21 +572,6 @@ def _classification_payload(item: Item, c) -> Dict[str, Any]:
         "reasoning": c.reasoning,
     })
     return p
-
-
-# Kept for any callers that imported it before the refactor.
-def _item_event_payload(item: Item) -> Dict[str, Any]:
-    return {
-        "source_type": item.source_type,
-        "item_id": item.id,
-        "title": item.title,
-        "body": item.body,
-        "author": item.author,
-        "url": item.url,
-        "stream_name": (item.metadata or {}).get("stream_name", ""),
-        "received_at": item.received_at.isoformat() if item.received_at else None,
-        "score": (item.metadata or {}).get("_classifier_score"),
-    }
 
 
 def _is_transient_classification_error(exc: Exception) -> bool:

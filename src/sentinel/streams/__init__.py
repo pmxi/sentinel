@@ -1,15 +1,5 @@
-"""Shared stream abstractions and built-in stream implementations."""
+"""Stream abstractions and the built-in email stream."""
 
-from sentinel.streams.base import Item, Stream
-from sentinel.streams.registry import StreamSpec, all_specs, build_stream, ensure_loaded, get, register
+from sentinel.streams.base import Item
 
-__all__ = [
-    "Item",
-    "Stream",
-    "StreamSpec",
-    "all_specs",
-    "build_stream",
-    "ensure_loaded",
-    "get",
-    "register",
-]
+__all__ = ["Item"]

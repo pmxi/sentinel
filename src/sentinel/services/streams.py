@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
-from sentinel.streams import all_specs, ensure_loaded
 from sentinel.streams.email.mail_config import MailAccountConfig, MailProvider
 from sentinel.database import LocalDatabase
 
@@ -13,10 +12,6 @@ from sentinel.database import LocalDatabase
 class LocalStreamService:
     def __init__(self, db: LocalDatabase):
         self.db = db
-        ensure_loaded()
-
-    def specs(self):
-        return all_specs()
 
     def list_stream_rows(self) -> List[Dict[str, Any]]:
         rows = []

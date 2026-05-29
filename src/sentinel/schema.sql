@@ -60,8 +60,6 @@ CREATE TABLE IF NOT EXISTS event (
     --   observed_at  = when sentinel wrote this row
     received_at TIMESTAMPTZ NOT NULL,
     observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    -- Optional local-scorer probability of being newsworthy.
-    score REAL,
     -- Source-specific bag for anything we don't filter on (Bluesky lang,
     -- RSS feed_title, raw keywords list, ...). Use JSONB so we can still
     -- spot-check via ->> when needed.

@@ -14,7 +14,6 @@ from typing import Any, Dict, List, Optional
 from flask import Flask, Response, abort, redirect, render_template, request, stream_with_context, url_for
 
 from sentinel.logging_config import get_logger
-from sentinel.streams import ensure_loaded
 from sentinel.streams.email.mail_config import AccountSettings, AuthConfig, AuthMethod, MailAccountConfig, MailProvider
 from sentinel.time_utils import utc_now
 from sentinel.config import settings
@@ -34,7 +33,6 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     app.debug = debug
     app.config["DATABASE_URL"] = database_url or settings.require_database_url()
     _bootstrap_settings(app)
-    ensure_loaded()
     app.secret_key = settings.SESSION_SECRET or "sentinel-local"
     app.extensions["live_bus"] = _maybe_start_embedded_monitor(app)
 
@@ -530,7 +528,6 @@ def _row_to_sse_payload(row: Dict[str, Any]) -> tuple[str, str]:
         "url": row.get("url"),
         "author": row.get("author"),
         "received_at": row.get("received_at").isoformat() if row.get("received_at") else None,
-        "score": row.get("score"),
     }
     if row.get("priority"):
         payload.update({
