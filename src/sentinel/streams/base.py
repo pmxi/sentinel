@@ -20,7 +20,6 @@ class Item:
     """
 
     id: str
-    source_type: str
     title: str
     body: str
     author: str

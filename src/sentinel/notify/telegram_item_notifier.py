@@ -65,13 +65,8 @@ class TelegramItemNotifier(ItemNotifier):
 
 def _attribution(item: Item) -> str:
     """The text that goes on the first line of the notification."""
-    if item.source_type == "email":
-        _, addr = parseaddr(item.author or "")
-        return addr or item.author or "email"
-    if item.source_type == "rss":
-        feed = item.metadata.get("feed_title") if item.metadata else None
-        return feed or item.author or "RSS"
-    return item.author or item.source_type
+    _, addr = parseaddr(item.author or "")
+    return addr or item.author or "email"
 
 
 def _md2_escape(text: str) -> str:

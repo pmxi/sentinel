@@ -58,7 +58,7 @@ class OpenAIItemClassifier:
         *,
         api_key: str,
         model: str = "gpt-4o-mini",
-        criteria_provider: Callable[[str], str] | None = None,
+        criteria_provider: Callable[[], str] | None = None,
     ):
         if not api_key:
             raise ValueError("api_key is required")
@@ -73,7 +73,7 @@ class OpenAIItemClassifier:
         )
         self.client = AsyncOpenAI(api_key=api_key, http_client=http_client)
         self.model = model
-        self._criteria_provider = criteria_provider or _default_criteria_for
+        self._criteria_provider = criteria_provider or _default_criteria
         # Global concurrency cap. Without it the per-stream sem (64) lets
         # thousands of streams overrun OpenAI's effective RPM limit and
         # every call queues for many seconds.
@@ -106,16 +106,15 @@ class OpenAIItemClassifier:
             if extra
             else ""
         )
-        criteria = self._criteria_provider(item.source_type)
+        criteria = self._criteria_provider()
         rendered = self._render_item(item)
         return f"""
-You are a classification assistant. The user subscribes to several information streams
-(email, RSS news, GitHub notifications, etc.) and wants to be alerted only to the items
-that genuinely matter to them. Classify the following item as IMPORTANT or NORMAL.
+You are a classification assistant. The user wants to be alerted only to the
+emails that genuinely matter to them. Classify the following item as IMPORTANT or NORMAL.
 
 {criteria}
 {extra_block}
-ITEM TO CLASSIFY (source: {item.source_type}):
+ITEM TO CLASSIFY:
 {rendered}
 
 Return:
@@ -133,8 +132,7 @@ Return:
                 + f"\n\n[... truncated from {original_size:,} chars ...]"
             )
             logger.warning(
-                "Item body truncated for LLM: source=%s id=%s title=%r original=%d chars limit=%d chars",
-                item.source_type,
+                "Item body truncated for LLM: id=%s title=%r original=%d chars limit=%d chars",
                 item.id,
                 item.title[:80],
                 original_size,
@@ -143,45 +141,13 @@ Return:
         return body
 
 
-def _default_criteria_for(source_type: str) -> str:
-    if source_type == "email":
-        return (
-            "IMPORTANT emails:\n"
-            "- Addressed to me personally\n"
-            "- Job interview offer\n"
-            "- Legal matter\n"
-            "- Urgent\n\n"
-            "NORMAL emails:\n"
-            "- Everything else, including newsletters, mass mailings, and apparent scams"
-        )
-    if source_type == "rss":
-        return (
-            "IMPORTANT RSS items:\n"
-            "- Major breaking news with real consequences\n"
-            "- Security advisories, outages, or vulnerabilities affecting widely-used software\n"
-            "- Releases or announcements the user clearly cares about (based on their notes)\n\n"
-            "NORMAL RSS items:\n"
-            "- Routine posts, opinion pieces, speculative coverage, marketing"
-        )
-    if source_type == "sitemap_news":
-        return (
-            "These are news headlines pulled from publisher sitemaps. The DEFAULT is NORMAL.\n"
-            "Mark IMPORTANT only if a reasonable global news consumer would want to be ALERTED right now.\n\n"
-            "IMPORTANT (high bar — reserve for genuinely consequential events):\n"
-            "- Active armed conflict updates, terrorist incidents, mass-casualty events\n"
-            "- Major natural disasters (earthquakes, hurricanes, floods) with casualties or large impact\n"
-            "- Geopolitically significant announcements (treaties, sanctions, leadership changes in major powers)\n"
-            "- Market-moving economic events (central bank actions, large corporate collapses, currency crises)\n"
-            "- Public health emergencies (outbreaks, pandemics, recalls of widely-used products)\n"
-            "- Cybersecurity incidents affecting major infrastructure or hundreds of millions of users\n\n"
-            "NORMAL (the vast majority):\n"
-            "- Local news, regional politics, individual crimes\n"
-            "- Sports, entertainment, celebrity, gaming, product launches\n"
-            "- Opinion pieces, analysis, listicles, lifestyle content\n"
-            "- Routine government activity, business mergers below crisis-scale\n"
-            "- Anything that wouldn't warrant a breaking-news push notification"
-        )
+def _default_criteria() -> str:
     return (
-        "IMPORTANT items are those the user would genuinely want to be alerted about right now. "
-        "NORMAL items are everything else."
+        "IMPORTANT emails:\n"
+        "- Addressed to me personally\n"
+        "- Job interview offer\n"
+        "- Legal matter\n"
+        "- Urgent\n\n"
+        "NORMAL emails:\n"
+        "- Everything else, including newsletters, mass mailings, and apparent scams"
     )

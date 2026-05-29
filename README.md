@@ -74,17 +74,6 @@ For a purely headless deployment (no web UI), `sentinel run` spawns just
 the supervisor. Don't run both at once — you'll get two supervisors and
 duplicate notifications.
 
-For UI load testing, you do not need to wait on real email. Emit a
-synthetic firehose straight into the local database:
-
-```bash
-uv run sentinel dev firehose --rate 20 --count 200
-```
-
-This produces `item_received` and `item_classified` events that the
-dashboard renders the same way as real traffic. Use `--count 0` to run until
-you stop it.
-
 ---
 
 ## Getting an app password

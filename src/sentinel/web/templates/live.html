@@ -91,7 +91,7 @@
   const pauseBtn = document.getElementById("pause-btn");
 
   // Source-type counters
-  const typeStats = new Map();   // source_type -> {total, ts: [] }
+  const typeStats = new Map();   // type -> {total, ts: [] }
   const streamStats = new Map(); // stream_name -> {total, lastTs}
   // Each entry in `events` is { ts, srcType, streamName, item }.
   // Pruned to MAX_FEED_ITEMS (after filtering).
@@ -266,7 +266,7 @@
   // we still have it in the buffer, otherwise we just count them. The SSE
   // stream sends both item_received and item_classified for each item.
   function handleItemReceived(item) {
-    const srcType = item.source_type || "?";
+    const srcType = "email";
     const streamName = item.stream_name || "(unknown)";
     recordItem(item, srcType, streamName, false);
     needsRender = true;
@@ -292,7 +292,7 @@
       }
     }
     if (!merged) {
-      const srcType = payload.source_type || "?";
+      const srcType = "email";
       const streamName = payload.stream_name || "(unknown)";
       recordItem(payload, srcType, streamName, isImp);
     }

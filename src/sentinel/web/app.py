@@ -184,7 +184,6 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
                         e.id,
                         c.classified_at        AS created_at,
                         c.priority             AS priority,
-                        e.source_type          AS source_type,
                         e.stream_name          AS stream_name,
                         e.title                AS title,
                         e.url                  AS url,
@@ -213,8 +212,8 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
 
         items = [dict(r) if isinstance(r, dict) else {
             "id": r[0], "created_at": r[1], "priority": r[2],
-            "source_type": r[3], "stream_name": r[4],
-            "title": r[5], "url": r[6], "summary": r[7], "reasoning": r[8],
+            "stream_name": r[3],
+            "title": r[4], "url": r[5], "summary": r[6], "reasoning": r[7],
         } for r in rows]
 
         return render_template(
@@ -250,13 +249,12 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
                     """
                     SELECT
                         stream_name              AS stream,
-                        source_type,
                         MAX(observed_at)         AS last_seen,
                         MIN(observed_at)         AS first_seen,
                         COUNT(*)                 AS n
                     FROM event
                     WHERE id > %s
-                    GROUP BY 1, 2
+                    GROUP BY 1
                     ORDER BY n DESC
                     """,
                     (low_id,),
@@ -275,8 +273,8 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         activity: List[Dict[str, Any]] = []
         for r in rows:
             d = r if isinstance(r, dict) else {
-                "stream": r[0], "source_type": r[1],
-                "last_seen": r[2], "first_seen": r[3], "n": r[4],
+                "stream": r[0],
+                "last_seen": r[1], "first_seen": r[2], "n": r[3],
             }
             first = d["first_seen"]
             last = d["last_seen"]
@@ -285,7 +283,6 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
             age_secs = (now - last).total_seconds() if last else None
             activity.append({
                 "stream": d["stream"] or "(unknown)",
-                "source_type": d["source_type"] or "?",
                 "count": d["n"],
                 "rate_per_min": rate_per_min,
                 "last_seen": last,
@@ -520,7 +517,6 @@ def _row_to_sse_payload(row: Dict[str, Any]) -> tuple[str, str]:
     has classification fields populated we send item_classified;
     otherwise item_received."""
     payload: Dict[str, Any] = {
-        "source_type": row.get("source_type"),
         "item_id": row.get("item_id"),
         "stream_name": row.get("stream_name"),
         "title": row.get("title"),

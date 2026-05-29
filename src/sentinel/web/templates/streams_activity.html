@@ -26,12 +26,11 @@
 
   {% if activity %}
     <table>
-      <thead><tr><th>Stream</th><th>Type</th><th>Items in window</th><th>Items/min</th><th>Last seen</th></tr></thead>
+      <thead><tr><th>Stream</th><th>Items in window</th><th>Items/min</th><th>Last seen</th></tr></thead>
       <tbody>
       {% for a in activity %}
         <tr>
           <td>{{ a.stream }}</td>
-          <td>{{ a.source_type }}</td>
           <td style="text-align: right;">{{ a.count }}</td>
           <td style="text-align: right;">{{ "%.1f"|format(a.rate_per_min) }}</td>
           <td>

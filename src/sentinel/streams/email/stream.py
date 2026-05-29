@@ -32,8 +32,6 @@ _DEFAULT_POLL_SECONDS = 60
 
 
 class EmailStream:
-    source_type = "email"
-
     def __init__(
         self,
         name: str,
@@ -134,7 +132,6 @@ def _email_to_item(
     )
     return Item(
         id=email.id,
-        source_type="email",
         title=email.subject or "(no subject)",
         body=rendered_body,
         author=email.sender or "unknown sender",

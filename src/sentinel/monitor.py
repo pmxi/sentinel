@@ -350,7 +350,7 @@ class LocalItemProcessor:
 
 
 class _LocalProcessedItemStore(ProcessedItemStore):
-    """Dedup is now a UNIQUE constraint on `event(source_type,item_id)`.
+    """Dedup is now a UNIQUE constraint on `event(item_id)`.
     is_processed() is the existence check; mark_processed() is a no-op
     because the row already exists by the time we get here (the
     observer's batched insert is what created it)."""
@@ -359,7 +359,7 @@ class _LocalProcessedItemStore(ProcessedItemStore):
         self.db = db
 
     async def is_processed(self, item: Item) -> bool:
-        return await asyncio.to_thread(self.db.is_item_processed, item.source_type, item.id)
+        return await asyncio.to_thread(self.db.is_item_processed, item.id)
 
     async def mark_processed(self, item: Item) -> None:
         # No-op: event row already exists. We keep the method on the
@@ -432,12 +432,12 @@ class _LocalProcessingObserver(ProcessingObserver):
             await asyncio.to_thread(self._record_failure, event)
 
     def _record_classification(self, ev: ProcessingEvent) -> None:
-        # Look up the event_id by (source_type, item_id). The earlier
-        # insert_event call already established the row.
+        # Look up the event_id by item_id. The earlier insert_event call
+        # already established the row.
         with self.db._lock:
             row = self.db.conn.execute(
-                "SELECT id FROM event WHERE source_type=%s AND item_id=%s",
-                (ev.item.source_type, ev.item.id),
+                "SELECT id FROM event WHERE item_id=%s",
+                (ev.item.id,),
             ).fetchone()
         if not row:
             return  # the insert was dropped (e.g. dedup) — nothing to attach to
@@ -465,8 +465,8 @@ class _LocalProcessingObserver(ProcessingObserver):
     def _record_failure(self, ev: ProcessingEvent) -> None:
         with self.db._lock:
             row = self.db.conn.execute(
-                "SELECT id FROM event WHERE source_type=%s AND item_id=%s",
-                (ev.item.source_type, ev.item.id),
+                "SELECT id FROM event WHERE item_id=%s",
+                (ev.item.id,),
             ).fetchone()
         if not row:
             return
@@ -480,7 +480,6 @@ class _LocalProcessingObserver(ProcessingObserver):
                     continue
                 rows = [
                     {
-                        "source_type": item.source_type,
                         "item_id": item.id,
                         "stream_name": (item.metadata or {}).get("stream_name", "") or "",
                         "title": item.title or "(no title)",
@@ -553,7 +552,6 @@ def _model_name_for_log() -> str:
 def _item_received_payload(item: Item) -> Dict[str, Any]:
     md = item.metadata or {}
     return {
-        "source_type": item.source_type,
         "item_id": item.id,
         "stream_name": md.get("stream_name", ""),
         "title": item.title,

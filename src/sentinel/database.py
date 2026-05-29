@@ -56,7 +56,7 @@ class LocalDatabase:
     """Single-user PostgreSQL store for local CLI + web surfaces.
 
     Schema is in schema.sql. The two key tables are `event` (one row per
-    observed item, also the dedup ledger via UNIQUE(source_type,item_id))
+    observed item, also the dedup ledger via UNIQUE(item_id))
     and `classification` (LLM result, FK to event).
     """
 
@@ -178,18 +178,17 @@ class LocalDatabase:
 
     # ----- event (dedup ledger + content) -------------------------------
 
-    def is_item_processed(self, source_type: str, item_id: str) -> bool:
+    def is_item_processed(self, item_id: str) -> bool:
         with self._lock:
             row = self.conn.execute(
-                "SELECT 1 FROM event WHERE source_type=%s AND item_id=%s",
-                (source_type, item_id),
+                "SELECT 1 FROM event WHERE item_id=%s",
+                (item_id,),
             ).fetchone()
         return row is not None
 
     def insert_event(
         self,
         *,
-        source_type: str,
         item_id: str,
         stream_name: str,
         title: str,
@@ -199,19 +198,19 @@ class LocalDatabase:
         received_at: datetime,
         metadata: Optional[Dict[str, Any]] = None,
     ) -> Optional[int]:
-        """Insert a new event. Returns its id, or None if (source_type, item_id)
+        """Insert a new event. Returns its id, or None if item_id
         already existed (dedup hit)."""
         metadata_json = json.dumps(metadata) if metadata else None
         with self._lock:
             row = self.conn.execute(
                 """
-                INSERT INTO event (source_type, item_id, stream_name, title, body,
+                INSERT INTO event (item_id, stream_name, title, body,
                                    url, author, received_at, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-                ON CONFLICT (source_type, item_id) DO NOTHING
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                ON CONFLICT (item_id) DO NOTHING
                 RETURNING id
                 """,
-                (source_type, item_id, stream_name, title, body, url, author,
+                (item_id, stream_name, title, body, url, author,
                  received_at, metadata_json),
             ).fetchone()
         return int(row["id"]) if row else None
@@ -226,20 +225,20 @@ class LocalDatabase:
         for r in rows:
             md = r.get("metadata")
             params.append((
-                r["source_type"], r["item_id"], r["stream_name"], r["title"],
+                r["item_id"], r["stream_name"], r["title"],
                 r.get("body"), r.get("url"), r.get("author"),
                 r["received_at"],
                 json.dumps(md) if md else None,
             ))
-        placeholders = ",".join(["(%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb)"] * len(params))
+        placeholders = ",".join(["(%s,%s,%s,%s,%s,%s,%s,%s::jsonb)"] * len(params))
         flat: List[Any] = [v for row in params for v in row]
         with self._lock:
             inserted = self.conn.execute(
                 f"""
-                INSERT INTO event (source_type, item_id, stream_name, title, body,
+                INSERT INTO event (item_id, stream_name, title, body,
                                    url, author, received_at, metadata)
                 VALUES {placeholders}
-                ON CONFLICT (source_type, item_id) DO NOTHING
+                ON CONFLICT (item_id) DO NOTHING
                 RETURNING id
                 """,
                 flat,
@@ -249,7 +248,7 @@ class LocalDatabase:
     def recent_events(self, limit: int = 25) -> List[Dict[str, Any]]:
         with self._lock:
             rows = self.conn.execute(
-                "SELECT id, source_type, item_id, stream_name, title, url, author, "
+                "SELECT id, item_id, stream_name, title, url, author, "
                 "received_at, observed_at "
                 "FROM event ORDER BY observed_at DESC LIMIT %s",
                 (limit,),
@@ -274,7 +273,7 @@ class LocalDatabase:
         with self._lock:
             rows = self.conn.execute(
                 """
-                SELECT e.id, e.source_type, e.item_id, e.stream_name, e.title,
+                SELECT e.id, e.item_id, e.stream_name, e.title,
                        e.body, e.url, e.author, e.received_at, e.observed_at,
                        e.metadata,
                        c.priority, c.summary, c.reasoning, c.classified_at

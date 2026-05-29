@@ -56,13 +56,12 @@
   {% if recent %}
     <table>
       <thead>
-        <tr><th>Time</th><th>Source</th><th>Stream</th><th>Author</th><th>Title</th></tr>
+        <tr><th>Time</th><th>Stream</th><th>Author</th><th>Title</th></tr>
       </thead>
       <tbody>
       {% for row in recent %}
         <tr>
           <td><time>{{ row.processed_at }}</time></td>
-          <td>{{ row.source_type }}</td>
           <td>{{ row.stream_name }}</td>
           <td>{{ row.author }}</td>
           <td>{{ row.title }}</td>
@@ -171,10 +170,9 @@
 
     const meta = document.createElement("span");
     meta.className = "live-meta";
-    // Skip author for bluesky (it's an opaque DID); for sitemap_news the
-    // publication is already in stream_name, so author is duplicative.
-    const showAuthor = data.author && data.source_type !== "bluesky" && data.author !== data.stream_name;
-    const parts = [data.source_type];
+    // Skip author when it's duplicative of the stream name.
+    const showAuthor = data.author && data.author !== data.stream_name;
+    const parts = [];
     if (data.stream_name) parts.push(data.stream_name);
     if (showAuthor) parts.push(data.author);
     meta.textContent = parts.join(" · ");

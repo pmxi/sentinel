@@ -13,7 +13,6 @@ from typing import Optional
 from sentinel.streams.email.mail_config import AccountSettings, AuthConfig, AuthMethod, MailAccountConfig, MailProvider
 from sentinel.config import settings
 from sentinel.database import LocalDatabase
-from sentinel.dev_firehose import FirehoseConfig, run_firehose
 from sentinel.monitor import LocalMonitor
 from sentinel.services.settings import LocalSetupService
 from sentinel.services.streams import LocalStreamService
@@ -62,7 +61,6 @@ def cmd_init(_args: argparse.Namespace) -> None:
     print("  - Add a mailbox:   sentinel stream add")
     print("  - Start monitor:   sentinel run")
     print("  - Open web UI:     sentinel web")
-    print("  - Drive test load: sentinel dev firehose --rate 20 --count 200")
 
 
 def cmd_stream_list(_args: argparse.Namespace) -> None:
@@ -182,29 +180,6 @@ def cmd_web(args: argparse.Namespace) -> None:
     run_web(host=args.host, port=args.port, debug=args.debug)
 
 
-def cmd_dev_firehose(args: argparse.Namespace) -> None:
-    count = None if args.count == 0 else args.count
-    config = FirehoseConfig(
-        rate=args.rate,
-        count=count,
-        source_type=args.source_type,
-        stream_name=args.stream_name,
-        classify_delay_ms=args.classify_delay_ms,
-        important_every=args.important_every,
-    )
-    target = "until interrupted" if count is None else f"for {count} items"
-    print(
-        f"Emitting synthetic {config.source_type} traffic into {_database_label()} "
-        f"at {config.rate:.2f} items/sec {target}. Press Ctrl-C to stop."
-    )
-    try:
-        emitted = run_firehose(settings.require_database_url(), config)
-    except KeyboardInterrupt:
-        print("\nStopped.")
-        return
-    print(f"Emitted {emitted} synthetic item(s).")
-
-
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="sentinel")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -230,60 +205,7 @@ def build_parser() -> argparse.ArgumentParser:
     rm.add_argument("name")
     rm.set_defaults(func=cmd_stream_remove)
 
-    dev = sub.add_parser("dev", help="Developer helpers for local testing")
-    dev_sub = dev.add_subparsers(dest="dev_cmd", required=True)
-
-    firehose = dev_sub.add_parser(
-        "firehose",
-        help="Emit synthetic dashboard traffic into the local database",
-    )
-    firehose.add_argument(
-        "--rate",
-        type=float,
-        default=20.0,
-        help="Synthetic items per second (default: 20)",
-    )
-    firehose.add_argument(
-        "--count",
-        type=int,
-        default=200,
-        help="How many items to emit; use 0 to run until interrupted (default: 200)",
-    )
-    firehose.add_argument(
-        "--source-type",
-        default="rss",
-        help="Source label shown in the dashboard (default: rss)",
-    )
-    firehose.add_argument(
-        "--stream-name",
-        default="dev-firehose",
-        help="Stream label shown in the dashboard (default: dev-firehose)",
-    )
-    firehose.add_argument(
-        "--classify-delay-ms",
-        type=int,
-        default=120,
-        help="Delay between received and classified events (default: 120)",
-    )
-    firehose.add_argument(
-        "--important-every",
-        type=int,
-        default=5,
-        help="Mark every Nth item as important; 0 disables important items (default: 5)",
-    )
-    firehose.set_defaults(func=cmd_dev_firehose)
-
     return parser
-
-
-def _database_label() -> str:
-    url = settings.require_database_url()
-    if "@" not in url:
-        return url
-    scheme_and_user, host_and_db = url.rsplit("@", maxsplit=1)
-    if ":" not in scheme_and_user:
-        return url
-    return f"{scheme_and_user.rsplit(':', maxsplit=1)[0]}:***@{host_and_db}"
 
 
 def main() -> None:
