@@ -1,20 +1,17 @@
 # Sentinel
 > An intelligent notification system to find what matters
 
-Sentinel is a program to monitor many datastreams from the internet (email,
-news, RSS, social media) and alert the user when something relevant is
-detected.
+Sentinel is a program to monitor your email inbox and alert you when
+something relevant arrives.
 
-Most of us drown in signal from too many sources — email, RSS/news feeds,
-GitHub notifications, chat mentions. The stuff that matters is mixed in with
+Most of us drown in email. The stuff that matters is mixed in with
 newsletters, spam, and low-value updates. Responding fast to the important
-things without drowning in the rest is an unsolved problem per-source, and
-nobody stitches them together coherently.
+things without drowning in the rest is the problem Sentinel solves.
 
-Sentinel subscribes to *streams* — email mailboxes, RSS feeds, and more to
-come — runs every new item through an LLM-backed classifier, and pings you
-over Telegram when something is actually important. Classification criteria
-are plain-English notes you control.
+Sentinel watches your email mailboxes, runs every new message through an
+LLM-backed classifier, and pings you over Telegram when something is
+actually important. Classification criteria are plain-English notes you
+control.
 
 ## Installation
 
@@ -47,19 +44,16 @@ You'll be asked for:
 
 Single-user; there is no app-level login.
 
-### 2. Add a stream
+### 2. Add a mailbox
 
 ```bash
-uv run sentinel stream add --type email   # IMAP / Gmail API / MSGraph
-uv run sentinel stream add --type rss     # any RSS or Atom feed
+uv run sentinel stream add   # IMAP / Gmail API / MSGraph
 ```
 
-For email, pick **IMAP** (with an [app password](#getting-an-app-password))
-unless you've already verified an app with Google or Azure.
+Pick **IMAP** (with an [app password](#getting-an-app-password)) unless
+you've already verified an app with Google or Azure.
 
-For RSS, paste the feed URL and a poll interval.
-
-You can also add streams through the web UI once it's running.
+You can also add mailboxes through the web UI once it's running.
 
 ### 3. Run the monitor
 
@@ -72,7 +66,7 @@ in-process alongside the Flask app, so there's no second daemon to manage.
 Open `http://127.0.0.1:8765`. No login required. From there you can:
 - Watch the live feed as items arrive and get classified in real time
 - See daemon status and recently-processed items
-- Add/disable/delete streams (email or RSS)
+- Add/disable/delete mailboxes
 - Edit your classification notes (appended to the LLM prompt every time)
 - Link your Telegram chat in one click
 
@@ -80,7 +74,7 @@ For a purely headless deployment (no web UI), `sentinel run` spawns just
 the supervisor. Don't run both at once — you'll get two supervisors and
 duplicate notifications.
 
-For UI load testing, you do not need to wait on real RSS publishers. Emit a
+For UI load testing, you do not need to wait on real email. Emit a
 synthetic firehose straight into the local database:
 
 ```bash
@@ -117,12 +111,3 @@ Sentinel uses PostgreSQL for the active single-user runtime. Configure it with
 ```bash
 export DATABASE_URL=postgresql://sentinel_user:REDACTED@localhost:5433/sentinel
 ```
-
----
-
-## Multi-tenant runtime
-
-The repo also includes a separate multi-tenant runtime (`sentinel-hosted`)
-with Google OAuth, per-user storage, and a worker/web split. It is **not in
-active development** — use the single-user setup above unless you have a
-reason to dig into the hosted code.
