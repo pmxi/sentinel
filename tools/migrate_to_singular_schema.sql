@@ -11,8 +11,8 @@
 --   - sources.* catalog (renamed singular + booleans cast + timestamps cast)
 --
 -- What this DROPS:
---   - live_events (firehose log — 24h retention means it's all transient
---     anyway; the classification rows we cared about are migrated below)
+--   - live_events (the old append-only firehose log; not carried over —
+--     the classification rows we cared about are migrated below)
 --   - processed_items (the new event table's UNIQUE (source_type, item_id)
 --     replaces this dedup ledger; migrated as event rows with no content)
 
@@ -96,10 +96,10 @@ SELECT
 FROM processed_items
 ON CONFLICT (source_type, item_id) DO NOTHING;
 
--- We intentionally do NOT migrate live_events rows. The table holds a
--- short retention window of mostly-Bluesky firehose noise; the few useful
--- item_classified rows re-accumulate in minutes under the new code. Trying
--- to migrate would also risk NUL-poisoned payloads postgres can't cast.
+-- We intentionally do NOT migrate live_events rows. The table is mostly
+-- Bluesky firehose noise; the few useful item_classified rows re-accumulate
+-- under the new code. Trying to migrate would also risk NUL-poisoned
+-- payloads postgres can't cast.
 
 -- Classifications go to a typed table now
 CREATE TABLE IF NOT EXISTS classification (

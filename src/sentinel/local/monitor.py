@@ -35,10 +35,12 @@ logger = get_logger("sentinel.local.monitor")
 
 _RESTART_DELAY_SECONDS = 30
 _STREAM_REFRESH_SECONDS = 30
-# live_events is append-only and grows fast under firehose traffic
-# (~1k/s at full Tier-A scale). Retention is hours, not days.
-_LIVE_EVENTS_RETENTION_HOURS = 24
-_LIVE_EVENTS_PRUNE_INTERVAL_S = 3600
+# The event table is append-only and intentionally kept indefinitely — we
+# never prune it. It grows fast under firehose traffic (~1k/s at full Tier-A
+# scale), so capacity is managed at the infrastructure level (bigger volume,
+# table partitioning, archiving), NOT by deleting history. Do not reintroduce
+# a time-based prune here: a previous one silently failed for weeks, and
+# "fixing" it would have deleted everything older than its cutoff.
 
 # Global classification kill switch. When True, route everything through
 # the no-LLM fast path (just emit item_received). Individual sources can
@@ -112,11 +114,10 @@ class LocalMonitor:
         await self._refresh_streams(initial=True)
 
         refresh_task = asyncio.create_task(self._refresh_loop(), name="stream-refresh")
-        prune_task = asyncio.create_task(self._prune_live_events_loop(), name="live-events-prune")
         try:
             await self._shutdown.wait()
         finally:
-            for t in (refresh_task, prune_task):
+            for t in (refresh_task,):
                 t.cancel()
                 try:
                     await t
@@ -136,24 +137,6 @@ class LocalMonitor:
                 await self._refresh_streams()
             except Exception as exc:
                 logger.warning("stream refresh failed: %s", exc)
-
-    async def _prune_live_events_loop(self) -> None:
-        """Keep live_events bounded — at high firehose rate the table will
-        otherwise grow to tens of GB within hours and inserts collapse."""
-        while not self._shutdown.is_set():
-            try:
-                await asyncio.wait_for(self._shutdown.wait(), timeout=_LIVE_EVENTS_PRUNE_INTERVAL_S)
-                return
-            except asyncio.TimeoutError:
-                pass
-            try:
-                deleted = await asyncio.to_thread(
-                    self.db.prune_live_events_older_than, _LIVE_EVENTS_RETENTION_HOURS
-                )
-                if deleted:
-                    logger.info("pruned %d live_events older than %dh", deleted, _LIVE_EVENTS_RETENTION_HOURS)
-            except Exception as exc:
-                logger.warning("live_events prune failed: %s", exc)
 
     async def _refresh_streams(self, initial: bool = False) -> None:
         rows = await asyncio.to_thread(self.db.list_streams)
@@ -484,7 +467,7 @@ class _LocalProcessingObserver(ProcessingObserver):
                 (ev.item.source_type, ev.item.id),
             ).fetchone()
         if not row:
-            return  # event got pruned or the insert was dropped
+            return  # the insert was dropped (e.g. dedup) — nothing to attach to
         event_id = int(row["id"])
         c = ev.classification
         if c is None:

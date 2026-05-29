@@ -288,14 +288,10 @@ class LocalDatabase:
             ).fetchall()
         return [dict(r) for r in rows]
 
-    def prune_events_older_than(self, hours: int) -> int:
-        """Drop events older than `hours`. Classifications cascade-delete."""
-        with self._lock:
-            cur = self.conn.execute(
-                "DELETE FROM event WHERE observed_at < NOW() - %s::interval",
-                (f"{int(hours)} hours",),
-            )
-            return cur.rowcount or 0
+    # NOTE: there is deliberately no prune/delete-older-than helper for the
+    # event table. Events are append-only and kept indefinitely; capacity is
+    # handled at the infrastructure level, not by deleting rows. See the
+    # comment in monitor.py.
 
     # ----- classification -----------------------------------------------
 
