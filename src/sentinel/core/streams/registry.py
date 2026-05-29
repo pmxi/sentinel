@@ -64,41 +64,14 @@ def _register_builtins() -> None:
     imports until first call to avoid circular refs at module load."""
     if _REGISTRY:
         return
-    from sentinel.core.streams.bluesky.config import BlueskyStreamConfig
-    from sentinel.core.streams.bluesky.stream import BlueskyStream
     from sentinel.core.streams.email.mail_config import MailAccountConfig
     from sentinel.core.streams.email.stream import EmailStream
-    from sentinel.core.streams.rss.config import RSSStreamConfig
-    from sentinel.core.streams.rss.stream import RSSStream
-    from sentinel.core.streams.sitemap_news.config import SitemapNewsStreamConfig
-    from sentinel.core.streams.sitemap_news.stream import SitemapNewsStream
 
     register(
         StreamSpec(
             stream_type="email",
             config_cls=MailAccountConfig,
             stream_cls=EmailStream,
-        )
-    )
-    register(
-        StreamSpec(
-            stream_type="rss",
-            config_cls=RSSStreamConfig,
-            stream_cls=RSSStream,
-        )
-    )
-    register(
-        StreamSpec(
-            stream_type="bluesky",
-            config_cls=BlueskyStreamConfig,
-            stream_cls=BlueskyStream,
-        )
-    )
-    register(
-        StreamSpec(
-            stream_type="sitemap_news",
-            config_cls=SitemapNewsStreamConfig,
-            stream_cls=SitemapNewsStream,
         )
     )
 

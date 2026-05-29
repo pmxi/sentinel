@@ -16,7 +16,6 @@ from flask import Flask, Response, abort, redirect, render_template, request, st
 from sentinel.core.logging_config import get_logger
 from sentinel.core.streams import ensure_loaded
 from sentinel.core.streams.email.mail_config import AccountSettings, AuthConfig, AuthMethod, MailAccountConfig, MailProvider
-from sentinel.core.streams.rss.config import RSSStreamConfig
 from sentinel.core.time_utils import utc_now
 from sentinel.local.config import settings
 from sentinel.local.database import LocalDatabase
@@ -381,7 +380,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
 
     @app.route("/streams/new")
     def new_stream_page():
-        return render_template("new_stream.html")
+        return redirect(url_for("new_email_stream_page"))
 
     @app.route("/streams/new/email", methods=["GET", "POST"])
     def new_email_stream_page():
@@ -458,55 +457,6 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
             providers=providers,
             errors=[],
             form={"preset": "gmail", "name": "", "username": "", "server": "", "port": ""},
-        )
-
-    @app.route("/streams/new/rss", methods=["GET", "POST"])
-    def new_rss_stream_page():
-        if request.method == "POST":
-            name = request.form.get("name", "").strip()
-            feed_url = request.form.get("feed_url", "").strip()
-            poll_str = request.form.get("poll_seconds", "300").strip()
-
-            errors: List[str] = []
-            if not name:
-                errors.append("Pick a friendly name for this stream.")
-            if not feed_url:
-                errors.append("Feed URL is required.")
-            try:
-                poll_seconds = int(poll_str)
-            except ValueError:
-                errors.append(f"Poll interval must be a number (got {poll_str!r}).")
-                poll_seconds = 300
-
-            db = open_db()
-            try:
-                service = LocalStreamService(db)
-                if name and service.get_stream(name):
-                    errors.append(
-                        f"You already have a stream named {name!r}. Pick a different name."
-                    )
-                if not errors:
-                    try:
-                        config = RSSStreamConfig(feed_url=feed_url, poll_seconds=poll_seconds)
-                    except Exception as exc:
-                        errors.append(f"Invalid config: {exc}")
-                        config = None
-                    if config is not None:
-                        service.add_stream(name, "rss", config.model_dump_json())
-                        return redirect(url_for("streams_page"))
-            finally:
-                db.close()
-
-            return render_template(
-                "new_rss_stream.html",
-                errors=errors,
-                form={"name": name, "feed_url": feed_url, "poll_seconds": poll_str},
-            )
-
-        return render_template(
-            "new_rss_stream.html",
-            errors=[],
-            form={"name": "", "feed_url": "", "poll_seconds": "300"},
         )
 
     @app.route("/streams/<name>/toggle", methods=["POST"])

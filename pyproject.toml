@@ -11,14 +11,11 @@ dependencies = [
     "psycopg[binary]>=3.2.0",
     "python-dotenv>=1.0.1",
     "requests==2.31.0",
-    "twilio",
     "msgraph-sdk",
     "azure-identity",
     "flask>=3.0.0",
     "resend>=2.0.0",
     "authlib>=1.3.0",
-    "feedparser>=6.0.11",
-    "aiohttp>=3.10",
     "scikit-learn>=1.8.0",
     "joblib>=1.5.3",
     "sentence-transformers>=5.4.1",
@@ -26,9 +23,6 @@ dependencies = [
 
 [project.scripts]
 sentinel = "sentinel.local.cli:main"
-sentinel-hosted = "sentinel.hosted.cli:main"
-sentinel-hosted-web = "sentinel.hosted.web.app:main"
-sentinel-hosted-worker = "sentinel.hosted.worker:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -37,9 +31,4 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = [
     "src/sentinel",
-]
-
-[dependency-groups]
-dev = [
-    "mediacloud>=5.0.0",
 ]

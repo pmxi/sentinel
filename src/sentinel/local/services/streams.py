@@ -7,8 +7,6 @@ from typing import Any, Dict, List
 
 from sentinel.core.streams import all_specs, ensure_loaded
 from sentinel.core.streams.email.mail_config import MailAccountConfig, MailProvider
-from sentinel.core.streams.rss.config import RSSStreamConfig
-from sentinel.core.streams.sitemap_news.config import SitemapNewsStreamConfig
 from sentinel.local.database import LocalDatabase
 
 
@@ -39,18 +37,6 @@ class LocalStreamService:
                         if cfg.provider in (MailProvider.IMAP, "imap")
                         else str(cfg.provider)
                     )
-                elif row["stream_type"] == "rss":
-                    cfg = RSSStreamConfig.model_validate_json(row["config_json"])
-                    entry["enabled"] = cfg.enabled
-                    entry["detail"] = str(cfg.feed_url)
-                elif row["stream_type"] == "sitemap_news":
-                    cfg = SitemapNewsStreamConfig.model_validate_json(row["config_json"])
-                    entry["enabled"] = cfg.enabled
-                    entry["detail"] = cfg.sitemap_url
-                elif row["stream_type"] == "bluesky":
-                    data = json.loads(row["config_json"])
-                    entry["enabled"] = bool(data.get("enabled", True))
-                    entry["detail"] = data.get("endpoint", "jetstream")
             except Exception as exc:
                 entry["error"] = str(exc)
                 entry["enabled"] = False

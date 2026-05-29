@@ -10,20 +10,12 @@ from getpass import getpass
 from pathlib import Path
 from typing import Optional
 
-from sentinel.core.streams.bluesky.config import BlueskyStreamConfig
 from sentinel.core.streams.email.mail_config import AccountSettings, AuthConfig, AuthMethod, MailAccountConfig, MailProvider
-from sentinel.core.streams.rss.config import RSSStreamConfig
-from sentinel.core.streams.sitemap_news.config import SitemapNewsStreamConfig
 from sentinel.local.config import settings
 from sentinel.local.database import LocalDatabase
 from sentinel.local.dev_firehose import FirehoseConfig, run_firehose
 from sentinel.local.monitor import LocalMonitor
 from sentinel.local.services.settings import LocalSetupService
-from sentinel.local.services.sources_materialize import (
-    MaterializeFilter,
-    format_plan,
-    materialize,
-)
 from sentinel.local.services.streams import LocalStreamService
 from sentinel.local.web.app import run as run_web
 
@@ -67,8 +59,7 @@ def cmd_init(_args: argparse.Namespace) -> None:
         ),
     )
     print("\nLocal setup complete.")
-    print("  - Add a stream:    sentinel stream add --type email")
-    print("  - Add an RSS feed: sentinel stream add --type rss")
+    print("  - Add a mailbox:   sentinel stream add")
     print("  - Start monitor:   sentinel run")
     print("  - Open web UI:     sentinel web")
     print("  - Drive test load: sentinel dev firehose --rate 20 --count 200")
@@ -78,7 +69,7 @@ def cmd_stream_list(_args: argparse.Namespace) -> None:
     db = _open_db()
     rows = LocalStreamService(db).list_stream_rows()
     if not rows:
-        print("No streams configured. Run 'sentinel stream add --type email' or '--type rss'.")
+        print("No streams configured. Run 'sentinel stream add'.")
         return
     for row in rows:
         status = "enabled" if row["enabled"] else "disabled"
@@ -92,46 +83,17 @@ def cmd_stream_remove(args: argparse.Namespace) -> None:
     print(f"Removed stream {args.name!r}")
 
 
-def cmd_stream_add(args: argparse.Namespace) -> None:
+def cmd_stream_add(_args: argparse.Namespace) -> None:
     db = _open_db()
     service = LocalStreamService(db)
-    stream_type = args.type
-    if not stream_type:
-        print("Stream types: (1) email  (2) rss  (3) bluesky  (4) sitemap_news")
-        choice = _prompt("Choose stream type", default="1")
-        stream_type = {
-            "1": "email",
-            "2": "rss",
-            "3": "bluesky",
-            "4": "sitemap_news",
-            "email": "email",
-            "rss": "rss",
-            "bluesky": "bluesky",
-            "sitemap_news": "sitemap_news",
-        }.get(choice.lower(), "email")
 
-    name = _prompt("Stream name (e.g. 'personal', 'hn-frontpage')")
+    name = _prompt("Stream name (e.g. 'personal', 'work')")
     if not name:
         raise SystemExit("Stream name is required.")
 
-    if stream_type == "email":
-        config_json = _prompt_email_stream()
-    elif stream_type == "rss":
-        config_json = _prompt_rss_stream()
-    elif stream_type == "bluesky":
-        config_json = BlueskyStreamConfig().model_dump_json()
-    elif stream_type == "sitemap_news":
-        sitemap_url = _prompt("Sitemap URL (e.g. https://www.bloomberg.com/sitemaps/news/latest.xml)")
-        publication = _prompt("Publication display name", default=name)
-        config_json = SitemapNewsStreamConfig(
-            sitemap_url=sitemap_url,
-            publication_name=publication,
-        ).model_dump_json()
-    else:
-        raise SystemExit(f"Unknown stream type: {stream_type!r}")
-
-    service.add_stream(name, stream_type, config_json)
-    print(f"\nAdded stream {name!r} (type={stream_type}).")
+    config_json = _prompt_email_stream()
+    service.add_stream(name, "email", config_json)
+    print(f"\nAdded stream {name!r} (type=email).")
 
 
 def _prompt_email_stream() -> str:
@@ -209,38 +171,6 @@ def _prompt_account_settings() -> AccountSettings:
     )
 
 
-def _prompt_rss_stream() -> str:
-    feed_url = _prompt("Feed URL (RSS or Atom)")
-    if not feed_url:
-        raise SystemExit("feed_url is required.")
-    poll_seconds = int(_prompt("Poll interval (seconds)", default="300"))
-    config = RSSStreamConfig(feed_url=feed_url, poll_seconds=poll_seconds)
-    return config.model_dump_json()
-
-
-def cmd_sources_materialize(args: argparse.Namespace) -> None:
-    kinds = tuple(args.kind) if args.kind else ("news",)
-    # --sitemaps-only and --feeds-only are mutually exclusive shortcuts.
-    include_sitemaps = not args.feeds_only
-    include_feeds = not args.sitemaps_only
-    flt = MaterializeFilter(
-        language=args.language,
-        country=args.country,
-        min_fresh=args.min_fresh,
-        limit=args.limit,
-        kinds=kinds,
-    )
-    result = materialize(
-        database_url=settings.require_database_url(),
-        flt=flt,
-        include_sitemaps=include_sitemaps,
-        include_feeds=include_feeds,
-        dry_run=args.dry_run,
-        prune=args.prune,
-    )
-    print(format_plan(result, dry_run=args.dry_run))
-
-
 def cmd_run(_args: argparse.Namespace) -> None:
     db = _open_db()
     settings.load(db)
@@ -293,58 +223,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     stream_sub.add_parser("list").set_defaults(func=cmd_stream_list)
 
-    add = stream_sub.add_parser("add")
-    add.add_argument("--type", choices=["email", "rss", "bluesky", "sitemap_news"], help="Stream type")
+    add = stream_sub.add_parser("add", help="Add an email mailbox to monitor")
     add.set_defaults(func=cmd_stream_add)
 
     rm = stream_sub.add_parser("remove")
     rm.add_argument("name")
     rm.set_defaults(func=cmd_stream_remove)
-
-    sources = sub.add_parser(
-        "sources",
-        help="Manage the Media Cloud sitemap catalog",
-    )
-    sources_sub = sources.add_subparsers(dest="sources_cmd", required=True)
-
-    mat = sources_sub.add_parser(
-        "materialize",
-        help="Materialize catalog sitemaps into sitemap_news streams",
-    )
-    mat.add_argument("--language", help="Filter sources by primary_language (e.g. 'en')")
-    mat.add_argument("--country", help="Filter sources by pub_country (e.g. 'USA')")
-    mat.add_argument(
-        "--min-fresh", type=int, default=1,
-        help="Minimum fresh_entries_24h for sitemap candidates (default 1)",
-    )
-    mat.add_argument(
-        "--limit", type=int, default=10,
-        help="Max candidates *per source kind* to materialize (default 10). "
-             "With both sitemaps and feeds enabled, the actual stream count "
-             "can be up to 2x this.",
-    )
-    mat.add_argument(
-        "--kind",
-        action="append",
-        default=None,
-        help="source_sitemaps.kind to include (repeatable; default: news)",
-    )
-    sf = mat.add_mutually_exclusive_group()
-    sf.add_argument(
-        "--sitemaps-only", action="store_true",
-        help="Only materialize sitemap_news streams from source_sitemaps",
-    )
-    sf.add_argument(
-        "--feeds-only", action="store_true",
-        help="Only materialize rss streams from source_feeds",
-    )
-    mat.add_argument("--dry-run", action="store_true", help="Print plan without writing")
-    mat.add_argument(
-        "--prune",
-        action="store_true",
-        help="Delete src:* / src-feed:* streams no longer matching the filter",
-    )
-    mat.set_defaults(func=cmd_sources_materialize, kind=None)
 
     dev = sub.add_parser("dev", help="Developer helpers for local testing")
     dev_sub = dev.add_subparsers(dest="dev_cmd", required=True)
