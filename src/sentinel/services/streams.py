@@ -6,11 +6,11 @@ import json
 from typing import Any, Dict, List
 
 from sentinel.streams.email.mail_config import MailAccountConfig, MailProvider
-from sentinel.database import LocalDatabase
+from sentinel.database import Database
 
 
-class LocalStreamService:
-    def __init__(self, db: LocalDatabase):
+class StreamService:
+    def __init__(self, db: Database):
         self.db = db
 
     def list_stream_rows(self) -> List[Dict[str, Any]]:

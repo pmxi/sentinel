@@ -1,12 +1,12 @@
 """Local runtime services."""
 
-from sentinel.services.preferences import LocalPreferences, LocalPreferencesService
-from sentinel.services.runtime import LocalRuntimeService
-from sentinel.services.streams import LocalStreamService
+from sentinel.services.preferences import Preferences, PreferencesService
+from sentinel.services.runtime import RuntimeService
+from sentinel.services.streams import StreamService
 
 __all__ = [
-    "LocalPreferences",
-    "LocalPreferencesService",
-    "LocalRuntimeService",
-    "LocalStreamService",
+    "Preferences",
+    "PreferencesService",
+    "RuntimeService",
+    "StreamService",
 ]

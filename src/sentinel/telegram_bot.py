@@ -19,7 +19,7 @@ from typing import Any, Dict, Optional
 import requests
 
 from sentinel.config import settings
-from sentinel.database import LocalDatabase
+from sentinel.database import Database
 from sentinel.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -52,7 +52,7 @@ class TelegramBotListener:
             return
 
         logger.info("Telegram bot listener starting (long-poll)")
-        db = LocalDatabase(self.database_url)
+        db = Database(self.database_url)
         try:
             while not self._stop.is_set():
                 try:
@@ -69,7 +69,7 @@ class TelegramBotListener:
 
     # ------------------------------------------------------------------ internals
 
-    def _tick(self, db: LocalDatabase) -> None:
+    def _tick(self, db: Database) -> None:
         updates = self._get_updates()
         for update in updates:
             self._offset = int(update["update_id"]) + 1
@@ -111,7 +111,7 @@ class TelegramBotListener:
             time.sleep(5)
             return []
 
-    def _handle_update(self, db: LocalDatabase, update: Dict[str, Any]) -> None:
+    def _handle_update(self, db: Database, update: Dict[str, Any]) -> None:
         msg = update.get("message") or update.get("edited_message")
         if not msg:
             return
@@ -126,7 +126,7 @@ class TelegramBotListener:
             arg = parts[1].strip() if len(parts) > 1 else ""
             self._handle_start(db, chat_id, arg)
 
-    def _handle_start(self, db: LocalDatabase, chat_id: int, token: str) -> None:
+    def _handle_start(self, db: Database, chat_id: int, token: str) -> None:
         if not token:
             self._reply(
                 chat_id,

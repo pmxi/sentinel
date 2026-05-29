@@ -28,10 +28,10 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 
 def _with_reconnect(method: F) -> F:
-    """Wrap a LocalDatabase method so transient psycopg connection errors
+    """Wrap a Database method so transient psycopg connection errors
     drop the cached conn, reconnect, and retry once."""
     @functools.wraps(method)
-    def wrapper(self: "LocalDatabase", *args, **kwargs):
+    def wrapper(self: "Database", *args, **kwargs):
         last_exc: Optional[BaseException] = None
         for attempt in range(_MAX_RECONNECT_ATTEMPTS):
             try:
@@ -52,7 +52,7 @@ def _with_reconnect(method: F) -> F:
     return wrapper  # type: ignore[return-value]
 
 
-class LocalDatabase:
+class Database:
     """Single-user PostgreSQL store for local CLI + web surfaces.
 
     Schema is in schema.sql. The two key tables are `event` (one row per
@@ -402,7 +402,7 @@ class LocalDatabase:
         with self._lock:
             self.conn.close()
 
-    def __enter__(self) -> "LocalDatabase":
+    def __enter__(self) -> "Database":
         return self
 
     def __exit__(
@@ -424,11 +424,11 @@ def _parse_datetime(value: Any) -> datetime:
 _RECONNECT_EXEMPT: set[str] = {
     "close", "_reconnect", "__init__", "__enter__", "__exit__",
 }
-for _name, _attr in list(vars(LocalDatabase).items()):
+for _name, _attr in list(vars(Database).items()):
     if _name in _RECONNECT_EXEMPT or _name.startswith("_"):
         continue
     if isinstance(_attr, (staticmethod, classmethod, property)):
         continue
     if callable(_attr):
-        setattr(LocalDatabase, _name, _with_reconnect(_attr))
+        setattr(Database, _name, _with_reconnect(_attr))
 del _name, _attr

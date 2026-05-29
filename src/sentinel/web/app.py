@@ -17,12 +17,12 @@ from sentinel.logging_config import get_logger
 from sentinel.streams.email.mail_config import AccountSettings, AuthConfig, AuthMethod, MailAccountConfig, MailProvider
 from sentinel.time_utils import utc_now
 from sentinel.config import settings
-from sentinel.database import LocalDatabase
+from sentinel.database import Database
 from sentinel.live_bus import LiveEventBus
-from sentinel.monitor import LocalMonitor
-from sentinel.services.preferences import LocalPreferencesService
-from sentinel.services.runtime import LocalRuntimeService
-from sentinel.services.streams import LocalStreamService
+from sentinel.monitor import Monitor
+from sentinel.services.preferences import PreferencesService
+from sentinel.services.runtime import RuntimeService
+from sentinel.services.streams import StreamService
 from sentinel.web.imap_probe import probe_imap
 
 logger = get_logger(__name__)
@@ -35,8 +35,8 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     app.secret_key = settings.SESSION_SECRET or "sentinel-local"
     app.extensions["live_bus"] = _maybe_start_embedded_monitor(app)
 
-    def open_db() -> LocalDatabase:
-        return LocalDatabase(app.config["DATABASE_URL"])
+    def open_db() -> Database:
+        return Database(app.config["DATABASE_URL"])
 
     @app.context_processor
     def inject_runtime_context():
@@ -49,7 +49,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     def dashboard():
         db = open_db()
         try:
-            snapshot = LocalRuntimeService(db).dashboard_snapshot()
+            snapshot = RuntimeService(db).dashboard_snapshot()
         finally:
             db.close()
         return render_template("dashboard.html", **snapshot)
@@ -58,7 +58,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     def preferences_page():
         db = open_db()
         try:
-            service = LocalPreferencesService(db)
+            service = PreferencesService(db)
             prefs = service.load()
         finally:
             db.close()
@@ -85,7 +85,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     def telegram_unlink():
         db = open_db()
         try:
-            LocalPreferencesService(db).clear_telegram_chat_id()
+            PreferencesService(db).clear_telegram_chat_id()
         finally:
             db.close()
         return redirect(url_for("preferences_page"))
@@ -94,7 +94,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     def prompt_page():
         db = open_db()
         try:
-            service = LocalPreferencesService(db)
+            service = PreferencesService(db)
             if request.method == "POST":
                 service.save_classification_notes(
                     request.form.get("CLASSIFICATION_NOTES", "")
@@ -302,7 +302,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     def streams_page():
         db = open_db()
         try:
-            rows = LocalStreamService(db).list_stream_rows()
+            rows = StreamService(db).list_stream_rows()
         finally:
             db.close()
 
@@ -400,7 +400,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
 
             db = open_db()
             try:
-                service = LocalStreamService(db)
+                service = StreamService(db)
                 if name and service.get_stream(name):
                     errors.append(
                         f"You already have a stream named {name!r}. Pick a different name."
@@ -450,7 +450,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     def toggle_stream(name: str):
         db = open_db()
         try:
-            LocalStreamService(db).toggle_stream(name)
+            StreamService(db).toggle_stream(name)
         finally:
             db.close()
         return redirect(url_for("streams_page"))
@@ -459,7 +459,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     def delete_stream(name: str):
         db = open_db()
         try:
-            LocalStreamService(db).delete_stream(name)
+            StreamService(db).delete_stream(name)
         finally:
             db.close()
         return redirect(url_for("streams_page"))
@@ -489,8 +489,8 @@ def _maybe_start_embedded_monitor(app: Flask) -> Optional[LiveEventBus]:
 
     def _run_monitor() -> None:
         try:
-            db = LocalDatabase(app.config["DATABASE_URL"])
-            monitor = LocalMonitor(db, bus=bus)
+            db = Database(app.config["DATABASE_URL"])
+            monitor = Monitor(db, bus=bus)
             asyncio.run(monitor.run())
         except Exception as exc:
             logger.exception("Embedded local monitor crashed: %s", exc)
@@ -532,7 +532,7 @@ def _sse_push_loop(database_url: str, cursor: int, bus: LiveEventBus):
         q = bus.subscribe()
         heartbeat_countdown = 30
         try:
-            db = LocalDatabase(database_url)
+            db = Database(database_url)
             try:
                 while True:
                     rows = db.fetch_events_since(cursor, limit=200)
@@ -571,7 +571,7 @@ def _sse_poll_loop(database_url: str, cursor: int):
         nonlocal cursor
         yield "retry: 3000\n: connected\n\n"
         heartbeat_countdown = 30
-        db = LocalDatabase(database_url)
+        db = Database(database_url)
         try:
             while True:
                 rows = db.fetch_events_since(cursor, limit=200)

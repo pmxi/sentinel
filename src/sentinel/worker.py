@@ -10,14 +10,14 @@ from __future__ import annotations
 import asyncio
 
 from sentinel.config import settings
-from sentinel.database import LocalDatabase
-from sentinel.monitor import LocalMonitor
+from sentinel.database import Database
+from sentinel.monitor import Monitor
 
 
 def main() -> None:
     settings.validate()
-    db = LocalDatabase(settings.require_database_url())
-    asyncio.run(LocalMonitor(db).run())
+    db = Database(settings.require_database_url())
+    asyncio.run(Monitor(db).run())
 
 
 if __name__ == "__main__":

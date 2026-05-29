@@ -24,10 +24,10 @@ from sentinel.streams import Item
 from sentinel.streams.email.mail_config import MailAccountConfig
 from sentinel.streams.email.stream import EmailStream
 from sentinel.config import settings
-from sentinel.database import LocalDatabase
+from sentinel.database import Database
 from sentinel.live_bus import LiveEvent, LiveEventBus
-from sentinel.services.preferences import LocalPreferences
-from sentinel.services.streams import LocalStreamService
+from sentinel.services.preferences import Preferences
+from sentinel.services.streams import StreamService
 from sentinel.telegram_bot import start_in_thread as start_telegram_listener
 from sentinel.time_utils import utc_now
 
@@ -49,15 +49,15 @@ _STREAM_REFRESH_SECONDS = 30
 _CLASSIFICATION_DISABLED = True
 
 
-class LocalMonitor:
+class Monitor:
     def __init__(
         self,
-        database: LocalDatabase,
+        database: Database,
         bus: Optional[LiveEventBus] = None,
     ):
         self.db = database
         self.bus = bus
-        self.stream_service = LocalStreamService(database)
+        self.stream_service = StreamService(database)
         self.classifier = OpenAIItemClassifier(
             api_key=settings.LLM_API_KEY or "",
             model=settings.LLM_MODEL,
@@ -75,14 +75,14 @@ class LocalMonitor:
         self._last_check_ts_monotonic: float = 0.0
         self._last_check_min_interval_s: float = 5.0
         # Shared preferences cache. With thousands of streams each calling
-        # LocalPreferences.load() at startup, the supervisor would otherwise
+        # Preferences.load() at startup, the supervisor would otherwise
         # serialize through the single DB connection for ~60s.
-        self._preferences_cache: Optional[LocalPreferences] = None
+        self._preferences_cache: Optional[Preferences] = None
         # One batching observer shared across every stream's processor.
         # The per-stream observer-per-processor pattern was a non-starter
         # at thousands of streams because each instance would run its own
         # batcher task and contend on the DB lock.
-        self._observer: Optional[_LocalProcessingObserver] = None
+        self._observer: Optional[_BatchingObserver] = None
 
     async def run(self) -> None:
         logger.info("Starting local Sentinel supervisor")
@@ -197,12 +197,12 @@ class LocalMonitor:
             on_token_refreshed=lambda token_json, name=row["name"]: self.stream_service.persist_email_token(name, token_json),
         )
 
-    def _get_preferences(self) -> LocalPreferences:
+    def _get_preferences(self) -> Preferences:
         # Cached. Refreshes only on full supervisor restart; rare relative
         # to stream churn. (If you need live preference reloads, invalidate
         # this from the same callback that handles the settings update.)
         if self._preferences_cache is None:
-            self._preferences_cache = LocalPreferences.load(self.db)
+            self._preferences_cache = Preferences.load(self.db)
         return self._preferences_cache
 
     async def _run_stream(self, stream: EmailStream) -> None:
@@ -210,8 +210,8 @@ class LocalMonitor:
             try:
                 preferences = self._get_preferences()
                 if self._observer is None:
-                    self._observer = _LocalProcessingObserver(self.db, self.bus)
-                processor = LocalItemProcessor(
+                    self._observer = _BatchingObserver(self.db, self.bus)
+                processor = ItemPipeline(
                     db=self.db,
                     classifier=self.classifier,
                     preferences=preferences,
@@ -306,15 +306,15 @@ class LocalMonitor:
         self._stream_config_sig.clear()
 
 
-class LocalItemProcessor:
+class ItemPipeline:
     def __init__(
         self,
         *,
-        db: LocalDatabase,
+        db: Database,
         classifier: OpenAIItemClassifier,
-        preferences: LocalPreferences,
+        preferences: Preferences,
         bus: Optional[LiveEventBus],
-        observer: Optional["_LocalProcessingObserver"] = None,
+        observer: Optional["_BatchingObserver"] = None,
     ):
         notifier = None
         if preferences.has_telegram() and settings.TELEGRAM_BOT_TOKEN:
@@ -326,10 +326,10 @@ class LocalItemProcessor:
             )
         # Reuse a shared observer if provided (supervisor's batching writer);
         # otherwise build a private one (legacy callers).
-        self.observer = observer or _LocalProcessingObserver(db, bus)
+        self.observer = observer or _BatchingObserver(db, bus)
         self.processor = ItemProcessor(
             classifier=classifier,
-            store=_LocalProcessedItemStore(db),
+            store=_DbProcessedItemStore(db),
             notifier=notifier,
             observer=self.observer,
             is_retryable_classifier_error=_is_transient_classification_error,
@@ -349,13 +349,13 @@ class LocalItemProcessor:
         return await self.processor.process(item, notes=self.notes)
 
 
-class _LocalProcessedItemStore(ProcessedItemStore):
+class _DbProcessedItemStore(ProcessedItemStore):
     """Dedup is now a UNIQUE constraint on `event(item_id)`.
     is_processed() is the existence check; mark_processed() is a no-op
     because the row already exists by the time we get here (the
     observer's batched insert is what created it)."""
 
-    def __init__(self, db: LocalDatabase):
+    def __init__(self, db: Database):
         self.db = db
 
     async def is_processed(self, item: Item) -> bool:
@@ -378,7 +378,7 @@ def _effective_body(item: Item) -> Optional[str]:
     return body
 
 
-class _LocalProcessingObserver(ProcessingObserver):
+class _BatchingObserver(ProcessingObserver):
     """Async batched writer for event + classification.
 
     item_received  -> insert into event (also creates the dedup row)
@@ -397,7 +397,7 @@ class _LocalProcessingObserver(ProcessingObserver):
     BATCH_INTERVAL_S = 0.25
     QUEUE_MAX = 50_000
 
-    def __init__(self, db: LocalDatabase, bus: Optional[LiveEventBus]):
+    def __init__(self, db: Database, bus: Optional[LiveEventBus]):
         self.db = db
         self.bus = bus
         self._queue: "asyncio.Queue[Item]" = asyncio.Queue(maxsize=self.QUEUE_MAX)

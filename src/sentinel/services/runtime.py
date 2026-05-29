@@ -6,11 +6,11 @@ from datetime import datetime
 from typing import Any, Dict, Optional
 
 from sentinel.time_utils import utc_now
-from sentinel.database import LocalDatabase
+from sentinel.database import Database
 
 
-class LocalRuntimeService:
-    def __init__(self, db: LocalDatabase):
+class RuntimeService:
+    def __init__(self, db: Database):
         self.db = db
 
     def dashboard_snapshot(self) -> Dict[str, Any]:

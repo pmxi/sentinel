@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sentinel.database import LocalDatabase
+from sentinel.database import Database
 
 
 @dataclass
-class LocalPreferences:
+class Preferences:
     TELEGRAM_CHAT_ID: str = ""
     CLASSIFICATION_NOTES: str = ""
 
     @classmethod
-    def load(cls, db: LocalDatabase) -> "LocalPreferences":
+    def load(cls, db: Database) -> "Preferences":
         raw = db.get_all_local_settings()
         kwargs = {}
         for field_name in cls.__dataclass_fields__:
@@ -25,12 +25,12 @@ class LocalPreferences:
         return bool(self.TELEGRAM_CHAT_ID)
 
 
-class LocalPreferencesService:
-    def __init__(self, db: LocalDatabase):
+class PreferencesService:
+    def __init__(self, db: Database):
         self.db = db
 
-    def load(self) -> LocalPreferences:
-        return LocalPreferences.load(self.db)
+    def load(self) -> Preferences:
+        return Preferences.load(self.db)
 
     def save_classification_notes(self, notes: str) -> None:
         if notes.strip():

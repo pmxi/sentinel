@@ -21,7 +21,7 @@ def _flag(name: str, default: bool = False) -> bool:
     return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
-class LocalSettings:
+class Settings:
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
 
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")
@@ -56,4 +56,4 @@ class LocalSettings:
         return True
 
 
-settings = LocalSettings()
+settings = Settings()
