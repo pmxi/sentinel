@@ -32,7 +32,6 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.debug = debug
     app.config["DATABASE_URL"] = database_url or settings.require_database_url()
-    _bootstrap_settings(app)
     app.secret_key = settings.SESSION_SECRET or "sentinel-local"
     app.extensions["live_bus"] = _maybe_start_embedded_monitor(app)
 
@@ -475,19 +474,15 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     return app
 
 
-def _bootstrap_settings(app: Flask) -> None:
-    db = LocalDatabase(app.config["DATABASE_URL"])
-    try:
-        settings.load(db)
-    finally:
-        db.close()
-
-
 def _maybe_start_embedded_monitor(app: Flask) -> Optional[LiveEventBus]:
+    import os
+
+    if os.getenv("SENTINEL_EMBED_WORKER", "true").strip().lower() not in ("1", "true", "yes", "on"):
+        logger.info("SENTINEL_EMBED_WORKER off; web will not run the supervisor (use sentinel-worker).")
+        return None
     if not settings.LLM_API_KEY:
         logger.info("LLM_API_KEY not configured; skipping embedded local monitor.")
         return None
-    import os
 
     # Under Werkzeug's reloader the parent process re-execs a child with
     # WERKZEUG_RUN_MAIN=true; the parent itself never sets it. Starting the

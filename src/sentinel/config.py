@@ -1,39 +1,47 @@
-"""Local runtime settings loaded from PostgreSQL-backed app_settings."""
+"""Operator/runtime settings, loaded from the environment (.env).
+
+Operator config (DB url, OpenAI key, Telegram bot, ...) is set via environment
+variables — there is no interactive setup step. Per-user preferences live in
+the database (see services/preferences.py).
+"""
 
 from __future__ import annotations
 
 import os
-from typing import Any, TYPE_CHECKING, Optional
 
 from dotenv import load_dotenv
 
-if TYPE_CHECKING:
-    from sentinel.database import LocalDatabase
-
 load_dotenv()
+
+
+def _flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
 class LocalSettings:
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
 
-    LLM_PROVIDER: str = "openai"
-    LLM_API_KEY: Optional[str] = None
-    LLM_MODEL: str = "gpt-5.4"
+    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")
+    LLM_API_KEY: str | None = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-5.4")
 
-    RESEND_API_KEY: Optional[str] = None
-    EMAIL_FROM_ADDRESS: Optional[str] = None
-    EMAIL_FROM_NAME: str = ""
+    RESEND_API_KEY: str | None = os.getenv("RESEND_API_KEY")
+    EMAIL_FROM_ADDRESS: str | None = os.getenv("EMAIL_FROM_ADDRESS")
+    EMAIL_FROM_NAME: str = os.getenv("EMAIL_FROM_NAME", "")
 
-    TELEGRAM_BOT_TOKEN: Optional[str] = None
-    TELEGRAM_BOT_USERNAME: Optional[str] = None
+    TELEGRAM_BOT_TOKEN: str | None = os.getenv("TELEGRAM_BOT_TOKEN")
+    TELEGRAM_BOT_USERNAME: str | None = os.getenv("TELEGRAM_BOT_USERNAME")
 
-    MAX_LOOKBACK_HOURS: int = 24
+    MAX_LOOKBACK_HOURS: int = int(os.getenv("MAX_LOOKBACK_HOURS", "24"))
 
-    LOG_LEVEL: str = "INFO"
-    LOG_DIR: str = "logs"
-    DISABLE_FILE_LOGGING: bool = False
+    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+    LOG_DIR: str = os.getenv("LOG_DIR", "logs")
+    DISABLE_FILE_LOGGING: bool = _flag("DISABLE_FILE_LOGGING")
 
-    SESSION_SECRET: Optional[str] = None
+    SESSION_SECRET: str | None = os.getenv("SESSION_SECRET")
 
     @classmethod
     def require_database_url(cls) -> str:
@@ -44,32 +52,12 @@ class LocalSettings:
         return cls.DATABASE_URL
 
     @classmethod
-    def load(cls, db: "LocalDatabase") -> None:
-        for key, raw in db.get_all_app_settings().items():
-            if not hasattr(cls, key):
-                continue
-            default = getattr(cls, key)
-            target = type(default) if default is not None else str
-            setattr(cls, key, _coerce(raw, target))
-
-    @classmethod
     def validate(cls) -> bool:
-        missing = []
         if not cls.LLM_API_KEY:
-            missing.append("LLM_API_KEY")
-        if missing:
             raise ValueError(
-                f"Missing required local app settings: {', '.join(missing)}. Configure with 'sentinel init'."
+                "LLM_API_KEY (or OPENAI_API_KEY) is required. Set it in .env."
             )
         return True
-
-
-def _coerce(raw: str, target: type) -> Any:
-    if target is bool:
-        return str(raw).strip().lower() in ("true", "1", "yes", "on")
-    if target is int:
-        return int(raw)
-    return raw
 
 
 settings = LocalSettings()

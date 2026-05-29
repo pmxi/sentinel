@@ -19,7 +19,8 @@ dependencies = [
 ]
 
 [project.scripts]
-sentinel = "sentinel.cli:main"
+sentinel-web = "sentinel.web.app:main"
+sentinel-worker = "sentinel.worker:main"
 
 [build-system]
 requires = ["hatchling"]
