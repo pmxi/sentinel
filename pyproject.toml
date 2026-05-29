@@ -22,7 +22,7 @@ dependencies = [
 ]
 
 [project.scripts]
-sentinel = "sentinel.local.cli:main"
+sentinel = "sentinel.cli:main"
 
 [build-system]
 requires = ["hatchling"]
