@@ -249,7 +249,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         token = secrets.token_urlsafe(24)
         db = open_db()
         try:
-            db.create_telegram_link_token(token, utc_now() + timedelta(minutes=10))
+            db.create_telegram_link_token(token, utc_now() + timedelta(minutes=10), session["user_id"])
         finally:
             db.close()
         return redirect(f"https://t.me/{settings.TELEGRAM_BOT_USERNAME}?start={token}")

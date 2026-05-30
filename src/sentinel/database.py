@@ -418,22 +418,25 @@ class Database:
 
     # ----- telegram_link_token ------------------------------------------
 
-    def create_telegram_link_token(self, token: str, expires_at: datetime) -> None:
+    def create_telegram_link_token(self, token: str, expires_at: datetime, user_id: int) -> None:
         with self._lock:
             self.conn.execute(
-                "INSERT INTO telegram_link_token (token, expires_at) VALUES (%s, %s)",
-                (token, expires_at),
+                "INSERT INTO telegram_link_token (token, expires_at, user_id) VALUES (%s, %s, %s)",
+                (token, expires_at, user_id),
             )
 
-    def consume_telegram_link_token(self, token: str) -> bool:
+    def consume_telegram_link_token(self, token: str) -> Optional[int]:
+        """Validate + delete a link token; return the user_id that created it, or None."""
         with self._lock:
             row = self.conn.execute(
-                "SELECT expires_at FROM telegram_link_token WHERE token=%s", (token,)
+                "SELECT expires_at, user_id FROM telegram_link_token WHERE token=%s", (token,)
             ).fetchone()
             if row is None:
-                return False
+                return None
             self.conn.execute("DELETE FROM telegram_link_token WHERE token=%s", (token,))
-            return _parse_datetime(row["expires_at"]) >= utc_now()
+        if _parse_datetime(row["expires_at"]) < utc_now():
+            return None
+        return row["user_id"]
 
     def purge_expired_telegram_link_tokens(self) -> int:
         with self._lock:

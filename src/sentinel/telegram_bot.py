@@ -136,16 +136,17 @@ class TelegramBotListener:
             )
             return
 
-        if not db.consume_telegram_link_token(token):
+        user_id = db.consume_telegram_link_token(token)
+        if user_id is None:
             self._reply(
                 chat_id,
                 "This link has expired or was already used. Open the web UI and "
-                "click *Link Telegram* again.",
+                "click *Connect Telegram* again.",
             )
             return
 
-        db.set_local_setting("TELEGRAM_CHAT_ID", str(chat_id))
-        logger.info("linked local runtime to telegram chat_id=%s", chat_id)
+        db.set_user_telegram_chat_id(user_id, str(chat_id))
+        logger.info("linked telegram chat_id=%s to user_id=%s", chat_id, user_id)
         self._reply(
             chat_id,
             "✅ Linked. You'll receive a ping here when Sentinel finds an important email.",

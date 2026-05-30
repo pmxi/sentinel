@@ -54,6 +54,9 @@ CREATE TABLE IF NOT EXISTS telegram_link_token (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMPTZ NOT NULL
 );
+-- The token records which user initiated the link, so the bot can bind the
+-- chat_id to the right account on /start <token>.
+ALTER TABLE telegram_link_token ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES app_user(id) ON DELETE CASCADE;
 
 -- The core table. One row per observed item; replaces both the old
 -- `live_events` event log and the `processed_items` dedup ledger.
