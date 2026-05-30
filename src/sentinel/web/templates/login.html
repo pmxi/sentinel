@@ -1,9 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Sign in — Sentinel{% endblock %}
 {% block content %}
-<section class="login">
+<section style="max-width: 28rem">
   <h2>Sign in</h2>
-  <p>Sentinel uses your Google account for identity only — we don't read your Gmail through Google. You'll connect your mail accounts separately (Gmail, iCloud, Fastmail, etc. via IMAP) once you're signed in.</p>
-  <p><a class="button" href="{{ url_for('auth_google_start') }}">Sign in with Google</a></p>
+  <p>Sentinel watches your inbox and pings you when something actually matters.</p>
+  {% if google_oauth %}
+    <p><a class="button" href="{{ url_for('auth_google') }}">Sign in with Google</a></p>
+  {% else %}
+    <p class="hint">Google sign-in isn't configured — set <code>GOOGLE_CLIENT_ID</code> and
+    <code>GOOGLE_CLIENT_SECRET</code> in the environment.</p>
+  {% endif %}
 </section>
 {% endblock %}

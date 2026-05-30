@@ -1,9 +1,9 @@
-"""Sentinel web console.
+"""Sentinel web console (multi-tenant).
 
-A thin control panel for the runtime: connect an inbox, edit the classification
-criteria, and link a notification channel. It deliberately does NOT display email
-content — alerts are delivered out-of-band (Telegram), and the inbox lives in
-the user's own mail client.
+Sign in with Google, connect inboxes (Gmail via OAuth, or any provider via
+IMAP app-password), edit your classification criteria, and link Telegram.
+Everything is scoped to the signed-in user. The console never displays email
+content — alerts go out-of-band (Telegram); the inbox lives in your mail client.
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ import threading
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
-from flask import Flask, abort, redirect, render_template, request, url_for
+from flask import Flask, abort, redirect, render_template, request, session, url_for
 
 from sentinel.logging_config import get_logger
 from sentinel.classifier.openai_classifier import _default_criteria
@@ -23,45 +23,135 @@ from sentinel.time_utils import utc_now
 from sentinel.config import settings
 from sentinel.database import Database
 from sentinel.monitor import Monitor
-from sentinel.services.preferences import PreferencesService
 from sentinel.services.streams import StreamService
+from sentinel.web.auth import GMAIL_SCOPES, SIGNIN_SCOPES, build_flow, client_config_json, userinfo_from_credentials
 from sentinel.web.imap_probe import probe_imap
 
 logger = get_logger(__name__)
+
+_PUBLIC_ENDPOINTS = {"login", "auth_google", "oauth_callback", "static"}
 
 
 def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.debug = debug
     app.config["DATABASE_URL"] = database_url or settings.require_database_url()
-    app.secret_key = settings.SESSION_SECRET or "sentinel-local"
+    app.secret_key = settings.SESSION_SECRET or "sentinel-dev-secret"
     _maybe_start_embedded_monitor(app)
 
     def open_db() -> Database:
         return Database(app.config["DATABASE_URL"])
 
     @app.context_processor
-    def inject_runtime_context():
-        return {"identity_enabled": False, "current_user": {"email": "local@sentinel"}}
+    def inject_user():
+        return {"current_email": session.get("email")}
+
+    @app.before_request
+    def require_login():
+        if request.endpoint in _PUBLIC_ENDPOINTS:
+            return None
+        if session.get("user_id") is None:
+            return redirect(url_for("login"))
+        return None
+
+    # ---- auth -----------------------------------------------------------
+
+    @app.route("/login")
+    def login():
+        if session.get("user_id"):
+            return redirect(url_for("console"))
+        return render_template("login.html", google_oauth=settings.google_oauth_configured())
+
+    @app.route("/auth/google")
+    def auth_google():
+        if not settings.google_oauth_configured():
+            abort(500, "Google OAuth not configured (set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET).")
+        flow = build_flow(SIGNIN_SCOPES)
+        url, state = flow.authorization_url(
+            access_type="online", include_granted_scopes="true", prompt="select_account"
+        )
+        session["oauth_state"] = state
+        session["oauth_action"] = "login"
+        return redirect(url)
+
+    @app.route("/gmail/connect")
+    def gmail_connect():
+        if not settings.google_oauth_configured():
+            abort(500, "Google OAuth not configured.")
+        flow = build_flow(GMAIL_SCOPES)
+        url, state = flow.authorization_url(
+            access_type="offline", include_granted_scopes="true", prompt="consent"
+        )
+        session["oauth_state"] = state
+        session["oauth_action"] = "connect_gmail"
+        return redirect(url)
+
+    @app.route("/oauth/google/callback")
+    def oauth_callback():
+        state = session.pop("oauth_state", None)
+        action = session.pop("oauth_action", "login")
+        if request.args.get("error"):
+            abort(400, f"Google returned: {request.args.get('error')}")
+        if not state or request.args.get("state") != state:
+            abort(400, "OAuth state mismatch — please try again.")
+
+        scopes = GMAIL_SCOPES if action == "connect_gmail" else SIGNIN_SCOPES
+        flow = build_flow(scopes, state=state)
+        flow.fetch_token(authorization_response=request.url)
+        creds = flow.credentials
+        info = userinfo_from_credentials(creds)
+
+        db = open_db()
+        try:
+            if action == "connect_gmail":
+                if session.get("user_id") is None:
+                    return redirect(url_for("login"))
+                config = MailAccountConfig(
+                    provider=MailProvider.GMAIL_API,
+                    auth=AuthConfig(
+                        method=AuthMethod.OAUTH2,
+                        client_config_json=client_config_json(),
+                        token_json=creds.to_json(),
+                    ),
+                )
+                StreamService(db).save_stream(
+                    f"gmail:{info['email']}", "email", config.model_dump_json(),
+                    user_id=session["user_id"],
+                )
+            else:
+                user = db.upsert_user(info["sub"], info["email"], info.get("name"))
+                session["user_id"] = int(user["id"])
+                session["email"] = user["email"]
+        finally:
+            db.close()
+        return redirect(url_for("console"))
+
+    @app.route("/logout", methods=["POST"])
+    def logout():
+        session.clear()
+        return redirect(url_for("login"))
+
+    # ---- console --------------------------------------------------------
 
     @app.route("/", methods=["GET", "POST"])
     def console():
+        uid = session["user_id"]
         db = open_db()
         try:
-            prefs_service = PreferencesService(db)
             if request.method == "POST":
-                prefs_service.save_classification_notes(request.form.get("criteria", ""))
+                db.set_user_criteria(uid, request.form.get("criteria", ""))
                 return redirect(url_for("console", saved=1))
-            inboxes = StreamService(db).list_stream_rows()
-            prefs = prefs_service.load()
+            user = db.get_user(uid) or {}
+            inboxes = StreamService(db).list_stream_rows_for_user(uid)
         finally:
             db.close()
         return render_template(
             "console.html",
             inboxes=inboxes,
-            criteria=prefs.CLASSIFICATION_NOTES or _default_criteria(),
-            telegram_linked=bool(prefs.TELEGRAM_CHAT_ID),
+            criteria=(user.get("criteria") or _default_criteria()),
+            telegram_linked=bool(user.get("telegram_chat_id")),
             telegram_bot_username=settings.TELEGRAM_BOT_USERNAME,
+            google_oauth=settings.google_oauth_configured(),
             saved=request.args.get("saved") == "1",
         )
 
@@ -115,7 +205,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
                         ),
                         settings=AccountSettings(),
                     )
-                    service.add_stream(name, "email", config.model_dump_json())
+                    service.add_stream(name, "email", config.model_dump_json(), user_id=session["user_id"])
                     return redirect(url_for("console"))
             finally:
                 db.close()
@@ -144,7 +234,10 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     def delete_inbox(name: str):
         db = open_db()
         try:
-            StreamService(db).delete_stream(name)
+            row = StreamService(db).get_stream(name)
+            # Only let a user delete their own inbox.
+            if row and row.get("user_id") == session["user_id"]:
+                StreamService(db).delete_stream(name)
         finally:
             db.close()
         return redirect(url_for("console"))
@@ -165,7 +258,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     def telegram_unlink():
         db = open_db()
         try:
-            PreferencesService(db).clear_telegram_chat_id()
+            db.set_user_telegram_chat_id(session["user_id"], None)
         finally:
             db.close()
         return redirect(url_for("console"))
@@ -182,8 +275,6 @@ def _maybe_start_embedded_monitor(app: Flask) -> None:
     if not settings.LLM_API_KEY:
         logger.info("LLM_API_KEY not configured; skipping embedded supervisor.")
         return
-    # Under Werkzeug's reloader only the child (WERKZEUG_RUN_MAIN=true) should
-    # start the supervisor, else two Telegram pollers collide (HTTP 409).
     if app.debug and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
         return
 

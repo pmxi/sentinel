@@ -19,13 +19,16 @@
   {% else %}
     <p>No inbox connected yet.</p>
   {% endif %}
-  <p><a class="button" href="{{ url_for('connect_inbox') }}">Connect an inbox</a></p>
+  <p>
+    {% if google_oauth %}<a class="button" href="{{ url_for('gmail_connect') }}">Connect Gmail</a>{% endif %}
+    <a class="button" href="{{ url_for('connect_inbox') }}">Connect via IMAP (app password)</a>
+  </p>
 </section>
 
 <section>
   <h2>What matters to you</h2>
   {% if saved %}<p role="status" class="flash">Saved.</p>{% endif %}
-  <p class="hint">Plain-English criteria for which emails are important. This is sent to the classifier as-is — edit it however you like.</p>
+  <p class="hint">Plain-English criteria for which emails are important. Sent to the classifier as-is — edit it however you like.</p>
   <form method="post">
     <textarea name="criteria" rows="14" style="width:100%" spellcheck="false">{{ criteria }}</textarea>
     <p><button type="submit">Save</button></p>
