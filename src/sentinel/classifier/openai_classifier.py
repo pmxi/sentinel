@@ -98,7 +98,13 @@ class OpenAIItemClassifier:
         # The user's saved criteria, edited directly in the console, IS the
         # criteria. Fall back to the built-in default only when it's empty.
         criteria = (notes or "").strip() or _default_criteria()
-        rendered = self._render_item(item)
+        body = item.body
+        if len(body) > _MAX_BODY_CHARS:
+            logger.warning(
+                "Item body truncated for LLM: id=%s title=%r original=%d chars limit=%d chars",
+                item.id, item.title[:80], len(body), _MAX_BODY_CHARS,
+            )
+            body = body[:_MAX_BODY_CHARS] + f"\n\n[... truncated to {_MAX_BODY_CHARS:,} chars ...]"
         return f"""
 You are a classification assistant. The user wants to be alerted only to the
 emails that genuinely matter to them. Classify the following item as IMPORTANT or NORMAL.
@@ -106,30 +112,13 @@ emails that genuinely matter to them. Classify the following item as IMPORTANT o
 {criteria}
 
 ITEM TO CLASSIFY:
-{rendered}
+{body}
 
 Return:
 - priority: "important" or "normal"
 - reasoning: brief explanation
 - summary: concise 140-character summary
 """
-
-    def _render_item(self, item: Item) -> str:
-        body = item.body
-        original_size = len(body)
-        if original_size > _MAX_BODY_CHARS:
-            body = (
-                body[:_MAX_BODY_CHARS]
-                + f"\n\n[... truncated from {original_size:,} chars ...]"
-            )
-            logger.warning(
-                "Item body truncated for LLM: id=%s title=%r original=%d chars limit=%d chars",
-                item.id,
-                item.title[:80],
-                original_size,
-                _MAX_BODY_CHARS,
-            )
-        return body
 
 
 def _default_criteria() -> str:
