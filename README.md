@@ -27,52 +27,67 @@ uv sync
 
 ## Quick start
 
-### 1. Configure operator-level settings
+### 1. Configure
+
+Sentinel is configured entirely through environment variables — copy the
+template and fill it in:
 
 ```bash
-uv run sentinel init
+cp .env.example .env
 ```
 
-You'll be asked for:
-- **OpenAI API key** (required) — from
-  [platform.openai.com](https://platform.openai.com/api-keys)
-- **Telegram bot** (optional) — create one via
-  [`@BotFather`](https://t.me/BotFather), paste the token + bot username
-- **Resend API key** (optional) — for transactional email; from
-  [resend.com](https://resend.com)
-- **Monitoring preferences** — poll interval, max lookback hours
+At minimum set `DATABASE_URL`, `OPENAI_API_KEY`, and (for sign-in /
+Connect-Gmail) the Google OAuth creds. See `.env.example` for the full list
+and `development.md` for the Google Cloud setup.
 
-Single-user; there is no app-level login.
+### 2. Start Postgres
 
-### 2. Add a mailbox
+Sentinel needs a PostgreSQL database (18+). On macOS via Homebrew:
 
 ```bash
-uv run sentinel stream add   # IMAP / Gmail API / MSGraph
+brew install postgresql@18
+brew services run postgresql@18   # runs for this session, no boot-time daemon
+createdb sentinel                 # one-time; psql tools live in /opt/homebrew/opt/postgresql@18/bin
 ```
 
-Pick **IMAP** (with an [app password](#getting-an-app-password)) unless
-you've already verified an app with Google or Azure.
+(`brew services stop postgresql@18` when you're done.) The schema is applied
+automatically on first connect.
 
-You can also add mailboxes through the web UI once it's running.
-
-### 3. Run the monitor
+### 3. Run the dev server
 
 ```bash
-uv run sentinel web
+uv run sentinel-web
 ```
 
-This is the one command you need. `sentinel web` runs the supervisor
-in-process alongside the Flask app, so there's no second daemon to manage.
-Open `http://127.0.0.1:8765`. No login required. From there you can:
-- Watch the live feed as items arrive and get classified in real time
-- See daemon status and recently-processed items
-- Add/disable/delete mailboxes
-- Edit your classification notes (appended to the LLM prompt every time)
+That's the one command you need. It serves the web console at
+**http://localhost:8765** and — when `OPENAI_API_KEY` is set — runs the
+classification worker in-process, so there's no second daemon to manage.
+
+> Open it as `localhost`, **not** `127.0.0.1`. Google OAuth redirects back to
+> the `localhost` callback, and browser session cookies are host-specific —
+> mixing the two breaks sign-in with an "OAuth state mismatch" error.
+
+Open the link, **sign in with Google**, then from the console you can:
+- Connect inboxes — **Gmail via OAuth** (`gmail.readonly`), or any provider
+  via an [app password](#getting-an-app-password)
+- Edit your classification criteria (plain-English notes that drive the LLM)
 - Link your Telegram chat in one click
 
-For a purely headless deployment (no web UI), `sentinel run` spawns just
-the supervisor. Don't run both at once — you'll get two supervisors and
-duplicate notifications.
+The console never displays your email — alerts go out-of-band over Telegram.
+
+#### Running the worker separately (optional)
+
+For production scale you typically run multiple stateless web processes, so
+the embedded worker is turned off and the supervisor runs on its own:
+
+```bash
+SENTINEL_EMBED_WORKER=false uv run sentinel-web     # web only
+uv run sentinel-worker                               # the supervisor
+```
+
+In dev you don't need this — a single `sentinel-web` does both. Don't run an
+embedded `sentinel-web` *and* a standalone `sentinel-worker` at once, or
+you'll get two supervisors and duplicate notifications.
 
 ---
 
