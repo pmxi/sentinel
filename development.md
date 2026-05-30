@@ -109,6 +109,12 @@ are separate processes sharing one DB.
 
 ## Risks to design for
 
+- **TODO: stop storing email content (violates decision #3).** The worker
+  currently persists the full rendered email — subject, sender, body — in
+  `event.body` in plaintext for *every* message. Decision #3 says persist only
+  decisions/derived alert facts, never the body. Rework `event` into an
+  opaque-id dedup ledger + an `alert` table before launch (Google CASA will
+  flag stored bodies).
 - **Secrets at rest (open gap).** Gmail refresh tokens and IMAP app passwords
   are stored unencrypted in `stream.config_json`. Encrypt before any real
   multi-user use — a DB leak = access to users' inboxes.
