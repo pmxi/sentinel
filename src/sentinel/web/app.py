@@ -50,8 +50,19 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     def require_login():
         if request.endpoint in _PUBLIC_ENDPOINTS:
             return None
-        if session.get("user_id") is None:
+        uid = session.get("user_id")
+        if uid is None:
             return redirect(url_for("login"))
+        # Presence isn't enough — the row must still exist. A stale cookie (e.g.
+        # the user's row was deleted) would otherwise pass and then crash the
+        # first FK insert. Drop the orphaned session and make them re-auth.
+        db = open_db()
+        try:
+            if db.get_user(uid) is None:
+                session.clear()
+                return redirect(url_for("login"))
+        finally:
+            db.close()
         return None
 
     # ---- auth -----------------------------------------------------------
@@ -104,7 +115,11 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         db = open_db()
         try:
             if action == "connect_gmail":
-                if session.get("user_id") is None:
+                uid = session.get("user_id")
+                if uid is None or db.get_user(uid) is None:
+                    # No live user behind the session — don't attempt an insert
+                    # that would violate the stream→user FK; re-auth instead.
+                    session.clear()
                     return redirect(url_for("login"))
                 config = MailAccountConfig(
                     provider=MailProvider.GMAIL_API,
@@ -116,7 +131,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
                 )
                 StreamService(db).save_stream(
                     f"gmail:{info['email']}", "email", config.model_dump_json(),
-                    user_id=session["user_id"],
+                    user_id=uid,
                 )
             else:
                 user = db.upsert_user(info["sub"], info["email"], info.get("name"))
