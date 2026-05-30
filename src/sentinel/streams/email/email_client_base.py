@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import List, Optional
+from typing import List
 
 from sentinel.streams.email.mail_config import MailAccountConfig
 from sentinel.streams.email.models import EmailData
@@ -18,25 +18,10 @@ class EmailClient(ABC):
         self.provider_type = config.provider  # e.g., 'gmail_api', 'imap'
 
     @abstractmethod
-    def get_unread_emails(self) -> List[EmailData]:
-        """Fetch unread emails from inbox"""
-        pass
-
-    @abstractmethod
-    def get_latest_email(self) -> Optional[EmailData]:
-        """Get the most recent email from the inbox"""
-        pass
-
-    @abstractmethod
     def get_emails_after_timestamp(
         self, after_timestamp: datetime, unread_only: bool = True
     ) -> List[EmailData]:
         """Get emails received after a specific timestamp"""
-        pass
-
-    @abstractmethod
-    def mark_as_read(self, message_id: str):
-        """Mark email as read"""
         pass
 
     def close(self) -> None:

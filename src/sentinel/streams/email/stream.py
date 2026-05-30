@@ -1,12 +1,14 @@
-"""EmailStream — adapts the provider-specific EmailClients to the Stream ABC.
+"""EmailStream — adapts the provider-specific EmailClients to an Item stream.
 
-The EmailClient hierarchy (IMAP, Gmail, MSGraph) stays as the internal
-sync-fetch implementation. EmailStream wraps it:
+The EmailClient hierarchy (IMAP, Gmail) stays as the internal sync-fetch
+implementation. EmailStream wraps it:
 
-- runs a blocking fetch on a thread (IMAP / Gmail / MSGraph are sync)
-- converts EmailData → Item at the boundary
+- runs a blocking fetch on a thread (the clients are sync)
+- converts EmailData → Item at the boundary, namespacing the item id by
+  stream so ids from different inboxes can't collide in the dedup ledger
 - owns its own cursor (a datetime it's fetched past)
-- marks processed messages as read on the remote mailbox
+
+The mailbox is read-only; messages are never modified (e.g. marked read).
 """
 
 from __future__ import annotations
@@ -26,9 +28,8 @@ from sentinel.time_utils import ensure_utc, parse_iso_datetime, utc_now
 logger = get_logger(__name__)
 
 
-# How often the email stream re-checks the mailbox. Operator-overridable
-# in the account config; 60s is a sensible default for IMAP/Gmail.
-_DEFAULT_POLL_SECONDS = 60
+# How often the email stream re-checks the mailbox.
+_POLL_SECONDS = 60
 
 
 class EmailStream:
@@ -48,11 +49,9 @@ class EmailStream:
             logger.info(f"EmailStream {self.name!r} is disabled; not starting")
             return
 
-        poll_seconds = _DEFAULT_POLL_SECONDS
-
-        # First cursor: now - max_lookback_hours (bounded by the monitor's
-        # stored last-check timestamp, filled in by the supervisor when it
-        # starts this stream's task).
+        # The first poll looks back max_lookback_hours; thereafter the in-memory
+        # cursor advances past the newest message seen. Dedup (the event table)
+        # makes re-fetches after a restart harmless.
         while True:
             try:
                 emails = await asyncio.to_thread(self._fetch_batch)
@@ -64,19 +63,12 @@ class EmailStream:
                     )
                     self._advance_cursor(item.received_at)
                     yield item
-                    if not email.is_read:
-                        try:
-                            await asyncio.to_thread(self._mark_remote_as_read, email.id)
-                        except Exception as e:
-                            logger.warning(
-                                f"[{self.name}] failed to mark {email.id} as read: {e}"
-                            )
             except Exception as e:
                 logger.exception(
                     f"[{self.name}] email fetch failed: {e}"
                 )
 
-            await asyncio.sleep(poll_seconds)
+            await asyncio.sleep(_POLL_SECONDS)
 
     # ------------------------------------------------------------------ internals
 
@@ -96,17 +88,6 @@ class EmailStream:
                 f"[{self.name}] fetched {len(emails)} emails since {after.isoformat()}"
             )
             return emails
-        finally:
-            client.close()
-
-    def _mark_remote_as_read(self, email_id: str) -> None:
-        client = EmailClientFactory.create(
-            self.name,
-            self.config,
-            on_token_refreshed=self.on_token_refreshed,
-        )
-        try:
-            client.mark_as_read(email_id)
         finally:
             client.close()
 
@@ -131,7 +112,10 @@ def _email_to_item(
         f"{email.body}"
     )
     return Item(
-        id=email.id,
+        # Namespace by stream so message ids from different inboxes (e.g. two
+        # IMAP accounts that both number a message "5") can't collide in the
+        # globally-unique dedup ledger.
+        id=f"{stream_name}:{email.id}",
         title=email.subject or "(no subject)",
         body=rendered_body,
         author=email.sender or "unknown sender",

@@ -6,20 +6,22 @@ from sentinel.streams.email.models import EmailData
 
 
 def extract_gmail_body(payload: dict) -> str:
-    """Extract email body from Gmail message payload."""
-    body = ""
+    """Extract the text/plain body from a Gmail message payload.
 
-    if "parts" in payload:
-        for part in payload["parts"]:
-            if part["mimeType"] == "text/plain":
-                data = part["body"]["data"]
-                body = base64.urlsafe_b64decode(data).decode("utf-8")
-                break
-    elif payload["mimeType"] == "text/plain":
-        data = payload["body"]["data"]
-        body = base64.urlsafe_b64decode(data).decode("utf-8")
+    Recurses through nested MIME parts (e.g. multipart/mixed wrapping a
+    multipart/alternative) and tolerates parts with no inline data, such as
+    attachments. Returns "" if no text/plain part is found.
+    """
+    data = (payload.get("body") or {}).get("data")
+    if payload.get("mimeType") == "text/plain" and data:
+        return base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
 
-    return body
+    for part in payload.get("parts") or []:
+        text = extract_gmail_body(part)
+        if text:
+            return text
+
+    return ""
 
 
 def email_data_from_gmail_message(message: dict) -> EmailData:

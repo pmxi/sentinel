@@ -71,58 +71,19 @@ class IMAPClient(EmailClient):
                 pass
             self.connection = None
 
-    def get_unread_emails(self) -> List[EmailData]:
-        """Fetch unread emails from inbox"""
-        try:
-            conn = self._get_connection()
-
-            # Search for unread emails
-            status, messages = conn.search(None, "UNSEEN")
-            if status != "OK" or not messages or not messages[0]:
-                return []
-
-            email_ids = messages[0].split()
-            emails: List[EmailData] = []
-
-            for email_id in email_ids:
-                email_data = self._fetch_email(email_id.decode())
-                if email_data:
-                    emails.append(email_data)
-
-            return emails
-        except Exception as e:
-            logger.error(f"Failed to fetch unread emails: {e}")
-            raise
-
-    def get_latest_email(self) -> Optional[EmailData]:
-        """Get the most recent email from the inbox"""
-        try:
-            conn = self._get_connection()
-
-            # Search for all emails
-            status, messages = conn.search(None, "ALL")
-            if status != "OK" or not messages or not messages[0]:
-                return None
-
-            email_ids = messages[0].split()
-            if not email_ids:
-                return None
-
-            # Get the latest email (last ID)
-            latest_id = email_ids[-1].decode()
-            return self._fetch_email(latest_id)
-        except Exception as e:
-            logger.error(f"Error getting latest email: {e}")
-            return None
-
     def get_emails_after_timestamp(
         self, after_timestamp: datetime, unread_only: bool = True
     ) -> List[EmailData]:
-        """Get emails received after a specific timestamp"""
+        """Get emails received after a specific timestamp.
+
+        Searches and fetches by UID, not message sequence number: UIDs are
+        stable for the life of the mailbox, so they're safe to use as the
+        dedup identity, whereas sequence numbers shift as mail is expunged.
+        """
         try:
             conn = self._get_connection()
 
-            # Format date for IMAP search
+            # IMAP SINCE has day granularity, so we still filter precisely below.
             date_str = after_timestamp.strftime("%d-%b-%Y")
 
             # Build search criteria
@@ -131,15 +92,15 @@ class IMAPClient(EmailClient):
             else:
                 search_criteria = f'(SINCE "{date_str}")'
 
-            status, messages = conn.search(None, search_criteria)
+            status, messages = conn.uid("SEARCH", None, search_criteria)
             if status != "OK" or not messages or not messages[0]:
                 return []
 
-            email_ids = messages[0].split()
+            uids = messages[0].split()
             emails: List[EmailData] = []
 
-            for email_id in email_ids:
-                email_data = self._fetch_email(email_id.decode())
+            for uid in uids:
+                email_data = self._fetch_email(uid.decode())
                 if not email_data:
                     continue
                 received_at = self._parse_date(email_data.received_date)
@@ -151,8 +112,8 @@ class IMAPClient(EmailClient):
             logger.error(f"Error getting emails after timestamp: {e}")
             raise
 
-    def _fetch_email(self, email_id: str) -> Optional[EmailData]:
-        """Fetch and parse a single email"""
+    def _fetch_email(self, uid: str) -> Optional[EmailData]:
+        """Fetch and parse a single email by UID."""
         try:
             conn = self._get_connection()
 
@@ -162,7 +123,7 @@ class IMAPClient(EmailClient):
             # From my investigation, it seems that iCloud IMAP server supports the updated IMAP protocol in RFC 9051.
             # In this protocol, the FETCH command doesn't support using RFC822 to get the full email content.
             # However we can use BODY[]
-            status, data = conn.fetch(email_id, "(FLAGS BODY[])")
+            status, data = conn.uid("FETCH", uid, "(FLAGS BODY[])")
             if status != "OK" or not data or not data[0]:
                 return None
 
@@ -191,7 +152,7 @@ class IMAPClient(EmailClient):
             body = self._extract_body(msg)
 
             return EmailData(
-                id=email_id,
+                id=uid,
                 subject=subject,
                 sender=sender,
                 recipient=recipient,
@@ -201,18 +162,8 @@ class IMAPClient(EmailClient):
                 provider=self.provider_type,
             )
         except Exception as e:
-            logger.error(f"Error fetching email {email_id}: {e}")
+            logger.error(f"Error fetching email uid={uid}: {e}")
             return None
-
-    def mark_as_read(self, message_id: str):
-        """Mark email as read"""
-        try:
-            conn = self._get_connection()
-            conn.store(message_id, "+FLAGS", "\\Seen")
-            logger.info(f"Marked email {message_id} as read")
-        except Exception as e:
-            logger.error(f"Failed to mark as read: {e}")
-            raise
 
     def _decode_header(self, header: str) -> str:
         """Decode email header"""

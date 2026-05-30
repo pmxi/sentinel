@@ -51,57 +51,6 @@ class GmailClient(EmailClient):
             logger.error(f"Failed to connect to Gmail API: {e}", exc_info=True)
             raise
 
-    def get_unread_emails(self) -> List[EmailData]:
-        """Fetch unread emails from inbox"""
-        logger.debug("Fetching unread emails from inbox")
-        try:
-            results = (
-                self.service.users()
-                .messages()
-                .list(userId="me", q="is:unread in:inbox")
-                .execute()
-            )
-
-            messages = results.get("messages", [])
-            logger.info(f"Found {len(messages)} unread messages")
-            emails = []
-
-            for message in messages:
-                email_data = self._get_email_details(message["id"])
-                if email_data:
-                    emails.append(email_data)
-                else:
-                    logger.warning(f"Failed to get details for message {message['id']}")
-
-            logger.info(f"Successfully retrieved {len(emails)} unread emails")
-            return emails
-        except Exception as e:
-            logger.error(f"Failed to fetch unread emails: {str(e)}", exc_info=True)
-            raise Exception(f"Failed to fetch emails: {str(e)}")
-
-    def get_latest_email(self) -> Optional[EmailData]:
-        """Get the most recent email from the inbox"""
-        logger.debug("Fetching the latest email from inbox")
-        try:
-            results = (
-                self.service.users()
-                .messages()
-                .list(userId="me", q="in:inbox")
-                .execute()
-            )
-
-            messages = results.get("messages", [])
-            if not messages:
-                logger.info("No messages found in inbox")
-                return None
-
-            latest_message_id = messages[0]["id"]
-            logger.debug(f"Found latest message with ID: {latest_message_id}")
-            return self._get_email_details(latest_message_id)
-        except Exception as e:
-            logger.error(f"Error getting latest email: {e}", exc_info=True)
-            return None
-
     def get_emails_after_timestamp(
         self, after_timestamp: datetime, unread_only: bool = True
     ) -> List[EmailData]:
@@ -159,15 +108,3 @@ class GmailClient(EmailClient):
         except Exception as e:
             logger.error(f"Error getting email details for message {message_id}: {e}", exc_info=True)
             return None
-
-    def mark_as_read(self, message_id: str):
-        """Mark email as read"""
-        logger.debug(f"Marking message {message_id} as read")
-        try:
-            self.service.users().messages().modify(
-                userId="me", id=message_id, body={"removeLabelIds": ["UNREAD"]}
-            ).execute()
-            logger.info(f"Successfully marked message {message_id} as read")
-        except Exception as e:
-            logger.error(f"Failed to mark message {message_id} as read: {str(e)}", exc_info=True)
-            raise Exception(f"Failed to mark as read: {str(e)}")
