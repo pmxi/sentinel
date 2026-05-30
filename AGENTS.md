@@ -1,3 +1,3 @@
-Use DEVELOPMENT.md for tracking TODOs, bugs, priorities, etc.
+Use development.md for tracking TODOs, bugs, priorities, etc.
 README.md is the user facing guide on setup and introduction / marketing.
 
