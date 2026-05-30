@@ -15,7 +15,7 @@ from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
 import psycopg
 from psycopg.rows import dict_row
 
-from sentinel.time_utils import format_iso_datetime, parse_iso_datetime, utc_now
+from sentinel.time_utils import parse_iso_datetime, utc_now
 
 _CURRENT_SCHEMA_VERSION = 2
 _RECONNECT_BACKOFF_BASE = 0.5
@@ -53,7 +53,7 @@ def _with_reconnect(method: F) -> F:
 
 
 class Database:
-    """Single-user PostgreSQL store for local CLI + web surfaces.
+    """Multi-tenant PostgreSQL store shared by the web console and worker.
 
     Schema is in schema.sql. The two key tables are `event` (one row per
     observed item, also the dedup ledger via UNIQUE(item_id))
@@ -62,7 +62,7 @@ class Database:
 
     def __init__(self, database_url: str):
         if not database_url:
-            raise ValueError("DATABASE_URL is required for the local PostgreSQL store.")
+            raise ValueError("DATABASE_URL is required for the PostgreSQL store.")
         self.database_url = database_url
         self._lock = threading.RLock()
         self.conn = psycopg.connect(database_url, row_factory=dict_row)
@@ -86,60 +86,6 @@ class Database:
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
                 (str(_CURRENT_SCHEMA_VERSION),),
             )
-
-    # ----- app_setting --------------------------------------------------
-
-    def set_app_setting(self, key: str, value: str) -> None:
-        with self._lock:
-            self.conn.execute(
-                "INSERT INTO app_setting (key, value, updated_at) "
-                "VALUES (%s, %s, NOW()) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=NOW()",
-                (key, value),
-            )
-
-    def get_app_setting(self, key: str) -> Optional[str]:
-        with self._lock:
-            row = self.conn.execute(
-                "SELECT value FROM app_setting WHERE key=%s", (key,)
-            ).fetchone()
-        return row["value"] if row else None
-
-    def get_all_app_settings(self) -> Dict[str, str]:
-        with self._lock:
-            rows = self.conn.execute("SELECT key, value FROM app_setting").fetchall()
-        return {r["key"]: r["value"] for r in rows}
-
-    def delete_app_setting(self, key: str) -> None:
-        with self._lock:
-            self.conn.execute("DELETE FROM app_setting WHERE key=%s", (key,))
-
-    # ----- local_setting ------------------------------------------------
-
-    def set_local_setting(self, key: str, value: str) -> None:
-        with self._lock:
-            self.conn.execute(
-                "INSERT INTO local_setting (key, value, updated_at) "
-                "VALUES (%s, %s, NOW()) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=NOW()",
-                (key, value),
-            )
-
-    def get_local_setting(self, key: str) -> Optional[str]:
-        with self._lock:
-            row = self.conn.execute(
-                "SELECT value FROM local_setting WHERE key=%s", (key,)
-            ).fetchone()
-        return row["value"] if row else None
-
-    def get_all_local_settings(self) -> Dict[str, str]:
-        with self._lock:
-            rows = self.conn.execute("SELECT key, value FROM local_setting").fetchall()
-        return {r["key"]: r["value"] for r in rows}
-
-    def delete_local_setting(self, key: str) -> None:
-        with self._lock:
-            self.conn.execute("DELETE FROM local_setting WHERE key=%s", (key,))
 
     # ----- app_user -----------------------------------------------------
 
@@ -261,82 +207,6 @@ class Database:
             ).fetchone()
         return int(row["id"]) if row else None
 
-    def insert_events_bulk(self, rows: List[Dict[str, Any]]) -> List[int]:
-        """Bulk-insert events. Each dict has the same keys as insert_event's
-        kwargs. Returns the ids of rows actually inserted (skipped dedup hits
-        are omitted)."""
-        if not rows:
-            return []
-        params = []
-        for r in rows:
-            md = r.get("metadata")
-            params.append((
-                r["item_id"], r["stream_name"], r["title"],
-                r.get("body"), r.get("url"), r.get("author"),
-                r["received_at"],
-                json.dumps(md) if md else None,
-            ))
-        placeholders = ",".join(["(%s,%s,%s,%s,%s,%s,%s,%s::jsonb)"] * len(params))
-        flat: List[Any] = [v for row in params for v in row]
-        with self._lock:
-            inserted = self.conn.execute(
-                f"""
-                INSERT INTO event (item_id, stream_name, title, body,
-                                   url, author, received_at, metadata)
-                VALUES {placeholders}
-                ON CONFLICT (item_id) DO NOTHING
-                RETURNING id
-                """,
-                flat,
-            ).fetchall()
-        return [int(r["id"]) for r in inserted]
-
-    def recent_events(self, limit: int = 25) -> List[Dict[str, Any]]:
-        with self._lock:
-            rows = self.conn.execute(
-                "SELECT id, item_id, stream_name, title, url, author, "
-                "received_at, observed_at "
-                "FROM event ORDER BY observed_at DESC LIMIT %s",
-                (limit,),
-            ).fetchall()
-        return [dict(r) for r in rows]
-
-    def event_count(self) -> int:
-        with self._lock:
-            row = self.conn.execute("SELECT COUNT(*) AS c FROM event").fetchone()
-        return int(row["c"])
-
-    def latest_event_id(self) -> int:
-        with self._lock:
-            row = self.conn.execute(
-                "SELECT COALESCE(MAX(id), 0) AS mx FROM event"
-            ).fetchone()
-        return int(row["mx"])
-
-    def fetch_events_since(self, after_id: int, limit: int = 200) -> List[Dict[str, Any]]:
-        """Used by the SSE poll loop. Pulls events + (left-joined) classification
-        so the caller has everything it needs in one round trip."""
-        with self._lock:
-            rows = self.conn.execute(
-                """
-                SELECT e.id, e.item_id, e.stream_name, e.title,
-                       e.body, e.url, e.author, e.received_at, e.observed_at,
-                       e.metadata,
-                       c.priority, c.summary, c.reasoning, c.classified_at
-                FROM event e
-                LEFT JOIN classification c ON c.event_id = e.id
-                WHERE e.id > %s
-                ORDER BY e.id ASC LIMIT %s
-                """,
-                (after_id, limit),
-            ).fetchall()
-        return [dict(r) for r in rows]
-
-    # NOTE: there is deliberately no prune/delete-older-than helper for the
-    # event table. Events are append-only and kept indefinitely; capacity is
-    # handled at the infrastructure level, not by deleting rows. See the
-    # comment in monitor.py.
-
     # ----- classification -----------------------------------------------
 
     def insert_classification(
@@ -380,40 +250,6 @@ class Database:
                     last_failed_at = NOW()
                 """,
                 (event_id, error[:5000]),
-            )
-
-    # ----- monitoring_state --------------------------------------------
-
-    def get_monitoring_start_time(self) -> Optional[datetime]:
-        with self._lock:
-            row = self.conn.execute(
-                "SELECT value FROM monitoring_state WHERE key='monitoring_start_time'"
-            ).fetchone()
-        return _parse_datetime(row["value"]) if row else None
-
-    def set_monitoring_start_time(self, timestamp: datetime) -> None:
-        with self._lock:
-            self.conn.execute(
-                "INSERT INTO monitoring_state (key, value) "
-                "VALUES ('monitoring_start_time', %s) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=NOW()",
-                (format_iso_datetime(timestamp),),
-            )
-
-    def get_last_check_time(self) -> Optional[datetime]:
-        with self._lock:
-            row = self.conn.execute(
-                "SELECT value FROM monitoring_state WHERE key='last_check_time'"
-            ).fetchone()
-        return _parse_datetime(row["value"]) if row else None
-
-    def update_last_check_time(self, timestamp: datetime) -> None:
-        with self._lock:
-            self.conn.execute(
-                "INSERT INTO monitoring_state (key, value) "
-                "VALUES ('last_check_time', %s) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=NOW()",
-                (format_iso_datetime(timestamp),),
             )
 
     # ----- telegram_link_token ------------------------------------------

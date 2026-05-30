@@ -1,8 +1,7 @@
-"""Stream-management service for the local runtime."""
+"""Stream-management service."""
 
 from __future__ import annotations
 
-import json
 from typing import Any, Dict, List
 
 from sentinel.streams.email.mail_config import MailAccountConfig, MailProvider
@@ -12,9 +11,6 @@ from sentinel.database import Database
 class StreamService:
     def __init__(self, db: Database):
         self.db = db
-
-    def list_stream_rows(self) -> List[Dict[str, Any]]:
-        return self._rows(self.db.list_streams())
 
     def list_stream_rows_for_user(self, user_id: int) -> List[Dict[str, Any]]:
         return self._rows(self.db.list_streams_for_user(user_id))
@@ -59,14 +55,6 @@ class StreamService:
         if not self.db.get_stream(name):
             raise ValueError(f"No stream named {name!r}")
         self.db.delete_stream(name)
-
-    def toggle_stream(self, name: str) -> None:
-        row = self.db.get_stream(name)
-        if not row:
-            raise ValueError(f"No stream named {name!r}")
-        data = json.loads(row["config_json"])
-        data["enabled"] = not data.get("enabled", True)
-        self.db.upsert_stream(name, row["stream_type"], json.dumps(data), user_id=row.get("user_id"))
 
     def persist_email_token(self, name: str, token_json: str) -> None:
         row = self.db.get_stream(name)
