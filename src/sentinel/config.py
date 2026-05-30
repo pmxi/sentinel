@@ -31,6 +31,13 @@ class Settings:
     TELEGRAM_BOT_TOKEN: str | None = os.getenv("TELEGRAM_BOT_TOKEN")
     TELEGRAM_BOT_USERNAME: str | None = os.getenv("TELEGRAM_BOT_USERNAME")
 
+    # Google OAuth client (sign-in via OIDC + Connect-Gmail via gmail.readonly).
+    GOOGLE_CLIENT_ID: str | None = os.getenv("GOOGLE_CLIENT_ID")
+    GOOGLE_CLIENT_SECRET: str | None = os.getenv("GOOGLE_CLIENT_SECRET")
+    GOOGLE_REDIRECT_URI: str = os.getenv(
+        "GOOGLE_REDIRECT_URI", "http://localhost:8765/oauth/google/callback"
+    )
+
     MAX_LOOKBACK_HOURS: int = int(os.getenv("MAX_LOOKBACK_HOURS", "24"))
 
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
@@ -38,6 +45,10 @@ class Settings:
     DISABLE_FILE_LOGGING: bool = _flag("DISABLE_FILE_LOGGING")
 
     SESSION_SECRET: str | None = os.getenv("SESSION_SECRET")
+
+    @classmethod
+    def google_oauth_configured(cls) -> bool:
+        return bool(cls.GOOGLE_CLIENT_ID and cls.GOOGLE_CLIENT_SECRET)
 
     @classmethod
     def require_database_url(cls) -> str:

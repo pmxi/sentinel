@@ -14,8 +14,14 @@ class StreamService:
         self.db = db
 
     def list_stream_rows(self) -> List[Dict[str, Any]]:
+        return self._rows(self.db.list_streams())
+
+    def list_stream_rows_for_user(self, user_id: int) -> List[Dict[str, Any]]:
+        return self._rows(self.db.list_streams_for_user(user_id))
+
+    def _rows(self, streams: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         rows = []
-        for row in self.db.list_streams():
+        for row in streams:
             entry = {
                 "name": row["name"],
                 "stream_type": row["stream_type"],
@@ -38,13 +44,13 @@ class StreamService:
             rows.append(entry)
         return rows
 
-    def add_stream(self, name: str, stream_type: str, config_json: str) -> None:
+    def add_stream(self, name: str, stream_type: str, config_json: str, user_id: int | None = None) -> None:
         if self.db.get_stream(name):
             raise ValueError(f"Stream {name!r} already exists.")
-        self.db.upsert_stream(name, stream_type, config_json)
+        self.db.upsert_stream(name, stream_type, config_json, user_id=user_id)
 
-    def save_stream(self, name: str, stream_type: str, config_json: str) -> None:
-        self.db.upsert_stream(name, stream_type, config_json)
+    def save_stream(self, name: str, stream_type: str, config_json: str, user_id: int | None = None) -> None:
+        self.db.upsert_stream(name, stream_type, config_json, user_id=user_id)
 
     def get_stream(self, name: str) -> Dict[str, str] | None:
         return self.db.get_stream(name)
@@ -60,7 +66,7 @@ class StreamService:
             raise ValueError(f"No stream named {name!r}")
         data = json.loads(row["config_json"])
         data["enabled"] = not data.get("enabled", True)
-        self.db.upsert_stream(name, row["stream_type"], json.dumps(data))
+        self.db.upsert_stream(name, row["stream_type"], json.dumps(data), user_id=row.get("user_id"))
 
     def persist_email_token(self, name: str, token_json: str) -> None:
         row = self.db.get_stream(name)
@@ -68,4 +74,4 @@ class StreamService:
             return
         config = MailAccountConfig.model_validate_json(row["config_json"])
         config.auth.token_json = token_json
-        self.db.upsert_stream(name, row["stream_type"], config.model_dump_json())
+        self.db.upsert_stream(name, row["stream_type"], config.model_dump_json(), user_id=row.get("user_id"))

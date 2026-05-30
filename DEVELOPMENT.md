@@ -83,3 +83,8 @@ are separate processes sharing one DB.
   rest, least privilege, plan revocation.
 - **Supervisor scale** — single asyncio worker is fine into low-thousands of
   mailboxes; beyond that, shard workers.
+
+
+## google setup
+
+project email-sentinel-mvp 

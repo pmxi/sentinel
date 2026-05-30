@@ -141,28 +141,74 @@ class Database:
         with self._lock:
             self.conn.execute("DELETE FROM local_setting WHERE key=%s", (key,))
 
-    # ----- stream -------------------------------------------------------
+    # ----- app_user -----------------------------------------------------
 
-    def upsert_stream(self, name: str, stream_type: str, config_json: str) -> None:
+    def upsert_user(self, google_sub: str, email: str, name: Optional[str]) -> Dict[str, Any]:
+        with self._lock:
+            row = self.conn.execute(
+                """
+                INSERT INTO app_user (google_sub, email, name)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (google_sub) DO UPDATE SET email = excluded.email, name = excluded.name
+                RETURNING id, google_sub, email, name, criteria, telegram_chat_id
+                """,
+                (google_sub, email, name),
+            ).fetchone()
+        return dict(row)
+
+    def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
+        with self._lock:
+            row = self.conn.execute(
+                "SELECT id, google_sub, email, name, criteria, telegram_chat_id "
+                "FROM app_user WHERE id=%s",
+                (user_id,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def set_user_criteria(self, user_id: int, criteria: Optional[str]) -> None:
         with self._lock:
             self.conn.execute(
-                "INSERT INTO stream (name, stream_type, config_json, updated_at) "
-                "VALUES (%s, %s, %s::jsonb, NOW()) "
+                "UPDATE app_user SET criteria=%s WHERE id=%s", (criteria or None, user_id)
+            )
+
+    def set_user_telegram_chat_id(self, user_id: int, chat_id: Optional[str]) -> None:
+        with self._lock:
+            self.conn.execute(
+                "UPDATE app_user SET telegram_chat_id=%s WHERE id=%s", (chat_id, user_id)
+            )
+
+    # ----- stream -------------------------------------------------------
+
+    def upsert_stream(self, name: str, stream_type: str, config_json: str, user_id: Optional[int] = None) -> None:
+        with self._lock:
+            self.conn.execute(
+                "INSERT INTO stream (name, stream_type, config_json, user_id, updated_at) "
+                "VALUES (%s, %s, %s::jsonb, %s, NOW()) "
                 "ON CONFLICT(name) DO UPDATE SET "
                 "    stream_type = excluded.stream_type, "
                 "    config_json = excluded.config_json, "
+                "    user_id     = excluded.user_id, "
                 "    updated_at  = NOW()",
-                (name, stream_type, config_json),
+                (name, stream_type, config_json, user_id),
             )
 
     def get_stream(self, name: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             row = self.conn.execute(
-                "SELECT name, stream_type, config_json::text AS config_json "
+                "SELECT name, stream_type, config_json::text AS config_json, user_id "
                 "FROM stream WHERE name=%s",
                 (name,),
             ).fetchone()
         return dict(row) if row else None
+
+    def list_streams_for_user(self, user_id: int) -> List[Dict[str, Any]]:
+        with self._lock:
+            rows = self.conn.execute(
+                "SELECT name, stream_type, config_json::text AS config_json "
+                "FROM stream WHERE user_id=%s ORDER BY name",
+                (user_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     def list_streams(self) -> List[Dict[str, Any]]:
         with self._lock:
