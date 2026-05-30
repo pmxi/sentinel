@@ -4,19 +4,54 @@ Sentinel is becoming a **multi-tenant hosted SaaS**: users sign up with Google,
 connect their Gmail via OAuth, and Sentinel monitors their inbox and alerts
 them (out-of-band) when something important arrives.
 
-The current code is a clean **single-tenant email engine** (`EmailStream` →
-`OpenAIItemClassifier` → notify, driven by the supervisor in `monitor.py`).
-The MVP wraps that engine in a tenancy + auth shell.
+The classification engine (`EmailStream` → `OpenAIItemClassifier` → notify,
+driven by the supervisor in `monitor.py`) is reused as-is and wrapped in a
+tenancy + auth shell.
+
+## Status (2026-05-29)
+
+**Built:**
+- Web app stripped to a single, login-gated **control console** — connect
+  inboxes, edit classification criteria, link Telegram. No email content is
+  shown anywhere (the old dashboard / live feed / alerts pages + SSE bus are gone).
+- **Google sign-in** (OIDC) + sessions + login gating.
+- **Connect Gmail** via OAuth `gmail.readonly`; IMAP app-password kept as a
+  secondary connect path; multiple inboxes per user.
+- Multi-tenant DB foundation: `app_user`, per-user criteria + telegram_chat_id,
+  `stream.user_id`.
+- Classifier: `gpt-5.4-mini`, reasoning effort `medium` (verified live).
+
+**Next:** Phase 4 — make the worker per-user, wire Telegram link-token → user,
+and turn classification on.
+
+**Not working end-to-end yet:** a connected inbox is *not* polled / classified /
+alerted — the worker still uses global prefs and `_CLASSIFICATION_DISABLED=True`.
+
+## Running it locally (dev)
+
+Prereqs: Postgres 18 (Homebrew), `uv`, and a filled-in `.env` (see `.env.example`).
+
+```bash
+cp .env.example .env               # fill in DATABASE_URL, OPENAI_API_KEY, Google creds
+createdb sentinel                  # one-time (psql tools at /opt/homebrew/opt/postgresql@18/bin)
+brew services run postgresql@18    # start DB for the session, no-boot (`stop` when done)
+uv run sentinel-web                # → http://127.0.0.1:8765  (Ctrl-C to stop)
+```
+
+`sentinel-web` reads `.env`, applies `schema.sql` on connect, serves the console,
+and — when `OPENAI_API_KEY` is set and `SENTINEL_EMBED_WORKER=true` (the
+default) — runs the supervisor in-process. To run them apart:
+`SENTINEL_EMBED_WORKER=false` + a separate `uv run sentinel-worker`.
 
 ## Architecture (target)
 
 ```
-Google OIDC →  WEB (Flask): login/session, dashboard, /alerts,
-               "Connect Gmail" OAuth flow, per-user notes/settings
+Google OIDC →  WEB (Flask): login/session, console (connect inboxes,
+               edit criteria, link Telegram), "flagged" list
                      │  shared Postgres (everything scoped by user_id)
 Gmail API   ←  WORKER (asyncio supervisor): polls every connected
- (readonly)    mailbox, classifies (operator's OpenAI key), writes
-               user-scoped events + fires out-of-band notifications
+ (readonly)    mailbox, classifies (operator's OpenAI key), fires
+               out-of-band notifications, persists only decisions
 ```
 
 The engine is reused largely as-is; it just becomes user-scoped. Web and worker
@@ -25,49 +60,62 @@ are separate processes sharing one DB.
 ## Locked design decisions
 
 1. **Login ≠ Gmail access; incremental auth.** Sign in with Google using basic
-   OIDC scopes (`openid email profile`) — frictionless, no verification. A
-   separate "Connect Gmail" step requests the sensitive scope only on opt-in.
-2. **`gmail.readonly`, no "mark as read."** We track processed state in our own
-   `event` table; we never mutate a user's inbox. Cleaner trust + verification.
-3. **Notifications are out-of-band — never email** (alerting about email via
-   email is circular). MVP: in-app `/alerts` view (baseline) + Telegram opt-in
-   (push). Web/mobile push is a fast-follow. The Resend email channel is removed.
-4. **Operator config via env, no interactive CLI.** OpenAI key, Google client
-   id/secret, `DATABASE_URL`, session secret, token-encryption key are all env.
-   Launch via `sentinel-web` / `sentinel-worker`.
-5. **Web/worker are separate processes from day one** (two entry points, one DB).
-6. **Classification is ON** (`_CLASSIFICATION_DISABLED` in `monitor.py` must be
-   `False` for the product).
+   OIDC scopes (`openid email profile`); a separate "Connect Gmail" step
+   requests `gmail.readonly` only on opt-in. *(done)*
+2. **`gmail.readonly`, no "mark as read."** We never mutate a user's inbox.
+3. **Don't store email content.** Process in memory; persist only *decisions*.
+   We keep a record of the **alerts we sent** (sender, subject, reason — derived,
+   not the body), never the inbox itself. Dedup is a ledger of opaque message-ids.
+   In dev it's OK to store raw email behind a flag, but no UI may depend on it.
+4. **Notifications are out-of-band — never email.** One shared Sentinel bot on
+   Telegram; per-user delivery by `chat_id`, established via a link-token. Plus
+   an in-app "flagged" list that reads only the alert table. Resend channel removed.
+5. **The web app is a control console, not a data viewer** — no live feed of
+   email.
+6. **Operator config via env, no interactive CLI** (`sentinel-web` / `sentinel-worker`).
+7. **Web/worker separate processes** (toggle with `SENTINEL_EMBED_WORKER`).
+8. **Classifier `gpt-5.4-mini`, reasoning `medium`** (`LLM_MODEL`,
+   `LLM_REASONING_EFFORT`).
+9. **Classification must be turned ON** (`_CLASSIFICATION_DISABLED=False`) for the
+   product — currently off.
 
 ## Roadmap
 
-- [ ] **Phase 0 — Foundations**
-  - [x] Roadmap doc (this file)
-  - [x] Kill the interactive CLI; add `sentinel-web` / `sentinel-worker` entry
-        points; operator config from env
-  - [x] Remove the dead Resend email-notification channel
-  - [x] Rename `Local*` → tenant-neutral (`Database`, `Monitor`, `Settings`, …)
-  - [ ] Register Google Cloud project + OAuth client; **start restricted-scope
-        verification** (long lead time — see external track) — *your task, non-code*
-- [ ] **Phase 1 — Multi-tenant data model**: `user` table; `user_id` FK on
-      `stream`/`event`/`classification`; dedup `UNIQUE(item_id)` →
-      `UNIQUE(user_id, item_id)`; per-user preferences/notes; encrypted Gmail
-      token storage; thread `user_id` through the DB layer + engine.
-- [ ] **Phase 2 — Google Sign-In** (Authlib): OIDC login, sessions, `user`
-      upsert on first login, login-gated web, logout.
-- [ ] **Phase 3 — "Connect Gmail"**: per-user incremental OAuth (`readonly`),
-      encrypted refresh-token storage, refresh handling, disconnect; a connected
-      account becomes a per-user `stream` row.
-- [ ] **Phase 4 — Tenant-aware worker**: poll all connected mailboxes, classify
-      with the operator key, write user-scoped events, fire per-user
-      notifications; per-tenant failure isolation.
-- [ ] **Phase 5 — Per-user web UI**: scope dashboard / `/alerts` / notes /
-      streams to the logged-in user; connection management; optional Telegram link.
-- [ ] **Phase 6 — Hardening & launch**: token encryption verified, LLM cost
-      controls, rate limits, observability, DB backups; finish Google
-      verification; privacy policy + ToS.
+- [x] **Phase 0 — Foundations**: CLI → `sentinel-web`/`sentinel-worker` + env
+      config; Resend removed; `Local*` renamed; Google client registered + creds
+      in `.env`.
+- [~] **Phase 1 — Multi-tenant data model**
+  - [x] `app_user`; per-user criteria + telegram_chat_id; `stream.user_id`;
+        per-user stream listing
+  - [ ] `user_id` on `event` / `classification`; dedup → per-user
+  - [ ] no-store-emails: drop `event.body`; dedup ledger (opaque ids) + `alert` table
+  - [ ] **encrypt secrets at rest** — Gmail refresh tokens *and* IMAP app
+        passwords currently sit in plaintext in `stream.config_json` (see Risks)
+- [x] **Phase 2 — Google Sign-In** (OIDC, sessions, login-gated web, logout).
+- [x] **Phase 3 — Connect Gmail** (OAuth `readonly`, per-user `gmail:<addr>`
+      stream; IMAP app-password kept as secondary). Token refresh works; tokens
+      not yet encrypted.
+- [ ] **Phase 4 (next) — Tenant-aware worker**: classify each inbox with *that
+      user's* criteria; alert *that user*; **Telegram link-token → user**; flip
+      `_CLASSIFICATION_DISABLED` on; per-tenant failure isolation.
+- [~] **Phase 5 — Per-user web UI**: console is per-user (done); still need the
+      "flagged" list (recent important items + reason, reading the alert table).
+- [ ] **Phase 6 — Hardening & launch**: secrets encrypted, LLM cost controls,
+      rate limits, observability, DB backups; finish Google verification;
+      privacy policy + ToS.
 
-## External track (start in Phase 0 — gates launch)
+## Google OAuth setup (project `email-sentinel-mvp`)
+
+- Google Cloud project **email-sentinel-mvp**, Gmail API enabled.
+- A **Web** OAuth client; `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` in `.env`.
+- Registered redirect URIs:
+  - `http://localhost:8765/oauth/google/callback` (dev)
+  - `https://sentinel.parasmittal.com/oauth/google/callback` (prod)
+- Consent screen is External + unverified: add your Google account as a **Test
+  user**, and expect an "unverified app" warning on the `gmail.readonly`
+  restricted scope until verification completes (see external track).
+
+## External track (gates launch)
 
 - **Google OAuth verification + CASA security assessment** for the Gmail scope.
   Capped at ~100 test users until verified; takes weeks–months and recurs.
@@ -76,15 +124,11 @@ are separate processes sharing one DB.
 
 ## Risks to design for
 
-- **LLM cost scales with users × inbox volume.** Levers: classify only
-  unread / Primary-category mail, cheaper model, batching, or a cheap
-  pre-filter (the removed local scorer was exactly this hedge).
-- **Token security** — refresh tokens are keys to users' inboxes; encrypt at
-  rest, least privilege, plan revocation.
+- **Secrets at rest (open gap).** Gmail refresh tokens and IMAP app passwords
+  are stored unencrypted in `stream.config_json`. Encrypt before any real
+  multi-user use — a DB leak = access to users' inboxes.
+- **LLM cost scales with users × inbox volume.** Levers: classify only unread /
+  Primary-category mail, cheaper model, batching, or a cheap pre-filter (the
+  removed local scorer was exactly this hedge).
 - **Supervisor scale** — single asyncio worker is fine into low-thousands of
   mailboxes; beyond that, shard workers.
-
-
-## google setup
-
-project email-sentinel-mvp 
