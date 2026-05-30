@@ -24,7 +24,6 @@ from sentinel.streams.email.mail_config import MailAccountConfig
 from sentinel.streams.email.stream import EmailStream
 from sentinel.config import settings
 from sentinel.database import Database
-from sentinel.services.preferences import Preferences
 from sentinel.services.streams import StreamService
 from sentinel.telegram_bot import start_in_thread as start_telegram_listener
 from sentinel.time_utils import utc_now
@@ -71,10 +70,6 @@ class Monitor:
         # of streams) triggers a serialized DB upsert.
         self._last_check_ts_monotonic: float = 0.0
         self._last_check_min_interval_s: float = 5.0
-        # Shared preferences cache. With thousands of streams each calling
-        # Preferences.load() at startup, the supervisor would otherwise
-        # serialize through the single DB connection for ~60s.
-        self._preferences_cache: Optional[Preferences] = None
         # One batching observer shared across every stream's processor.
         # The per-stream observer-per-processor pattern was a non-starter
         # at thousands of streams because each instance would run its own
@@ -168,7 +163,7 @@ class Monitor:
             )
             return
         task = asyncio.create_task(
-            self._run_stream(stream),
+            self._run_stream(stream, row.get("user_id")),
             name=f"local-stream:{name}",
         )
         self._stream_tasks[name] = task
@@ -194,25 +189,19 @@ class Monitor:
             on_token_refreshed=lambda token_json, name=row["name"]: self.stream_service.persist_email_token(name, token_json),
         )
 
-    def _get_preferences(self) -> Preferences:
-        # Cached. Refreshes only on full supervisor restart; rare relative
-        # to stream churn. (If you need live preference reloads, invalidate
-        # this from the same callback that handles the settings update.)
-        if self._preferences_cache is None:
-            self._preferences_cache = Preferences.load(self.db)
-        return self._preferences_cache
-
-    async def _run_stream(self, stream: EmailStream) -> None:
+    async def _run_stream(self, stream: EmailStream, user_id: Optional[int]) -> None:
         while not self._shutdown.is_set():
             try:
-                preferences = self._get_preferences()
+                # Process this inbox with its owner's criteria + notification target.
+                user = self.db.get_user(user_id) if user_id is not None else None
                 if self._observer is None:
                     self._observer = _BatchingObserver(self.db)
                 processor = ItemPipeline(
                     db=self.db,
                     classifier=self.classifier,
-                    preferences=preferences,
                     observer=self._observer,
+                    criteria=(user or {}).get("criteria") or "",
+                    telegram_chat_id=(user or {}).get("telegram_chat_id"),
                 )
                 # Concurrency cap per stream. With many streams (700+),
                 # 64-per-stream multiplied = 45k+ items potentially in-flight.
@@ -308,15 +297,17 @@ class ItemPipeline:
         *,
         db: Database,
         classifier: OpenAIItemClassifier,
-        preferences: Preferences,
         observer: Optional["_BatchingObserver"] = None,
+        criteria: str = "",
+        telegram_chat_id: Optional[str] = None,
     ):
+        # Per-user delivery: one shared Sentinel bot, the user's own chat_id.
         notifier = None
-        if preferences.has_telegram() and settings.TELEGRAM_BOT_TOKEN:
+        if telegram_chat_id and settings.TELEGRAM_BOT_TOKEN:
             notifier = TelegramItemNotifier(
                 TelegramNotifier(
                     bot_token=settings.TELEGRAM_BOT_TOKEN,
-                    chat_id=preferences.TELEGRAM_CHAT_ID,
+                    chat_id=str(telegram_chat_id),
                 )
             )
         # Reuse a shared observer if provided (supervisor's batching writer);
@@ -329,7 +320,7 @@ class ItemPipeline:
             observer=self.observer,
             is_retryable_classifier_error=_is_transient_classification_error,
         )
-        self.notes = preferences.CLASSIFICATION_NOTES
+        self.notes = criteria
 
     async def process(self, item: Item) -> bool:
         # Bypass when:
