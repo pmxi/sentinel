@@ -2,8 +2,8 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import List
 
-from sentinel.streams.email.mail_config import MailAccountConfig
-from sentinel.streams.email.models import EmailData
+from sentinel.email.mail_config import MailAccountConfig
+from sentinel.email.models import EmailData
 
 
 class EmailClient(ABC):

@@ -19,12 +19,12 @@ from email.utils import parsedate_to_datetime
 from typing import AsyncIterator, Callable, List, Optional
 
 from sentinel.logging_config import get_logger
-from sentinel.streams.base import Item
-from sentinel.streams.email.email_client_base import EmailClient
-from sentinel.streams.email.gmail.client import GmailClient
-from sentinel.streams.email.imap_client import IMAPClient
-from sentinel.streams.email.mail_config import MailAccountConfig, MailProvider
-from sentinel.streams.email.models import EmailData
+from sentinel.item import Item
+from sentinel.email.email_client_base import EmailClient
+from sentinel.email.gmail.client import GmailClient
+from sentinel.email.imap_client import IMAPClient
+from sentinel.email.mail_config import MailAccountConfig, MailProvider
+from sentinel.email.models import EmailData
 from sentinel.time_utils import ensure_utc, parse_iso_datetime, utc_now
 
 logger = get_logger(__name__)

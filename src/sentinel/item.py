@@ -1,4 +1,8 @@
-"""The Item — the unit a stream produces and the pipeline consumes."""
+"""The Item — the core object the classifier and notifier consume.
+
+The email adapters (`sentinel.email`) map their provider-specific `EmailData`
+to an `Item` at the boundary, so the pipeline never depends on email types.
+"""
 
 from __future__ import annotations
 
@@ -9,14 +13,14 @@ from typing import Any, Dict
 
 @dataclass
 class Item:
-    """A single unit produced by a stream.
+    """One classifiable unit (an email), reshaped for the pipeline.
 
     Fields are chosen for what the classifier and notifier actually need:
     - `title` is the first-line summary (the email subject)
     - `body` is the full text the classifier reasons over
     - `author` is what fronts a notification ("who sent this")
     - `url` is the deep link if the source provides one
-    - `metadata` carries source-specific extras the notifier may render
+    - `metadata` carries extras the notifier may render
     """
 
     id: str

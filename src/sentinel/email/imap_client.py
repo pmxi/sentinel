@@ -7,9 +7,9 @@ from email.utils import parsedate_to_datetime
 from typing import List, Optional
 
 from sentinel.logging_config import get_logger
-from sentinel.streams.email.email_client_base import EmailClient
-from sentinel.streams.email.mail_config import AuthMethod, MailAccountConfig
-from sentinel.streams.email.models import EmailData
+from sentinel.email.email_client_base import EmailClient
+from sentinel.email.mail_config import AuthMethod, MailAccountConfig
+from sentinel.email.models import EmailData
 from sentinel.time_utils import ensure_utc
 
 logger = get_logger(__name__)

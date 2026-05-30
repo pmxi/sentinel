@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from sentinel.streams.email.mail_config import MailAccountConfig, MailProvider
+from sentinel.email.mail_config import MailAccountConfig, MailProvider
 from sentinel.database import Database
 
 

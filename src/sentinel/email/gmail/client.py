@@ -4,11 +4,11 @@ from typing import Any, Callable, List, Optional
 from googleapiclient.discovery import build  # type: ignore
 
 from sentinel.logging_config import get_logger
-from sentinel.streams.email.email_client_base import EmailClient
-from sentinel.streams.email.gmail.auth import GmailAuth
-from sentinel.streams.email.gmail.models import email_data_from_gmail_message
-from sentinel.streams.email.mail_config import MailAccountConfig
-from sentinel.streams.email.models import EmailData
+from sentinel.email.email_client_base import EmailClient
+from sentinel.email.gmail.auth import GmailAuth
+from sentinel.email.gmail.models import email_data_from_gmail_message
+from sentinel.email.mail_config import MailAccountConfig
+from sentinel.email.models import EmailData
 
 logger = get_logger(__name__)
 

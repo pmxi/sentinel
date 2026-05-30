@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from sentinel.logging_config import get_logger
 from sentinel.classifier.base import ClassificationResult, Priority
-from sentinel.streams.base import Item
+from sentinel.item import Item
 
 logger = get_logger(__name__)
 

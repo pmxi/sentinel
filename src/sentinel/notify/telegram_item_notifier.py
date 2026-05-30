@@ -21,7 +21,7 @@ import requests
 
 from sentinel.logging_config import get_logger
 from sentinel.classifier import ClassificationResult
-from sentinel.streams.base import Item
+from sentinel.item import Item
 
 logger = get_logger(__name__)
 

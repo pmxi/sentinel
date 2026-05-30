@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Protocol, runtime_checkable
 
-from sentinel.streams.base import Item
+from sentinel.item import Item
 
 
 class Priority(str, Enum):

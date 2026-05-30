@@ -18,7 +18,7 @@ from flask import Flask, abort, redirect, render_template, request, session, url
 
 from sentinel.logging_config import get_logger
 from sentinel.classifier.openai_classifier import _default_criteria
-from sentinel.streams.email.mail_config import AccountSettings, AuthConfig, AuthMethod, MailAccountConfig, MailProvider
+from sentinel.email.mail_config import AccountSettings, AuthConfig, AuthMethod, MailAccountConfig, MailProvider
 from sentinel.time_utils import utc_now
 from sentinel.config import settings
 from sentinel.database import Database

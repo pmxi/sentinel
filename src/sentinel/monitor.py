@@ -17,9 +17,9 @@ from openai import (
 from sentinel.logging_config import get_logger
 from sentinel.classifier import OpenAIItemClassifier
 from sentinel.notify import TelegramItemNotifier
-from sentinel.streams import Item
-from sentinel.streams.email.mail_config import MailAccountConfig
-from sentinel.streams.email.stream import EmailStream
+from sentinel.item import Item
+from sentinel.email.mail_config import MailAccountConfig
+from sentinel.email.stream import EmailStream
 from sentinel.config import settings
 from sentinel.database import Database
 from sentinel.services.streams import StreamService
