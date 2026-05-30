@@ -20,8 +20,10 @@ from typing import AsyncIterator, Callable, List, Optional
 
 from sentinel.logging_config import get_logger
 from sentinel.streams.base import Item
-from sentinel.streams.email.email_client_factory import EmailClientFactory
-from sentinel.streams.email.mail_config import MailAccountConfig
+from sentinel.streams.email.email_client_base import EmailClient
+from sentinel.streams.email.gmail.client import GmailClient
+from sentinel.streams.email.imap_client import IMAPClient
+from sentinel.streams.email.mail_config import MailAccountConfig, MailProvider
 from sentinel.streams.email.models import EmailData
 from sentinel.time_utils import ensure_utc, parse_iso_datetime, utc_now
 
@@ -30,6 +32,21 @@ logger = get_logger(__name__)
 
 # How often the email stream re-checks the mailbox.
 _POLL_SECONDS = 60
+
+
+def _create_email_client(
+    name: str,
+    config: MailAccountConfig,
+    on_token_refreshed: Optional[Callable[[str], None]],
+) -> EmailClient:
+    """Pick the client for a provider. The clients and the pydantic config
+    models validate their own required fields, so there's nothing to check
+    here beyond the provider."""
+    if config.provider == MailProvider.GMAIL_API:
+        return GmailClient(name, config, on_token_refreshed)
+    if config.provider == MailProvider.IMAP:
+        return IMAPClient(name, config)
+    raise ValueError(f"Unsupported provider: {config.provider}")
 
 
 class EmailStream:
@@ -74,10 +91,10 @@ class EmailStream:
 
     def _fetch_batch(self) -> List[EmailData]:
         """Blocking: fetch new emails. Called via asyncio.to_thread."""
-        client = EmailClientFactory.create(
+        client = _create_email_client(
             self.name,
             self.config,
-            on_token_refreshed=self.on_token_refreshed,
+            self.on_token_refreshed,
         )
         try:
             after = self._cursor or self._initial_cursor()
