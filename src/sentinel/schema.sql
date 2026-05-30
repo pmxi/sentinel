@@ -76,10 +76,8 @@ CREATE TABLE IF NOT EXISTS classification (
     priority TEXT NOT NULL CHECK (priority IN ('important', 'normal')),
     summary TEXT,
     reasoning TEXT,
-    -- Provenance: which model + prompt produced this; lets us reclassify
-    -- selectively when either changes.
+    -- Provenance: which model produced this.
     model TEXT NOT NULL,
-    prompt_version SMALLINT NOT NULL DEFAULT 1,
     classified_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     latency_ms INTEGER
 );

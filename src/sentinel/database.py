@@ -218,24 +218,22 @@ class Database:
         reasoning: Optional[str],
         model: str,
         latency_ms: Optional[int] = None,
-        prompt_version: int = 1,
     ) -> None:
         with self._lock:
             self.conn.execute(
                 """
                 INSERT INTO classification
-                    (event_id, priority, summary, reasoning, model, prompt_version, latency_ms)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    (event_id, priority, summary, reasoning, model, latency_ms)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (event_id) DO UPDATE SET
                     priority = excluded.priority,
                     summary = excluded.summary,
                     reasoning = excluded.reasoning,
                     model = excluded.model,
-                    prompt_version = excluded.prompt_version,
                     classified_at = NOW(),
                     latency_ms = excluded.latency_ms
                 """,
-                (event_id, priority, summary, reasoning, model, prompt_version, latency_ms),
+                (event_id, priority, summary, reasoning, model, latency_ms),
             )
 
     def insert_classification_failure(self, event_id: int, error: str) -> None:
