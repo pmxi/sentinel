@@ -105,7 +105,10 @@ class Monitor:
         added = 0
         updated = 0
         for name, row in desired.items():
-            sig = (row["stream_type"], row["config_json"])
+            # user_id is part of the signature so reassigning ownership (e.g. a
+            # stream that gains an owner) restarts the task and rebuilds the
+            # pipeline — otherwise it keeps the stale owner and never notifies.
+            sig = (row["stream_type"], row["config_json"], row.get("user_id"))
             running = self._stream_tasks.get(name)
             if running is None or running.done():
                 self._start_stream(name, row)

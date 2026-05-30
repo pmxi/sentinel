@@ -159,7 +159,7 @@ class Database:
     def list_streams(self) -> List[Dict[str, Any]]:
         with self._lock:
             rows = self.conn.execute(
-                "SELECT name, stream_type, config_json::text AS config_json "
+                "SELECT name, stream_type, config_json::text AS config_json, user_id "
                 "FROM stream ORDER BY name"
             ).fetchall()
         return [dict(r) for r in rows]
