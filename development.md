@@ -35,7 +35,7 @@ Prereqs: Postgres 18 (Homebrew), `uv`, and a filled-in `.env` (see `.env.example
 cp .env.example .env               # fill in DATABASE_URL, OPENAI_API_KEY, Google creds
 createdb sentinel                  # one-time (psql tools at /opt/homebrew/opt/postgresql@18/bin)
 brew services run postgresql@18    # start DB for the session, no-boot (`stop` when done)
-uv run sentinel-web                # → http://127.0.0.1:8765  (Ctrl-C to stop)
+uv run sentinel-web                # → http://localhost:8765  (Ctrl-C to stop)
 ```
 
 `sentinel-web` reads `.env`, applies `schema.sql` on connect, serves the console,
@@ -79,30 +79,15 @@ are separate processes sharing one DB.
 9. **Classification must be turned ON** (`_CLASSIFICATION_DISABLED=False`) for the
    product — currently off.
 
-## Roadmap
+## mvp plan
 
-- [x] **Phase 0 — Foundations**: CLI → `sentinel-web`/`sentinel-worker` + env
-      config; Resend removed; `Local*` renamed; Google client registered + creds
-      in `.env`.
-- [~] **Phase 1 — Multi-tenant data model**
-  - [x] `app_user`; per-user criteria + telegram_chat_id; `stream.user_id`;
-        per-user stream listing
-  - [ ] `user_id` on `event` / `classification`; dedup → per-user
-  - [ ] no-store-emails: drop `event.body`; dedup ledger (opaque ids) + `alert` table
-  - [ ] **encrypt secrets at rest** — Gmail refresh tokens *and* IMAP app
-        passwords currently sit in plaintext in `stream.config_json` (see Risks)
-- [x] **Phase 2 — Google Sign-In** (OIDC, sessions, login-gated web, logout).
-- [x] **Phase 3 — Connect Gmail** (OAuth `readonly`, per-user `gmail:<addr>`
-      stream; IMAP app-password kept as secondary). Token refresh works; tokens
-      not yet encrypted.
-- [ ] **Phase 4 (next) — Tenant-aware worker**: classify each inbox with *that
-      user's* criteria; alert *that user*; **Telegram link-token → user**; flip
-      `_CLASSIFICATION_DISABLED` on; per-tenant failure isolation.
-- [~] **Phase 5 — Per-user web UI**: console is per-user (done); still need the
-      "flagged" list (recent important items + reason, reading the alert table).
-- [ ] **Phase 6 — Hardening & launch**: secrets encrypted, LLM cost controls,
-      rate limits, observability, DB backups; finish Google verification;
-      privacy policy + ToS.
+- sign up with google
+- connect gmail
+- configure prompt
+- openai api to classify new emails with prompt
+- send telegram message
+- hosted at sentinel.parasmittal.com
+
 
 ## Google OAuth setup (project `email-sentinel-mvp`)
 
