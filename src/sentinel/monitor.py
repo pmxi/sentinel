@@ -57,6 +57,7 @@ class Monitor:
         self.classifier = OpenAIItemClassifier(
             api_key=settings.LLM_API_KEY or "",
             model=settings.LLM_MODEL,
+            reasoning_effort=settings.LLM_REASONING_EFFORT,
         )
         self._shutdown = asyncio.Event()
         # Live registry of running stream tasks.  Hot-reload diffs this

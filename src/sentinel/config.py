@@ -26,7 +26,9 @@ class Settings:
 
     LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")
     LLM_API_KEY: str | None = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
-    LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-5.4")
+    LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-5.4-mini")
+    # Reasoning effort for gpt-5.x reasoning models: low | medium | high (or empty to disable).
+    LLM_REASONING_EFFORT: str | None = os.getenv("LLM_REASONING_EFFORT", "medium")
 
     TELEGRAM_BOT_TOKEN: str | None = os.getenv("TELEGRAM_BOT_TOKEN")
     TELEGRAM_BOT_USERNAME: str | None = os.getenv("TELEGRAM_BOT_USERNAME")

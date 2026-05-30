@@ -58,6 +58,7 @@ class OpenAIItemClassifier:
         *,
         api_key: str,
         model: str = "gpt-4o-mini",
+        reasoning_effort: str | None = None,
         criteria_provider: Callable[[], str] | None = None,
     ):
         if not api_key:
@@ -73,6 +74,11 @@ class OpenAIItemClassifier:
         )
         self.client = AsyncOpenAI(api_key=api_key, http_client=http_client)
         self.model = model
+        # Reasoning models (gpt-5.x) accept a reasoning.effort; only send it when
+        # configured so non-reasoning models don't receive an unknown parameter.
+        self._extra_params: dict = (
+            {"reasoning": {"effort": reasoning_effort}} if reasoning_effort else {}
+        )
         self._criteria_provider = criteria_provider or _default_criteria
         # Global concurrency cap. Without it the per-stream sem (64) lets
         # thousands of streams overrun OpenAI's effective RPM limit and
@@ -87,6 +93,7 @@ class OpenAIItemClassifier:
                     model=self.model,
                     input=self._build_prompt(item, notes),
                     text_format=_ClassificationResponse,
+                    **self._extra_params,
                 )
             except RateLimitError as exc:
                 logger.warning("OpenAI rate-limited after %.1fs: %s", time.monotonic() - t0, exc)
