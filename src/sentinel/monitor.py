@@ -43,7 +43,7 @@ _STREAM_REFRESH_SECONDS = 30
 # the no-LLM fast path (just emit item_received). Individual sources can
 # still opt out per-item via item.metadata['skip_classification'] = True
 # (BlueskyStream does this — too high-volume for per-item LLM calls).
-_CLASSIFICATION_DISABLED = True
+_CLASSIFICATION_DISABLED = False
 
 
 class Monitor:
