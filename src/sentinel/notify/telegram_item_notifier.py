@@ -17,10 +17,10 @@ from __future__ import annotations
 from email.utils import parseaddr
 from typing import Callable, Optional
 
+import requests
+
 from sentinel.logging_config import get_logger
 from sentinel.classifier import ClassificationResult
-from sentinel.notify.item_notifier import ItemNotifier
-from sentinel.notify.telegram_notifier import TelegramNotifier
 from sentinel.streams.base import Item
 
 logger = get_logger(__name__)
@@ -28,7 +28,7 @@ logger = get_logger(__name__)
 _MD2_SPECIALS = r"_*[]()~`>#+-=|{}.!"
 
 
-class TelegramItemNotifier(ItemNotifier):
+class TelegramItemNotifier:
     """Formats an Item for Telegram and sends it to the owner's chat.
 
     The destination chat_id is resolved lazily via `chat_id_provider` at send
@@ -47,10 +47,28 @@ class TelegramItemNotifier(ItemNotifier):
             return None
         try:
             message = self._format(item, classification)
-            return TelegramNotifier(self._bot_token, str(chat_id)).send(message)
+            return self._send(str(chat_id), message)
         except Exception as e:
             logger.error(f"Failed to send Telegram notification: {e}")
             return None
+
+    def _send(self, chat_id: str, text: str) -> Optional[str]:
+        """POST the message to Telegram (MarkdownV2). Returns the provider
+        message id on success, else None."""
+        resp = requests.post(
+            f"https://api.telegram.org/bot{self._bot_token}/sendMessage",
+            json={
+                "chat_id": chat_id,
+                "text": text,
+                "parse_mode": "MarkdownV2",
+                "disable_notification": False,
+            },
+            timeout=10,
+        )
+        if resp.status_code == 200:
+            return str(resp.json().get("result", {}).get("message_id"))
+        logger.error("Telegram sendMessage failed: %s - %s", resp.status_code, resp.text)
+        return None
 
     def _format(self, item: Item, classification: ClassificationResult) -> str:
         summary = classification.summary or ""
