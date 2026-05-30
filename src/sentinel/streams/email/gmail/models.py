@@ -56,6 +56,5 @@ def email_data_from_gmail_message(message: dict) -> EmailData:
         recipient=recipient,
         body=body,
         received_date=date,
-        provider="gmail",
         url=url,
     )

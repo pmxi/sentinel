@@ -102,7 +102,6 @@ class GmailClient(EmailClient):
             )
 
             email_data = email_data_from_gmail_message(message)
-            email_data.provider = self.provider_type
             logger.debug(f"Retrieved email from {email_data.sender}, subject: {email_data.subject[:50]}...")
             return email_data
         except Exception as e:

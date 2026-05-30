@@ -15,7 +15,6 @@ class EmailClient(ABC):
         """
         self.account_name = account_name
         self.config = config
-        self.provider_type = config.provider  # e.g., 'gmail_api', 'imap'
 
     @abstractmethod
     def get_emails_after_timestamp(

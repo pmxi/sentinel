@@ -150,7 +150,6 @@ class IMAPClient(EmailClient):
                 recipient=recipient,
                 body=body,
                 received_date=date,
-                provider=self.provider_type,
             )
         except Exception as e:
             logger.error(f"Error fetching email uid={uid}: {e}")
