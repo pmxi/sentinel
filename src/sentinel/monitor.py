@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import signal
 import time
 from typing import Any, Dict, List, Optional
@@ -25,7 +24,6 @@ from sentinel.streams.email.mail_config import MailAccountConfig
 from sentinel.streams.email.stream import EmailStream
 from sentinel.config import settings
 from sentinel.database import Database
-from sentinel.live_bus import LiveEvent, LiveEventBus
 from sentinel.services.preferences import Preferences
 from sentinel.services.streams import StreamService
 from sentinel.telegram_bot import start_in_thread as start_telegram_listener
@@ -53,10 +51,8 @@ class Monitor:
     def __init__(
         self,
         database: Database,
-        bus: Optional[LiveEventBus] = None,
     ):
         self.db = database
-        self.bus = bus
         self.stream_service = StreamService(database)
         self.classifier = OpenAIItemClassifier(
             api_key=settings.LLM_API_KEY or "",
@@ -210,12 +206,11 @@ class Monitor:
             try:
                 preferences = self._get_preferences()
                 if self._observer is None:
-                    self._observer = _BatchingObserver(self.db, self.bus)
+                    self._observer = _BatchingObserver(self.db)
                 processor = ItemPipeline(
                     db=self.db,
                     classifier=self.classifier,
                     preferences=preferences,
-                    bus=self.bus,
                     observer=self._observer,
                 )
                 # Concurrency cap per stream. With many streams (700+),
@@ -313,7 +308,6 @@ class ItemPipeline:
         db: Database,
         classifier: OpenAIItemClassifier,
         preferences: Preferences,
-        bus: Optional[LiveEventBus],
         observer: Optional["_BatchingObserver"] = None,
     ):
         notifier = None
@@ -326,7 +320,7 @@ class ItemPipeline:
             )
         # Reuse a shared observer if provided (supervisor's batching writer);
         # otherwise build a private one (legacy callers).
-        self.observer = observer or _BatchingObserver(db, bus)
+        self.observer = observer or _BatchingObserver(db)
         self.processor = ItemProcessor(
             classifier=classifier,
             store=_DbProcessedItemStore(db),
@@ -397,14 +391,9 @@ class _BatchingObserver(ProcessingObserver):
     BATCH_INTERVAL_S = 0.25
     QUEUE_MAX = 50_000
 
-    def __init__(self, db: Database, bus: Optional[LiveEventBus]):
+    def __init__(self, db: Database):
         self.db = db
-        self.bus = bus
         self._queue: "asyncio.Queue[Item]" = asyncio.Queue(maxsize=self.QUEUE_MAX)
-        # event_id -> Item lookup used by item_classified events that
-        # arrive before our SSE bus sees the matching event_received.
-        # We don't keep this in memory long: the bus already does its
-        # own correlation client-side via item_id.
         self._task: Optional[asyncio.Task] = None
         self._dropped: int = 0
         self._last_dropped_log: float = 0.0
@@ -452,15 +441,6 @@ class _BatchingObserver(ProcessingObserver):
             reasoning=c.reasoning,
             model=_model_name_for_log(),
         )
-        if self.bus is not None:
-            payload = _classification_payload(ev.item, c)
-            self.bus.publish(
-                LiveEvent(
-                    event_id=event_id,
-                    event_type="item_classified",
-                    payload_json=_safe_json(payload),
-                )
-            )
 
     def _record_failure(self, ev: ProcessingEvent) -> None:
         with self.db._lock:
@@ -491,23 +471,7 @@ class _BatchingObserver(ProcessingObserver):
                     }
                     for item in batch
                 ]
-                ids = await asyncio.to_thread(self.db.insert_events_bulk, rows)
-                if self.bus is not None:
-                    # Bulk insert skips dedup hits; ids length may be < batch.
-                    # We don't try to correlate position-by-position — the bus
-                    # is best-effort for live UI. Just publish whatever
-                    # actually landed.
-                    n = min(len(ids), len(batch))
-                    for i in range(n):
-                        item = batch[i]
-                        payload = _item_received_payload(item)
-                        self.bus.publish(
-                            LiveEvent(
-                                event_id=ids[i],
-                                event_type="item_received",
-                                payload_json=_safe_json(payload),
-                            )
-                        )
+                await asyncio.to_thread(self.db.insert_events_bulk, rows)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
@@ -539,37 +503,8 @@ def _filter_metadata(md: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     return out or None
 
 
-def _safe_json(payload: Dict[str, Any]) -> str:
-    """json.dumps, then strip NUL bytes (some Bluesky posts contain them)."""
-    s = json.dumps(payload, default=str)
-    return s.replace("\\u0000", "").replace(chr(0), "") if (chr(0) in s or "\\u0000" in s) else s
-
-
 def _model_name_for_log() -> str:
     return settings.LLM_MODEL or "unknown"
-
-
-def _item_received_payload(item: Item) -> Dict[str, Any]:
-    md = item.metadata or {}
-    return {
-        "item_id": item.id,
-        "stream_name": md.get("stream_name", ""),
-        "title": item.title,
-        "body": _effective_body(item),
-        "url": item.url,
-        "author": item.author,
-        "received_at": item.received_at.isoformat() if item.received_at else None,
-    }
-
-
-def _classification_payload(item: Item, c) -> Dict[str, Any]:
-    p = _item_received_payload(item)
-    p.update({
-        "priority": c.priority.value,
-        "summary": c.summary or "",
-        "reasoning": c.reasoning,
-    })
-    return p
 
 
 def _is_transient_classification_error(exc: Exception) -> bool:
