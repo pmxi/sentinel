@@ -14,6 +14,5 @@ class EmailData:
     recipient: str
     body: str
     received_date: str
-    is_read: bool
     provider: str  # Track which email provider this came from
     url: Optional[str] = None  # Deep link into the provider's UI, if available

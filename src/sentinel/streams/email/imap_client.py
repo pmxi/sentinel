@@ -123,24 +123,16 @@ class IMAPClient(EmailClient):
             # From my investigation, it seems that iCloud IMAP server supports the updated IMAP protocol in RFC 9051.
             # In this protocol, the FETCH command doesn't support using RFC822 to get the full email content.
             # However we can use BODY[]
-            status, data = conn.uid("FETCH", uid, "(FLAGS BODY[])")
+            status, data = conn.uid("FETCH", uid, "BODY[]")
             if status != "OK" or not data or not data[0]:
                 return None
 
-            # Parse email content - data[0] is a tuple of (flags, raw_email)
+            # Parse email content - data[0] is a tuple of (header, raw_email)
             raw_email = data[0][1]
             if not isinstance(raw_email, bytes):
                 return None
 
             msg = email.message_from_bytes(raw_email)
-
-            # Check if read - data[0][0] contains the flags
-            flags_data = data[0][0]
-            if isinstance(flags_data, bytes):
-                flags = flags_data.decode()
-            else:
-                flags = str(flags_data) if flags_data else ""
-            is_read = "\\Seen" in flags
 
             # Extract headers
             subject = self._decode_header(msg["Subject"] or "No Subject")
@@ -158,7 +150,6 @@ class IMAPClient(EmailClient):
                 recipient=recipient,
                 body=body,
                 received_date=date,
-                is_read=is_read,
                 provider=self.provider_type,
             )
         except Exception as e:
