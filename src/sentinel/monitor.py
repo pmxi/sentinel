@@ -273,12 +273,22 @@ class ItemPipeline:
             return None
         return (self.db.get_user(self.user_id) or {}).get("telegram_chat_id")
 
+    def _log_ctx(self, item: Item) -> str:
+        """Stable key=value prefix so one item's journey is greppable across
+        the pipeline's log lines."""
+        stream = (item.metadata or {}).get("stream_name", "") or "-"
+        user = self.user_id if self.user_id is not None else "-"
+        return f"item={item.id} stream={stream} user={user}"
+
     async def process(self, item: Item) -> bool:
+        ctx = self._log_ctx(item)
         if await asyncio.to_thread(self.db.is_item_processed, item.id):
+            logger.debug("%s outcome=dedup_skip", ctx)
             return False
 
         if _CLASSIFICATION_DISABLED:
             await asyncio.to_thread(self._record_event, item)
+            logger.info("%s outcome=classification_disabled", ctx)
             return False
 
         notes = ""
@@ -291,7 +301,7 @@ class ItemPipeline:
         except Exception as exc:
             if _is_transient_classification_error(exc):
                 # Leave no row — the item is retried on the next poll.
-                logger.warning("transient classify error for %s; will retry: %s", item.id, exc)
+                logger.warning("%s outcome=classify_retry error=%s", ctx, exc)
                 return False
             # Permanent failure: record the event + failure so we stop retrying.
             event_id = await asyncio.to_thread(self._record_event, item)
@@ -299,6 +309,7 @@ class ItemPipeline:
                 await asyncio.to_thread(
                     self.db.insert_classification_failure, event_id, str(exc)
                 )
+            logger.error("%s outcome=classify_failed error=%s", ctx, exc)
             return False
 
         event_id = await asyncio.to_thread(self._record_event, item)
@@ -311,8 +322,34 @@ class ItemPipeline:
                 reasoning=classification.reasoning,
                 model=settings.LLM_MODEL or "unknown",
             )
-        if classification.is_important() and self.notifier is not None:
-            await asyncio.to_thread(self.notifier.notify, item, classification)
+
+        priority = classification.priority.value
+        if not classification.is_important():
+            logger.info("%s outcome=classified priority=%s notify=n/a", ctx, priority)
+            return True
+
+        # Important: a missing alert here is the failure that started all this,
+        # so every branch states whether we delivered and, if not, why.
+        if self.notifier is None:
+            reason = "telegram_not_configured" if not settings.TELEGRAM_BOT_TOKEN else "stream_has_no_owner"
+            logger.warning(
+                "%s outcome=classified priority=important notify=skipped reason=%s", ctx, reason
+            )
+            return True
+
+        result = await asyncio.to_thread(self.notifier.notify, item, classification)
+        if result.status == "sent":
+            logger.info(
+                "%s outcome=classified priority=important notify=sent msg=%s", ctx, result.detail
+            )
+        elif result.status == "skipped":
+            logger.warning(
+                "%s outcome=classified priority=important notify=skipped reason=%s", ctx, result.detail
+            )
+        else:
+            logger.error(
+                "%s outcome=classified priority=important notify=failed detail=%s", ctx, result.detail
+            )
         return True
 
     def _record_event(self, item: Item) -> Optional[int]:

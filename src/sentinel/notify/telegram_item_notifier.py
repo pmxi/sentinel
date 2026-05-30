@@ -14,6 +14,7 @@ The first line is the sender's bare email address (display name stripped).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from email.utils import parseaddr
 from typing import Callable, Optional
 
@@ -28,29 +29,46 @@ logger = get_logger(__name__)
 _MD2_SPECIALS = r"_*[]()~`>#+-=|{}.!"
 
 
+@dataclass(frozen=True)
+class NotifyResult:
+    """Why a notify attempt did (or didn't) deliver.
+
+    status is one of "sent" | "skipped" | "failed". detail carries the provider
+    message id when sent, otherwise the reason — so the caller can log a cause
+    instead of silently dropping a None.
+    """
+
+    status: str
+    detail: str = ""
+
+
 class TelegramItemNotifier:
     """Formats an Item for Telegram and sends it to the owner's chat.
 
     The destination chat_id is resolved lazily via `chat_id_provider` at send
     time, not captured up front — so a user who links Telegram after the worker
-    is already polling still gets their next important item. Returns None
-    without sending if the user hasn't linked a chat yet.
+    is already polling still gets their next important item. Returns a
+    NotifyResult describing the outcome (sent / skipped / failed) so the caller
+    can log why nothing was delivered rather than dropping a silent None.
     """
 
     def __init__(self, bot_token: str, chat_id_provider: Callable[[], Optional[str]]):
         self._bot_token = bot_token
         self._chat_id_provider = chat_id_provider
 
-    def notify(self, item: Item, classification: ClassificationResult) -> Optional[str]:
+    def notify(self, item: Item, classification: ClassificationResult) -> NotifyResult:
         chat_id = self._chat_id_provider()
         if not chat_id:
-            return None
+            return NotifyResult("skipped", "telegram_unlinked")
         try:
             message = self._format(item, classification)
-            return self._send(str(chat_id), message)
+            message_id = self._send(str(chat_id), message)
         except Exception as e:
             logger.error(f"Failed to send Telegram notification: {e}")
-            return None
+            return NotifyResult("failed", str(e))
+        if message_id is None:
+            return NotifyResult("failed", "send_rejected")
+        return NotifyResult("sent", message_id)
 
     def _send(self, chat_id: str, text: str) -> Optional[str]:
         """POST the message to Telegram (MarkdownV2). Returns the provider
