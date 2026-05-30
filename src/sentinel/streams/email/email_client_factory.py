@@ -5,7 +5,6 @@ from sentinel.streams.email.email_client_base import EmailClient
 from sentinel.streams.email.gmail.client import GmailClient
 from sentinel.streams.email.imap_client import IMAPClient
 from sentinel.streams.email.mail_config import AuthMethod, MailAccountConfig, MailProvider
-from sentinel.streams.email.msgraph_client import MSGraphClient
 
 logger = get_logger(__name__)
 
@@ -16,7 +15,6 @@ class EmailClientFactory:
     _provider_map: Dict[MailProvider, Type[EmailClient]] = {
         MailProvider.GMAIL_API: GmailClient,
         MailProvider.IMAP: IMAPClient,
-        MailProvider.MSGRAPH: MSGraphClient,
     }
 
     @classmethod
@@ -31,20 +29,14 @@ class EmailClientFactory:
         if not config.enabled:
             raise ValueError(f"Account {account_name} is disabled")
 
-        provider_class = cls._provider_map.get(config.provider)
-        if not provider_class:
+        if config.provider not in cls._provider_map:
             raise ValueError(f"Unsupported provider: {config.provider}")
 
         logger.info(f"Creating {config.provider} client for account: {account_name}")
 
         if config.provider == MailProvider.GMAIL_API:
             return cls._create_gmail_client(account_name, config, on_token_refreshed)
-        elif config.provider == MailProvider.IMAP:
-            return cls._create_imap_client(account_name, config)
-        elif config.provider == MailProvider.MSGRAPH:
-            return cls._create_msgraph_client(account_name, config, on_token_refreshed)
-        else:
-            raise ValueError(f"No factory method for provider: {config.provider}")
+        return cls._create_imap_client(account_name, config)
 
     @classmethod
     def _create_gmail_client(
@@ -66,16 +58,3 @@ class EmailClientFactory:
         if not config.server:
             raise ValueError("IMAP provider requires server configuration")
         return IMAPClient(account_name, config)
-
-    @classmethod
-    def _create_msgraph_client(
-        cls,
-        account_name: str,
-        config: MailAccountConfig,
-        on_token_refreshed: Optional[Callable[[str], None]],
-    ) -> MSGraphClient:
-        if config.auth.method != AuthMethod.OAUTH2:
-            raise ValueError("Microsoft Graph API only supports OAuth2 authentication")
-        if not config.auth.client_id or not config.auth.tenant_id:
-            raise ValueError("Microsoft Graph API requires client_id and tenant_id")
-        return MSGraphClient(account_name, config, on_token_refreshed)

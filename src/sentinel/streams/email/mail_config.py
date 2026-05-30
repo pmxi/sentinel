@@ -7,7 +7,6 @@ from pydantic import BaseModel, model_validator
 class MailProvider(str, Enum):
     GMAIL_API = "gmail_api"
     IMAP = "imap"
-    MSGRAPH = "msgraph"
 
 
 class AuthMethod(str, Enum):
@@ -18,12 +17,9 @@ class AuthMethod(str, Enum):
 class AuthConfig(BaseModel):
     method: AuthMethod
 
-    # OAuth2 fields — all inline strings, no file paths
-    client_config_json: Optional[str] = None  # Gmail: contents of credentials.json
+    # OAuth2 fields (Gmail) — all inline strings, no file paths
+    client_config_json: Optional[str] = None  # contents of the OAuth client JSON
     token_json: Optional[str] = None          # OAuth authorized-user token
-    client_id: Optional[str] = None           # MSGraph
-    client_secret: Optional[str] = None
-    tenant_id: Optional[str] = None
 
     # Password auth fields (IMAP)
     username: Optional[str] = None
@@ -32,12 +28,8 @@ class AuthConfig(BaseModel):
     @model_validator(mode="after")
     def validate_auth_fields(self):
         if self.method == AuthMethod.OAUTH2:
-            # Gmail API: needs client_config_json
-            # MSGraph: needs client_id + tenant_id
-            if not self.client_config_json and not self.client_id:
-                raise ValueError(
-                    "OAuth2 requires either client_config_json (Gmail) or client_id (MSGraph)"
-                )
+            if not self.client_config_json:
+                raise ValueError("OAuth2 requires client_config_json (Gmail)")
         elif self.method == AuthMethod.PASSWORD:
             if not self.username or not self.password:
                 raise ValueError("username and password are required for password auth")
