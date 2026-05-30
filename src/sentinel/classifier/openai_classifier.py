@@ -100,20 +100,16 @@ class OpenAIItemClassifier:
             return parsed.to_result()
 
     def _build_prompt(self, item: Item, notes: str) -> str:
-        extra = (notes or "").strip()
-        extra_block = (
-            f"\nADDITIONAL NOTES FROM THE USER (take these seriously):\n{extra}\n"
-            if extra
-            else ""
-        )
-        criteria = self._criteria_provider()
+        # The user's saved criteria, edited directly in the console, IS the
+        # criteria. Fall back to the built-in default only when it's empty.
+        criteria = (notes or "").strip() or self._criteria_provider()
         rendered = self._render_item(item)
         return f"""
 You are a classification assistant. The user wants to be alerted only to the
 emails that genuinely matter to them. Classify the following item as IMPORTANT or NORMAL.
 
 {criteria}
-{extra_block}
+
 ITEM TO CLASSIFY:
 {rendered}
 

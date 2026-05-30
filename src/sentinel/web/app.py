@@ -1,27 +1,29 @@
-"""Local single-user web app."""
+"""Sentinel web console.
+
+A thin control panel for the runtime: connect an inbox, edit the classification
+criteria, and link a notification channel. It deliberately does NOT display email
+content — alerts are delivered out-of-band (Telegram), and the inbox lives in
+the user's own mail client.
+"""
 
 from __future__ import annotations
 
 import asyncio
-import json
-import queue
 import secrets
 import threading
-import time
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
-from flask import Flask, Response, abort, redirect, render_template, request, stream_with_context, url_for
+from flask import Flask, abort, redirect, render_template, request, url_for
 
 from sentinel.logging_config import get_logger
+from sentinel.classifier.openai_classifier import _default_criteria
 from sentinel.streams.email.mail_config import AccountSettings, AuthConfig, AuthMethod, MailAccountConfig, MailProvider
 from sentinel.time_utils import utc_now
 from sentinel.config import settings
 from sentinel.database import Database
-from sentinel.live_bus import LiveEventBus
 from sentinel.monitor import Monitor
 from sentinel.services.preferences import PreferencesService
-from sentinel.services.runtime import RuntimeService
 from sentinel.services.streams import StreamService
 from sentinel.web.imap_probe import probe_imap
 
@@ -33,344 +35,38 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     app.debug = debug
     app.config["DATABASE_URL"] = database_url or settings.require_database_url()
     app.secret_key = settings.SESSION_SECRET or "sentinel-local"
-    app.extensions["live_bus"] = _maybe_start_embedded_monitor(app)
+    _maybe_start_embedded_monitor(app)
 
     def open_db() -> Database:
         return Database(app.config["DATABASE_URL"])
 
     @app.context_processor
     def inject_runtime_context():
-        return {
-            "identity_enabled": False,
-            "current_user": {"email": "local@sentinel"},
-        }
+        return {"identity_enabled": False, "current_user": {"email": "local@sentinel"}}
 
-    @app.route("/")
-    def dashboard():
+    @app.route("/", methods=["GET", "POST"])
+    def console():
         db = open_db()
         try:
-            snapshot = RuntimeService(db).dashboard_snapshot()
-        finally:
-            db.close()
-        return render_template("dashboard.html", **snapshot)
-
-    @app.route("/preferences", methods=["GET", "POST"])
-    def preferences_page():
-        db = open_db()
-        try:
-            service = PreferencesService(db)
-            prefs = service.load()
-        finally:
-            db.close()
-        return render_template(
-            "preferences.html",
-            telegram_chat_id=prefs.TELEGRAM_CHAT_ID,
-            telegram_bot_username=settings.TELEGRAM_BOT_USERNAME,
-        )
-
-    @app.route("/preferences/telegram/link", methods=["POST"])
-    def telegram_link_start():
-        if not settings.TELEGRAM_BOT_USERNAME:
-            abort(500, "TELEGRAM_BOT_USERNAME not configured")
-        token = secrets.token_urlsafe(24)
-        expires = utc_now() + timedelta(minutes=10)
-        db = open_db()
-        try:
-            db.create_telegram_link_token(token, expires)
-        finally:
-            db.close()
-        return redirect(f"https://t.me/{settings.TELEGRAM_BOT_USERNAME}?start={token}")
-
-    @app.route("/preferences/telegram/unlink", methods=["POST"])
-    def telegram_unlink():
-        db = open_db()
-        try:
-            PreferencesService(db).clear_telegram_chat_id()
-        finally:
-            db.close()
-        return redirect(url_for("preferences_page"))
-
-    @app.route("/prompt", methods=["GET", "POST"])
-    def prompt_page():
-        db = open_db()
-        try:
-            service = PreferencesService(db)
+            prefs_service = PreferencesService(db)
             if request.method == "POST":
-                service.save_classification_notes(
-                    request.form.get("CLASSIFICATION_NOTES", "")
-                )
-                return redirect(url_for("prompt_page", saved=1))
-            notes = service.load().CLASSIFICATION_NOTES
+                prefs_service.save_classification_notes(request.form.get("criteria", ""))
+                return redirect(url_for("console", saved=1))
+            inboxes = StreamService(db).list_stream_rows()
+            prefs = prefs_service.load()
         finally:
             db.close()
         return render_template(
-            "prompt.html",
-            notes=notes,
-            base_prompt=_base_prompt_preview(),
+            "console.html",
+            inboxes=inboxes,
+            criteria=prefs.CLASSIFICATION_NOTES or _default_criteria(),
+            telegram_linked=bool(prefs.TELEGRAM_CHAT_ID),
+            telegram_bot_username=settings.TELEGRAM_BOT_USERNAME,
             saved=request.args.get("saved") == "1",
         )
 
-    @app.route("/events/stream")
-    def events_stream():
-        bus: Optional[LiveEventBus] = app.extensions.get("live_bus")
-        last_id_header = request.headers.get("Last-Event-ID")
-        since_param = request.args.get("since")
-        try:
-            if last_id_header is not None:
-                cursor = int(last_id_header)
-            elif since_param is not None:
-                cursor = int(since_param)
-            else:
-                db = open_db()
-                try:
-                    cursor = db.latest_event_id()
-                finally:
-                    db.close()
-        except (ValueError, TypeError):
-            cursor = 0
-
-        generate = (
-            _sse_push_loop(app.config["DATABASE_URL"], cursor, bus)
-            if bus is not None
-            else _sse_poll_loop(app.config["DATABASE_URL"], cursor)
-        )
-        return Response(
-            stream_with_context(generate)(),
-            mimetype="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "X-Accel-Buffering": "no",
-                "Connection": "keep-alive",
-            },
-        )
-
-    @app.route("/live")
-    def live_page():
-        """Real-time multi-source traffic monitor."""
-        return render_template("live.html")
-
-    @app.route("/alerts")
-    def alerts_page():
-        """Recent items the classifier flagged as IMPORTANT."""
-        try:
-            limit = min(max(int(request.args.get("limit", "50")), 5), 500)
-        except (TypeError, ValueError):
-            limit = 50
-        priority_filter = request.args.get("priority", "important")
-        if priority_filter not in ("important", "normal", "all"):
-            priority_filter = "important"
-
-        db = open_db()
-        try:
-            with db.conn.cursor() as cur:
-                where_pri = "" if priority_filter == "all" else (
-                    "AND c.priority = %s"
-                )
-                params: list[Any] = []
-                if priority_filter != "all":
-                    params.append(priority_filter)
-                params.append(limit)
-                cur.execute(
-                    f"""
-                    SELECT
-                        e.id,
-                        c.classified_at        AS created_at,
-                        c.priority             AS priority,
-                        e.stream_name          AS stream_name,
-                        e.title                AS title,
-                        e.url                  AS url,
-                        c.summary              AS summary,
-                        c.reasoning            AS reasoning
-                    FROM classification c
-                    JOIN event e ON e.id = c.event_id
-                    WHERE TRUE {where_pri}
-                    ORDER BY c.classified_at DESC
-                    LIMIT %s
-                    """,
-                    params,
-                )
-                rows = cur.fetchall()
-
-                cur.execute(
-                    "SELECT priority, COUNT(*) AS c FROM classification GROUP BY 1"
-                )
-                counts = {
-                    (r["priority"] if isinstance(r, dict) else r[0]):
-                    (r["c"] if isinstance(r, dict) else r[1])
-                    for r in cur.fetchall()
-                }
-        finally:
-            db.close()
-
-        items = [dict(r) if isinstance(r, dict) else {
-            "id": r[0], "created_at": r[1], "priority": r[2],
-            "stream_name": r[3],
-            "title": r[4], "url": r[5], "summary": r[6], "reasoning": r[7],
-        } for r in rows]
-
-        return render_template(
-            "alerts.html",
-            items=items,
-            priority_filter=priority_filter,
-            limit=limit,
-            counts=counts,
-        )
-
-    @app.route("/streams/activity")
-    def streams_activity():
-        """Per-stream emission stats over a recent window.
-
-        Reads the last `window` rows of `live_events` (default 20k) and
-        groups item_received events by stream_name. Cheap because the
-        outer filter uses live_events' `id` BTREE index — the JSONB
-        extraction only runs on the windowed subset.
-        """
-        try:
-            window = min(max(int(request.args.get("window", "20000")), 1000), 200000)
-        except (TypeError, ValueError):
-            window = 20000
-
-        db = open_db()
-        try:
-            with db.conn.cursor() as cur:
-                cur.execute("SELECT MAX(id) FROM event")
-                row = cur.fetchone()
-                max_id = (row["max"] if isinstance(row, dict) else row[0]) or 0
-                low_id = max(0, max_id - window)
-                cur.execute(
-                    """
-                    SELECT
-                        stream_name              AS stream,
-                        MAX(observed_at)         AS last_seen,
-                        MIN(observed_at)         AS first_seen,
-                        COUNT(*)                 AS n
-                    FROM event
-                    WHERE id > %s
-                    GROUP BY 1
-                    ORDER BY n DESC
-                    """,
-                    (low_id,),
-                )
-                rows = cur.fetchall()
-                cur.execute(
-                    "SELECT COUNT(*) AS c FROM event WHERE id > %s", (low_id,),
-                )
-                total_row = cur.fetchone()
-                total = (total_row["c"] if isinstance(total_row, dict) else total_row[0]) or 0
-        finally:
-            db.close()
-
-        # Compute rate per stream in items/min
-        now = utc_now()
-        activity: List[Dict[str, Any]] = []
-        for r in rows:
-            d = r if isinstance(r, dict) else {
-                "stream": r[0],
-                "last_seen": r[1], "first_seen": r[2], "n": r[3],
-            }
-            first = d["first_seen"]
-            last = d["last_seen"]
-            window_secs = max(1.0, (last - first).total_seconds()) if (first and last) else 60.0
-            rate_per_min = d["n"] * 60.0 / window_secs if window_secs > 0 else 0
-            age_secs = (now - last).total_seconds() if last else None
-            activity.append({
-                "stream": d["stream"] or "(unknown)",
-                "count": d["n"],
-                "rate_per_min": rate_per_min,
-                "last_seen": last,
-                "age_secs": age_secs,
-            })
-
-        # Total rate estimate across the whole window
-        if activity:
-            window_first = min((a["last_seen"] for a in activity if a["last_seen"]), default=now)
-            total_window_secs = max(1.0, (now - window_first).total_seconds())
-            total_rate_per_sec = total / total_window_secs
-        else:
-            total_rate_per_sec = 0
-
-        return render_template(
-            "streams_activity.html",
-            activity=activity,
-            window=window,
-            total=total,
-            total_rate_per_sec=total_rate_per_sec,
-            distinct_streams=len(activity),
-        )
-
-    @app.route("/streams")
-    def streams_page():
-        db = open_db()
-        try:
-            rows = StreamService(db).list_stream_rows()
-        finally:
-            db.close()
-
-        # Filters
-        q = (request.args.get("q") or "").strip().lower()
-        type_filter = (request.args.get("type") or "").strip().lower()
-        status = (request.args.get("status") or "").strip().lower()  # 'enabled'|'disabled'|'error'
-
-        type_counts: dict[str, int] = {}
-        enabled_count = 0
-        error_count = 0
-        for r in rows:
-            type_counts[r["stream_type"]] = type_counts.get(r["stream_type"], 0) + 1
-            if r["enabled"]:
-                enabled_count += 1
-            if r["error"]:
-                error_count += 1
-
-        def keep(r) -> bool:
-            if type_filter and r["stream_type"] != type_filter:
-                return False
-            if status == "enabled" and not r["enabled"]:
-                return False
-            if status == "disabled" and r["enabled"]:
-                return False
-            if status == "error" and not r["error"]:
-                return False
-            if q:
-                hay = (r["name"] + " " + (r["detail"] or "")).lower()
-                if q not in hay:
-                    return False
-            return True
-
-        filtered = [r for r in rows if keep(r)]
-
-        # Pagination
-        try:
-            page = max(1, int(request.args.get("page", "1")))
-        except ValueError:
-            page = 1
-        per_page = 100
-        total = len(filtered)
-        pages = max(1, (total + per_page - 1) // per_page)
-        page = min(page, pages)
-        start = (page - 1) * per_page
-        page_rows = filtered[start:start + per_page]
-
-        return render_template(
-            "streams.html",
-            streams=page_rows,
-            page=page,
-            pages=pages,
-            total=total,
-            grand_total=len(rows),
-            type_counts=sorted(type_counts.items(), key=lambda kv: -kv[1]),
-            enabled_count=enabled_count,
-            error_count=error_count,
-            q=q,
-            type_filter=type_filter,
-            status=status,
-        )
-
-    @app.route("/streams/new")
-    def new_stream_page():
-        return redirect(url_for("new_email_stream_page"))
-
-    @app.route("/streams/new/email", methods=["GET", "POST"])
-    def new_email_stream_page():
+    @app.route("/inbox/connect", methods=["GET", "POST"])
+    def connect_inbox():
         providers = _imap_provider_presets()
         if request.method == "POST":
             form = request.form
@@ -385,7 +81,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
 
             errors: List[str] = []
             if not name:
-                errors.append("Pick a friendly name for this stream.")
+                errors.append("Pick a name for this inbox.")
             if not username:
                 errors.append("Email address is required.")
             if not password:
@@ -402,9 +98,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
             try:
                 service = StreamService(db)
                 if name and service.get_stream(name):
-                    errors.append(
-                        f"You already have a stream named {name!r}. Pick a different name."
-                    )
+                    errors.append(f"You already have an inbox named {name!r}. Pick a different name.")
                 if not errors:
                     probe = probe_imap(server, port, username, password)
                     if not probe.ok:
@@ -422,7 +116,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
                         settings=AccountSettings(),
                     )
                     service.add_stream(name, "email", config.model_dump_json())
-                    return redirect(url_for("streams_page"))
+                    return redirect(url_for("console"))
             finally:
                 db.close()
 
@@ -446,155 +140,61 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
             form={"preset": "gmail", "name": "", "username": "", "server": "", "port": ""},
         )
 
-    @app.route("/streams/<name>/toggle", methods=["POST"])
-    def toggle_stream(name: str):
-        db = open_db()
-        try:
-            StreamService(db).toggle_stream(name)
-        finally:
-            db.close()
-        return redirect(url_for("streams_page"))
-
-    @app.route("/streams/<name>/delete", methods=["POST"])
-    def delete_stream(name: str):
+    @app.route("/inbox/<name>/delete", methods=["POST"])
+    def delete_inbox(name: str):
         db = open_db()
         try:
             StreamService(db).delete_stream(name)
         finally:
             db.close()
-        return redirect(url_for("streams_page"))
+        return redirect(url_for("console"))
+
+    @app.route("/telegram/link", methods=["POST"])
+    def telegram_link():
+        if not settings.TELEGRAM_BOT_USERNAME:
+            abort(500, "TELEGRAM_BOT_USERNAME not configured")
+        token = secrets.token_urlsafe(24)
+        db = open_db()
+        try:
+            db.create_telegram_link_token(token, utc_now() + timedelta(minutes=10))
+        finally:
+            db.close()
+        return redirect(f"https://t.me/{settings.TELEGRAM_BOT_USERNAME}?start={token}")
+
+    @app.route("/telegram/unlink", methods=["POST"])
+    def telegram_unlink():
+        db = open_db()
+        try:
+            PreferencesService(db).clear_telegram_chat_id()
+        finally:
+            db.close()
+        return redirect(url_for("console"))
 
     return app
 
 
-def _maybe_start_embedded_monitor(app: Flask) -> Optional[LiveEventBus]:
+def _maybe_start_embedded_monitor(app: Flask) -> None:
     import os
 
     if os.getenv("SENTINEL_EMBED_WORKER", "true").strip().lower() not in ("1", "true", "yes", "on"):
         logger.info("SENTINEL_EMBED_WORKER off; web will not run the supervisor (use sentinel-worker).")
-        return None
+        return
     if not settings.LLM_API_KEY:
-        logger.info("LLM_API_KEY not configured; skipping embedded local monitor.")
-        return None
-
-    # Under Werkzeug's reloader the parent process re-execs a child with
-    # WERKZEUG_RUN_MAIN=true; the parent itself never sets it. Starting the
-    # monitor in both processes spins up two Telegram long-pollers, which
-    # Telegram rejects with HTTP 409. Only run in the child (or when the
-    # reloader is off entirely).
+        logger.info("LLM_API_KEY not configured; skipping embedded supervisor.")
+        return
+    # Under Werkzeug's reloader only the child (WERKZEUG_RUN_MAIN=true) should
+    # start the supervisor, else two Telegram pollers collide (HTTP 409).
     if app.debug and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
-        return None
-
-    bus = LiveEventBus()
+        return
 
     def _run_monitor() -> None:
         try:
             db = Database(app.config["DATABASE_URL"])
-            monitor = Monitor(db, bus=bus)
-            asyncio.run(monitor.run())
+            asyncio.run(Monitor(db).run())
         except Exception as exc:
-            logger.exception("Embedded local monitor crashed: %s", exc)
+            logger.exception("Embedded supervisor crashed: %s", exc)
 
-    threading.Thread(target=_run_monitor, name="sentinel-local-monitor", daemon=True).start()
-    return bus
-
-
-def _row_to_sse_payload(row: Dict[str, Any]) -> tuple[str, str]:
-    """Render an event row (LEFT JOINed with classification) into the
-    (event_type, payload_json) pair the SSE client expects. If the row
-    has classification fields populated we send item_classified;
-    otherwise item_received."""
-    payload: Dict[str, Any] = {
-        "item_id": row.get("item_id"),
-        "stream_name": row.get("stream_name"),
-        "title": row.get("title"),
-        "body": row.get("body"),
-        "url": row.get("url"),
-        "author": row.get("author"),
-        "received_at": row.get("received_at").isoformat() if row.get("received_at") else None,
-    }
-    if row.get("priority"):
-        payload.update({
-            "priority": row.get("priority"),
-            "summary": row.get("summary") or "",
-            "reasoning": row.get("reasoning"),
-        })
-        event_type = "item_classified"
-    else:
-        event_type = "item_received"
-    return event_type, json.dumps(payload, default=str)
-
-
-def _sse_push_loop(database_url: str, cursor: int, bus: LiveEventBus):
-    def generate():
-        nonlocal cursor
-        yield "retry: 3000\n: connected\n\n"
-        q = bus.subscribe()
-        heartbeat_countdown = 30
-        try:
-            db = Database(database_url)
-            try:
-                while True:
-                    rows = db.fetch_events_since(cursor, limit=200)
-                    if rows:
-                        for row in rows:
-                            cursor = int(row["id"])
-                            event_type, payload = _row_to_sse_payload(row)
-                            yield _sse_frame(cursor, event_type, payload)
-                        heartbeat_countdown = 30
-                        continue
-
-                    try:
-                        event = q.get(timeout=0.5)
-                    except queue.Empty:
-                        heartbeat_countdown -= 1
-                        if heartbeat_countdown <= 0:
-                            yield ": keepalive\n\n"
-                            heartbeat_countdown = 30
-                        continue
-
-                    if event.event_id <= cursor:
-                        continue
-                    cursor = event.event_id
-                    yield _sse_frame(cursor, event.event_type, event.payload_json)
-                    heartbeat_countdown = 30
-            finally:
-                db.close()
-        finally:
-            bus.unsubscribe(q)
-
-    return generate
-
-
-def _sse_poll_loop(database_url: str, cursor: int):
-    def generate():
-        nonlocal cursor
-        yield "retry: 3000\n: connected\n\n"
-        heartbeat_countdown = 30
-        db = Database(database_url)
-        try:
-            while True:
-                rows = db.fetch_events_since(cursor, limit=200)
-                if rows:
-                    for row in rows:
-                        cursor = int(row["id"])
-                        event_type, payload = _row_to_sse_payload(row)
-                        yield _sse_frame(cursor, event_type, payload)
-                    heartbeat_countdown = 30
-                else:
-                    heartbeat_countdown -= 1
-                    if heartbeat_countdown <= 0:
-                        yield ": keepalive\n\n"
-                        heartbeat_countdown = 30
-                time.sleep(0.5)
-        finally:
-            db.close()
-
-    return generate
-
-
-def _sse_frame(event_id: int, event_type: str, payload_json: str) -> str:
-    return f"id: {event_id}\nevent: {event_type}\ndata: {payload_json}\n\n"
+    threading.Thread(target=_run_monitor, name="sentinel-worker", daemon=True).start()
 
 
 def _imap_provider_presets() -> Dict[str, Dict[str, Any]]:
@@ -642,18 +242,6 @@ def _imap_provider_presets() -> Dict[str, Dict[str, Any]]:
             "note": "Enter the IMAP server hostname and port yourself.",
         },
     }
-
-
-def _base_prompt_preview() -> str:
-    return (
-        "You are a classification assistant. The user subscribes to several "
-        "information streams (email, RSS, ...) and wants to be alerted only to "
-        "the items that genuinely matter.\n\n"
-        "For emails, IMPORTANT means: addressed to me personally, job interview "
-        "offers, legal matters, urgent. NORMAL means everything else.\n\n"
-        "For RSS items, IMPORTANT means: major breaking news with real "
-        "consequences, security advisories, releases the user cares about."
-    )
 
 
 def run(host: str = "127.0.0.1", port: int = 8765, debug: bool = False) -> None:

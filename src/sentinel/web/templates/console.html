@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}Sentinel{% endblock %}
+{% block content %}
+
+<section>
+  <h2>Inbox</h2>
+  {% if inboxes %}
+    <ul class="inbox-list">
+      {% for ibx in inboxes %}
+        <li>
+          <strong>{{ ibx.name }}</strong> — {{ ibx.detail or ibx.stream_type }}
+          {% if ibx.error %}<span class="error">({{ ibx.error }})</span>{% endif %}
+          <form method="post" action="{{ url_for('delete_inbox', name=ibx.name) }}" style="display:inline">
+            <button type="submit">Remove</button>
+          </form>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p>No inbox connected yet.</p>
+  {% endif %}
+  <p><a class="button" href="{{ url_for('connect_inbox') }}">Connect an inbox</a></p>
+</section>
+
+<section>
+  <h2>What matters to you</h2>
+  {% if saved %}<p role="status" class="flash">Saved.</p>{% endif %}
+  <p class="hint">Plain-English criteria for which emails are important. This is sent to the classifier as-is — edit it however you like.</p>
+  <form method="post">
+    <textarea name="criteria" rows="14" style="width:100%" spellcheck="false">{{ criteria }}</textarea>
+    <p><button type="submit">Save</button></p>
+  </form>
+</section>
+
+<section>
+  <h2>Alerts</h2>
+  {% if telegram_linked %}
+    <p>
+      Telegram connected ✓
+      <form method="post" action="{{ url_for('telegram_unlink') }}" style="display:inline">
+        <button type="submit">Unlink</button>
+      </form>
+    </p>
+  {% elif telegram_bot_username %}
+    <p class="hint">Important emails are sent to you on Telegram.</p>
+    <form method="post" action="{{ url_for('telegram_link') }}">
+      <button type="submit">Connect Telegram</button>
+    </form>
+  {% else %}
+    <p class="hint">Set <code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_BOT_USERNAME</code> in the environment to enable Telegram alerts.</p>
+  {% endif %}
+</section>
+
+{% endblock %}

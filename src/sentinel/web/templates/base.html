@@ -8,26 +8,7 @@
 </head>
 <body>
   <header>
-    <h1><a href="{{ url_for('dashboard') }}">Sentinel</a></h1>
-    {% if current_user %}
-      <nav>
-        <a href="{{ url_for('dashboard') }}">Dashboard</a>
-        <a href="{{ url_for('live_page') }}">Live</a>
-        <a href="{{ url_for('alerts_page') }}">Alerts</a>
-        <a href="{{ url_for('streams_page') }}">Streams</a>
-        <a href="{{ url_for('streams_activity') }}">Activity</a>
-        <a href="{{ url_for('preferences_page') }}">Preferences</a>
-        <a href="{{ url_for('prompt_page') }}">Prompt</a>
-      </nav>
-      {% if identity_enabled %}
-        <div class="user">
-          <span class="user-email">{{ current_user.email }}</span>
-          <form method="post" action="{{ url_for('logout') }}" class="logout-form">
-            <button type="submit">Sign out</button>
-          </form>
-        </div>
-      {% endif %}
-    {% endif %}
+    <h1><a href="{{ url_for('console') }}">Sentinel</a></h1>
   </header>
   <main>
     {% block content %}{% endblock %}
