@@ -3,14 +3,12 @@ import imaplib
 from datetime import datetime
 from email.header import decode_header
 from email.message import Message
-from email.utils import parsedate_to_datetime
 from typing import List, Optional
 
+from sentinel.item import Item
 from sentinel.logging_config import get_logger
-from sentinel.email.email_client_base import EmailClient
+from sentinel.email.email_client_base import EmailClient, build_email_item
 from sentinel.email.mail_config import AuthMethod, MailAccountConfig
-from sentinel.email.models import EmailData
-from sentinel.time_utils import ensure_utc
 
 logger = get_logger(__name__)
 
@@ -73,7 +71,7 @@ class IMAPClient(EmailClient):
 
     def get_emails_after_timestamp(
         self, after_timestamp: datetime, unread_only: bool = True
-    ) -> List[EmailData]:
+    ) -> List[Item]:
         """Get emails received after a specific timestamp.
 
         Searches and fetches by UID, not message sequence number: UIDs are
@@ -97,23 +95,23 @@ class IMAPClient(EmailClient):
                 return []
 
             uids = messages[0].split()
-            emails: List[EmailData] = []
+            items: List[Item] = []
 
             for uid in uids:
-                email_data = self._fetch_email(uid.decode())
-                if not email_data:
+                item = self._fetch_email(uid.decode())
+                if item is None:
                     continue
-                received_at = self._parse_date(email_data.received_date)
-                if received_at is not None and received_at > after_timestamp:
-                    emails.append(email_data)
+                # IMAP SINCE is day-granular, so filter precisely here.
+                if item.received_at > after_timestamp:
+                    items.append(item)
 
-            return emails
+            return items
         except Exception as e:
             logger.error(f"Error getting emails after timestamp: {e}")
             raise
 
-    def _fetch_email(self, uid: str) -> Optional[EmailData]:
-        """Fetch and parse a single email by UID."""
+    def _fetch_email(self, uid: str) -> Optional[Item]:
+        """Fetch and parse a single email by UID into an Item."""
         try:
             conn = self._get_connection()
 
@@ -143,13 +141,15 @@ class IMAPClient(EmailClient):
             # Extract body
             body = self._extract_body(msg)
 
-            return EmailData(
-                id=uid,
+            return build_email_item(
+                stream_name=self.account_name,
+                provider=self.config.provider,
+                msg_id=uid,
                 subject=subject,
                 sender=sender,
                 recipient=recipient,
-                body=body,
                 received_date=date,
+                body=body,
             )
         except Exception as e:
             logger.error(f"Error fetching email uid={uid}: {e}")
@@ -197,11 +197,3 @@ class IMAPClient(EmailClient):
                     body = str(payload)
 
         return body
-
-    def _parse_date(self, date_str: str) -> Optional[datetime]:
-        """Parse email date string to datetime"""
-        try:
-            return ensure_utc(parsedate_to_datetime(date_str))
-        except (TypeError, ValueError, IndexError, AttributeError) as e:
-            logger.warning(f"Failed to parse email date {date_str!r}: {e}")
-            return None

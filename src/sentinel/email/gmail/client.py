@@ -3,12 +3,12 @@ from typing import Any, Callable, List, Optional
 
 from googleapiclient.discovery import build  # type: ignore
 
+from sentinel.item import Item
 from sentinel.logging_config import get_logger
 from sentinel.email.email_client_base import EmailClient
 from sentinel.email.gmail.auth import GmailAuth
-from sentinel.email.gmail.models import email_data_from_gmail_message
+from sentinel.email.gmail.models import gmail_message_to_item
 from sentinel.email.mail_config import MailAccountConfig
-from sentinel.email.models import EmailData
 
 logger = get_logger(__name__)
 
@@ -53,8 +53,8 @@ class GmailClient(EmailClient):
 
     def get_emails_after_timestamp(
         self, after_timestamp: datetime, unread_only: bool = True
-    ) -> List[EmailData]:
-        """Get emails received after a specific timestamp"""
+    ) -> List[Item]:
+        """Get items for emails received after a specific timestamp"""
         logger.debug(f"Fetching emails after {after_timestamp}, unread_only={unread_only}")
         try:
             # Convert timestamp to seconds since epoch for Gmail query
@@ -75,23 +75,23 @@ class GmailClient(EmailClient):
 
             messages = results.get("messages", [])
             logger.info(f"Found {len(messages)} messages matching criteria")
-            emails = []
+            items = []
 
             for message in messages:
-                email_data = self._get_email_details(message["id"])
-                if email_data:
-                    emails.append(email_data)
+                item = self._get_email_details(message["id"])
+                if item:
+                    items.append(item)
                 else:
                     logger.warning(f"Failed to get details for message {message['id']}")
 
-            logger.info(f"Successfully retrieved {len(emails)} emails after {after_timestamp}")
-            return emails
+            logger.info(f"Successfully retrieved {len(items)} emails after {after_timestamp}")
+            return items
         except Exception as e:
             logger.error(f"Error getting emails after timestamp: {e}", exc_info=True)
             raise
 
-    def _get_email_details(self, message_id: str) -> Optional[EmailData]:
-        """Get detailed email information"""
+    def _get_email_details(self, message_id: str) -> Optional[Item]:
+        """Fetch a message and convert it to an Item."""
         logger.debug(f"Getting details for message {message_id}")
         try:
             message = (
@@ -101,9 +101,11 @@ class GmailClient(EmailClient):
                 .execute()
             )
 
-            email_data = email_data_from_gmail_message(message)
-            logger.debug(f"Retrieved email from {email_data.sender}, subject: {email_data.subject[:50]}...")
-            return email_data
+            item = gmail_message_to_item(
+                message, stream_name=self.account_name, provider=self.config.provider
+            )
+            logger.debug(f"Retrieved email from {item.author}, subject: {item.title[:50]}...")
+            return item
         except Exception as e:
             logger.error(f"Error getting email details for message {message_id}: {e}", exc_info=True)
             return None

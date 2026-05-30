@@ -1,7 +1,8 @@
 """The Item — the core object the classifier and notifier consume.
 
-The email adapters (`sentinel.email`) map their provider-specific `EmailData`
-to an `Item` at the boundary, so the pipeline never depends on email types.
+The email adapters (`sentinel.email`) build an `Item` from a fetched message at
+the boundary (see `build_email_item`), so the pipeline never depends on email
+internals.
 """
 
 from __future__ import annotations

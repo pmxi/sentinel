@@ -1,11 +1,10 @@
-"""EmailStream — adapts the provider-specific EmailClients to an Item stream.
+"""EmailStream — drives the provider-specific EmailClients as an Item stream.
 
-The EmailClient hierarchy (IMAP, Gmail) stays as the internal sync-fetch
-implementation. EmailStream wraps it:
+The EmailClient hierarchy (IMAP, Gmail) is the internal sync-fetch
+implementation; each client already returns the pipeline's Item (see
+build_email_item). EmailStream wraps them:
 
 - runs a blocking fetch on a thread (the clients are sync)
-- converts EmailData → Item at the boundary, namespacing the item id by
-  stream so ids from different inboxes can't collide in the dedup ledger
 - owns its own cursor (a datetime it's fetched past)
 
 The mailbox is read-only; messages are never modified (e.g. marked read).
@@ -15,7 +14,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta
-from email.utils import parsedate_to_datetime
 from typing import AsyncIterator, Callable, List, Optional
 
 from sentinel.logging_config import get_logger
@@ -24,8 +22,7 @@ from sentinel.email.email_client_base import EmailClient
 from sentinel.email.gmail.client import GmailClient
 from sentinel.email.imap_client import IMAPClient
 from sentinel.email.mail_config import MailAccountConfig, MailProvider
-from sentinel.email.models import EmailData
-from sentinel.time_utils import ensure_utc, parse_iso_datetime, utc_now
+from sentinel.time_utils import utc_now
 
 logger = get_logger(__name__)
 
@@ -71,13 +68,8 @@ class EmailStream:
         # makes re-fetches after a restart harmless.
         while True:
             try:
-                emails = await asyncio.to_thread(self._fetch_batch)
-                for email in emails:
-                    item = _email_to_item(
-                        email,
-                        stream_name=self.name,
-                        provider=self.config.provider,
-                    )
+                items = await asyncio.to_thread(self._fetch_batch)
+                for item in items:
                     self._advance_cursor(item.received_at)
                     yield item
             except Exception as e:
@@ -89,8 +81,8 @@ class EmailStream:
 
     # ------------------------------------------------------------------ internals
 
-    def _fetch_batch(self) -> List[EmailData]:
-        """Blocking: fetch new emails. Called via asyncio.to_thread."""
+    def _fetch_batch(self) -> List[Item]:
+        """Blocking: fetch new emails as Items. Called via asyncio.to_thread."""
         client = _create_email_client(
             self.name,
             self.config,
@@ -98,13 +90,13 @@ class EmailStream:
         )
         try:
             after = self._cursor or self._initial_cursor()
-            emails = client.get_emails_after_timestamp(
+            items = client.get_emails_after_timestamp(
                 after, unread_only=self.config.settings.process_only_unread
             )
             logger.debug(
-                f"[{self.name}] fetched {len(emails)} emails since {after.isoformat()}"
+                f"[{self.name}] fetched {len(items)} emails since {after.isoformat()}"
             )
-            return emails
+            return items
         finally:
             client.close()
 
@@ -115,44 +107,3 @@ class EmailStream:
     def _advance_cursor(self, when: datetime) -> None:
         if self._cursor is None or when > self._cursor:
             self._cursor = when
-
-
-def _email_to_item(
-    email: EmailData, *, stream_name: str, provider: str
-) -> Item:
-    received_at = _parse_received_date(email.received_date)
-    rendered_body = (
-        f"From: {email.sender}\n"
-        f"To: {email.recipient}\n"
-        f"Subject: {email.subject}\n"
-        f"Date: {email.received_date}\n\n"
-        f"{email.body}"
-    )
-    return Item(
-        # Namespace by stream so message ids from different inboxes (e.g. two
-        # IMAP accounts that both number a message "5") can't collide in the
-        # globally-unique dedup ledger.
-        id=f"{stream_name}:{email.id}",
-        title=email.subject or "(no subject)",
-        body=rendered_body,
-        author=email.sender or "unknown sender",
-        url=email.url,
-        received_at=received_at,
-        metadata={
-            "provider": provider,
-            "stream_name": stream_name,
-            "recipient": email.recipient,
-        },
-    )
-
-
-def _parse_received_date(date_str: str) -> datetime:
-    if not date_str:
-        return utc_now()
-    try:
-        return ensure_utc(parsedate_to_datetime(date_str))
-    except (TypeError, ValueError):
-        try:
-            return parse_iso_datetime(date_str)
-        except ValueError:
-            return utc_now()

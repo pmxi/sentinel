@@ -1,8 +1,9 @@
-"""Gmail-specific models and utilities."""
+"""Gmail-specific parsing utilities."""
 
 import base64
 
-from sentinel.email.models import EmailData
+from sentinel.item import Item
+from sentinel.email.email_client_base import build_email_item
 
 
 def extract_gmail_body(payload: dict) -> str:
@@ -24,8 +25,8 @@ def extract_gmail_body(payload: dict) -> str:
     return ""
 
 
-def email_data_from_gmail_message(message: dict) -> EmailData:
-    """Create EmailData from Gmail API message."""
+def gmail_message_to_item(message: dict, *, stream_name: str, provider: str) -> Item:
+    """Convert a Gmail API message into the pipeline's Item."""
     headers = message["payload"]["headers"]
 
     # Extract header information
@@ -49,12 +50,14 @@ def email_data_from_gmail_message(message: dict) -> EmailData:
     thread_id = message.get("threadId")
     url = f"https://mail.google.com/mail/u/0/#inbox/{thread_id}" if thread_id else None
 
-    return EmailData(
-        id=message["id"],
+    return build_email_item(
+        stream_name=stream_name,
+        provider=provider,
+        msg_id=message["id"],
         subject=subject,
         sender=sender,
         recipient=recipient,
-        body=body,
         received_date=date,
+        body=body,
         url=url,
     )
