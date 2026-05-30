@@ -24,7 +24,6 @@ def _flag(name: str, default: bool = False) -> bool:
 class Settings:
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
 
-    LLM_PROVIDER: str = os.getenv("LLM_PROVIDER", "openai")
     LLM_API_KEY: str | None = os.getenv("LLM_API_KEY") or os.getenv("OPENAI_API_KEY")
     LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-5.4-mini")
     # Reasoning effort for gpt-5.x reasoning models: low | medium | high (or empty to disable).
@@ -39,8 +38,6 @@ class Settings:
     GOOGLE_REDIRECT_URI: str = os.getenv(
         "GOOGLE_REDIRECT_URI", "http://localhost:8765/oauth/google/callback"
     )
-
-    MAX_LOOKBACK_HOURS: int = int(os.getenv("MAX_LOOKBACK_HOURS", "24"))
 
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     LOG_DIR: str = os.getenv("LOG_DIR", "logs")

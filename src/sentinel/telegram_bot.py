@@ -1,8 +1,8 @@
 """Long-polling Telegram bot listener for the shared operator bot.
 
 The bot has one job: handle `/start <token>` commands from users who are
-mid-link. It looks the token up in `telegram_link_tokens`, writes the
-user's chat_id into `user_settings`, and acks with a friendly message.
+mid-link. It consumes the token from `telegram_link_token`, writes the
+user's chat_id onto their `app_user` row, and acks with a friendly message.
 
 Runs as a background daemon thread kicked off by the monitor. Uses
 long-polling (getUpdates) — no public webhook URL required. In prod

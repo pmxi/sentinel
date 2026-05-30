@@ -3,22 +3,19 @@
 Layout (lean — the first line is what shows on small previews like an Apple
 Watch, so every character counts):
 
-    <author or source-context>     (tappable link to the item if url is set)
+    <sender address>     (tappable link to the item if url is set)
 
     <title>
 
     <summary>
 
-Source-type-specific author extraction:
-  - email: bare address (no display name)
-  - rss:   feed title
-  - other: item.author
+The first line is the sender's bare email address (display name stripped).
 """
 
 from __future__ import annotations
 
 from email.utils import parseaddr
-from typing import Optional
+from typing import Callable, Optional
 
 from sentinel.logging_config import get_logger
 from sentinel.classifier import ClassificationResult
@@ -32,13 +29,25 @@ _MD2_SPECIALS = r"_*[]()~`>#+-=|{}.!"
 
 
 class TelegramItemNotifier(ItemNotifier):
-    def __init__(self, telegram_notifier: TelegramNotifier):
-        self.notifier = telegram_notifier
+    """Formats an Item for Telegram and sends it to the owner's chat.
+
+    The destination chat_id is resolved lazily via `chat_id_provider` at send
+    time, not captured up front — so a user who links Telegram after the worker
+    is already polling still gets their next important item. Returns None
+    without sending if the user hasn't linked a chat yet.
+    """
+
+    def __init__(self, bot_token: str, chat_id_provider: Callable[[], Optional[str]]):
+        self._bot_token = bot_token
+        self._chat_id_provider = chat_id_provider
 
     def notify(self, item: Item, classification: ClassificationResult) -> Optional[str]:
+        chat_id = self._chat_id_provider()
+        if not chat_id:
+            return None
         try:
             message = self._format(item, classification)
-            return self.notifier.send(message)
+            return TelegramNotifier(self._bot_token, str(chat_id)).send(message)
         except Exception as e:
             logger.error(f"Failed to send Telegram notification: {e}")
             return None

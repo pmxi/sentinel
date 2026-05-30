@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Callable
 
 import httpx
 from openai import APIError, APIStatusError, AsyncOpenAI, RateLimitError
@@ -18,16 +17,13 @@ logger = get_logger(__name__)
 
 _MAX_BODY_CHARS = 50_000
 
-# Pool size on the underlying httpx client. Larger than _MAX_INFLIGHT below
-# so brief bursts don't block on connection acquisition.
+# httpx connection-pool ceilings, kept comfortably above _MAX_INFLIGHT so a
+# burst doesn't block on connection acquisition.
 _HTTPX_MAX_CONNECTIONS = 128
 _HTTPX_MAX_KEEPALIVE = 32
 
-# Hard cap on concurrent OpenAI requests. The right value depends on the
-# OpenAI org's RPM/TPM limits — gpt-4o-mini Tier 1 is ~500 RPM. With each
-# request taking ~1-2s under normal conditions, 32 concurrent gives ~1k RPM.
-# Higher = better steady-state throughput; too high = throttling that
-# silently extends per-request latency to many seconds.
+# Hard cap on concurrent OpenAI requests, bounding our load on the org's
+# RPM/TPM limits regardless of how many inboxes are being polled at once.
 _MAX_INFLIGHT = 48
 
 
@@ -47,24 +43,20 @@ class _ClassificationResponse(BaseModel):
 class OpenAIItemClassifier:
     """Concrete classifier that delegates to the OpenAI Responses API.
 
-    Uses the async client so each classify call yields the event loop
-    instead of consuming a thread for the entire OpenAI roundtrip. At
-    scale (hundreds of in-flight classifications) the previous
-    asyncio.to_thread approach saturated the default executor and
-    capped throughput at ~1-3 classifications/sec."""
+    Uses the async client so each classify call yields the event loop instead
+    of holding a thread for the whole OpenAI round-trip."""
 
     def __init__(
         self,
         *,
         api_key: str,
-        model: str = "gpt-4o-mini",
+        model: str = "gpt-5.4-mini",
         reasoning_effort: str | None = None,
-        criteria_provider: Callable[[], str] | None = None,
     ):
         if not api_key:
             raise ValueError("api_key is required")
-        # Override the SDK's default httpx client so we can raise the
-        # connection pool ceiling (defaults are tiny relative to our scale).
+        # Override the SDK's default httpx client to raise the connection-pool
+        # ceiling above our concurrency cap.
         http_client = httpx.AsyncClient(
             limits=httpx.Limits(
                 max_connections=_HTTPX_MAX_CONNECTIONS,
@@ -79,10 +71,6 @@ class OpenAIItemClassifier:
         self._extra_params: dict = (
             {"reasoning": {"effort": reasoning_effort}} if reasoning_effort else {}
         )
-        self._criteria_provider = criteria_provider or _default_criteria
-        # Global concurrency cap. Without it the per-stream sem (64) lets
-        # thousands of streams overrun OpenAI's effective RPM limit and
-        # every call queues for many seconds.
         self._inflight = asyncio.Semaphore(_MAX_INFLIGHT)
 
     async def classify(self, item: Item, notes: str = "") -> ClassificationResult:
@@ -109,7 +97,7 @@ class OpenAIItemClassifier:
     def _build_prompt(self, item: Item, notes: str) -> str:
         # The user's saved criteria, edited directly in the console, IS the
         # criteria. Fall back to the built-in default only when it's empty.
-        criteria = (notes or "").strip() or self._criteria_provider()
+        criteria = (notes or "").strip() or _default_criteria()
         rendered = self._render_item(item)
         return f"""
 You are a classification assistant. The user wants to be alerted only to the
