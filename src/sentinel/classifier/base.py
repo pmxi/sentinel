@@ -15,7 +15,7 @@ class Priority(str, Enum):
 class ClassificationResult:
     priority: Priority
     reasoning: str
-    summary: str | None = None
+    summary: str
 
     def is_important(self) -> bool:
         return self.priority == Priority.IMPORTANT
