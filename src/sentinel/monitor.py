@@ -16,7 +16,7 @@ from openai import (
 
 from sentinel.logging_config import get_logger
 from sentinel.classifier import ClassificationResult, OpenAIItemClassifier
-from sentinel.notify import TelegramItemNotifier
+from sentinel.notify import NotifyStatus, TelegramItemNotifier
 from sentinel.item import Item
 from sentinel.email.mail_config import MailAccountConfig
 from sentinel.email.stream import EmailStream
@@ -335,11 +335,11 @@ class ItemPipeline:
             return True
 
         result = await asyncio.to_thread(self.notifier.notify, item, classification)
-        if result.status == "sent":
+        if result.status == NotifyStatus.SENT:
             logger.info(
                 "%s outcome=classified priority=important notify=sent msg=%s", ctx, result.detail
             )
-        elif result.status == "skipped":
+        elif result.status == NotifyStatus.SKIPPED:
             logger.warning(
                 "%s outcome=classified priority=important notify=skipped reason=%s", ctx, result.detail
             )

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from email.utils import parseaddr
+from enum import Enum
 from typing import Callable, Optional
 
 import requests
@@ -27,16 +28,21 @@ logger = get_logger(__name__)
 _MD2_SPECIALS = r"_*[]()~`>#+-=|{}.!"
 
 
+class NotifyStatus(str, Enum):
+    SENT = "sent"
+    SKIPPED = "skipped"
+    FAILED = "failed"
+
+
 @dataclass(frozen=True)
 class NotifyResult:
     """Why a notify attempt did (or didn't) deliver.
 
-    status is one of "sent" | "skipped" | "failed". detail carries the provider
-    message id when sent, otherwise the reason — so the caller can log a cause
-    instead of silently dropping a None.
+    detail carries the provider message id when sent, otherwise the reason —
+    so the caller can log a cause instead of silently dropping a None.
     """
 
-    status: str
+    status: NotifyStatus
     detail: str = ""
 
 
@@ -57,16 +63,16 @@ class TelegramItemNotifier:
     def notify(self, item: Item, classification: ClassificationResult) -> NotifyResult:
         chat_id = self._chat_id_provider()
         if not chat_id:
-            return NotifyResult("skipped", "telegram_unlinked")
+            return NotifyResult(NotifyStatus.SKIPPED, "telegram_unlinked")
         try:
             message = self._format(item, classification)
             message_id = self._send(str(chat_id), message)
         except Exception as e:
             logger.error(f"Failed to send Telegram notification: {e}")
-            return NotifyResult("failed", str(e))
+            return NotifyResult(NotifyStatus.FAILED, str(e))
         if message_id is None:
-            return NotifyResult("failed", "send_rejected")
-        return NotifyResult("sent", message_id)
+            return NotifyResult(NotifyStatus.FAILED, "send_rejected")
+        return NotifyResult(NotifyStatus.SENT, message_id)
 
     def _send(self, chat_id: str, text: str) -> Optional[str]:
         """POST the message to Telegram (MarkdownV2). Returns the provider
