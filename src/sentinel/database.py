@@ -10,7 +10,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 from types import TracebackType
-from typing import Any, Callable, Dict, List, Optional, Type, TypeVar
+from typing import Any, Callable, Dict, List, Optional, Type
 
 import psycopg
 from psycopg.rows import dict_row
@@ -24,14 +24,12 @@ _SCHEMA_SQL_PATH = Path(__file__).parent / "schema.sql"
 
 logger = logging.getLogger(__name__)
 
-F = TypeVar("F", bound=Callable[..., Any])
 
-
-def _with_reconnect(method: F) -> F:
+def _with_reconnect(method: Callable[..., Any]) -> Callable[..., Any]:
     """Wrap a Database method so transient psycopg connection errors
     drop the cached conn, reconnect, and retry once."""
     @functools.wraps(method)
-    def wrapper(self: "Database", *args, **kwargs):
+    def wrapper(self: "Database", *args: Any, **kwargs: Any) -> Any:
         last_exc: Optional[BaseException] = None
         for attempt in range(_MAX_RECONNECT_ATTEMPTS):
             try:
@@ -40,7 +38,7 @@ def _with_reconnect(method: F) -> F:
                 last_exc = exc
                 logger.warning(
                     "postgres call %s failed (attempt %d/%d): %s; reconnecting",
-                    method.__name__, attempt + 1, _MAX_RECONNECT_ATTEMPTS, exc,
+                    getattr(method, "__name__", method), attempt + 1, _MAX_RECONNECT_ATTEMPTS, exc,
                 )
                 try:
                     self._reconnect()
@@ -49,7 +47,7 @@ def _with_reconnect(method: F) -> F:
                     time.sleep(_RECONNECT_BACKOFF_BASE * (2 ** attempt))
         assert last_exc is not None
         raise last_exc
-    return wrapper  # type: ignore[return-value]
+    return wrapper
 
 
 class Database:
