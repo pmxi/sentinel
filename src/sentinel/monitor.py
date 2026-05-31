@@ -16,7 +16,7 @@ from openai import (
 
 from sentinel.logging_config import get_logger
 from sentinel.classifier import ClassificationResult, OpenAIItemClassifier
-from sentinel.notify import NotifyStatus, TelegramItemNotifier
+from sentinel.notify import NotifyResult, NotifyStatus, TelegramItemNotifier
 from sentinel.item import Item
 from sentinel.email.mail_config import MailAccountConfig
 from sentinel.email.stream import EmailStream
@@ -38,6 +38,10 @@ _CLASSIFICATION_DISABLED = False
 # Per-stream concurrency. Inbox polls return at most a handful of new messages
 # per minute, so a small cap is plenty to overlap the LLM round-trips.
 _PER_STREAM_CONCURRENCY = 8
+
+# Bounded inline retry for transient Telegram delivery failures.
+_NOTIFY_RETRY_ATTEMPTS = 3
+_NOTIFY_RETRY_BASE_DELAY = 1.0
 
 
 class Monitor:
@@ -278,6 +282,22 @@ class ItemPipeline:
             return None
         return (self.db.get_user(self.user_id) or {}).get("telegram_chat_id")
 
+    async def _notify_with_retry(
+        self, item: Item, classification: ClassificationResult
+    ) -> "NotifyResult":
+        """Send the alert, retrying a few times on transient (retryable)
+        failures with exponential backoff. Only called when notifier is set."""
+        assert self.notifier is not None
+        delay = _NOTIFY_RETRY_BASE_DELAY
+        result = await asyncio.to_thread(self.notifier.notify, item, classification)
+        for _ in range(_NOTIFY_RETRY_ATTEMPTS - 1):
+            if result.status != NotifyStatus.FAILED or not result.retryable:
+                return result
+            await asyncio.sleep(delay)
+            delay *= 2
+            result = await asyncio.to_thread(self.notifier.notify, item, classification)
+        return result
+
     def _log_ctx(self, item: Item) -> str:
         """Stable key=value prefix so one item's journey is greppable across
         the pipeline's log lines."""
@@ -334,7 +354,7 @@ class ItemPipeline:
             )
             return True
 
-        result = await asyncio.to_thread(self.notifier.notify, item, classification)
+        result = await self._notify_with_retry(item, classification)
         if result.status == NotifyStatus.SENT:
             logger.info(
                 "%s outcome=classified priority=important notify=sent msg=%s", ctx, result.detail

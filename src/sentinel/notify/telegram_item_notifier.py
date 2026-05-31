@@ -40,10 +40,14 @@ class NotifyResult:
 
     detail carries the provider message id when sent, otherwise the reason —
     so the caller can log a cause instead of silently dropping a None.
+
+    retryable marks a FAILED result the caller may sensibly re-attempt (a
+    network blip or a Telegram 5xx), as opposed to a permanent rejection.
     """
 
     status: NotifyStatus
     detail: str = ""
+    retryable: bool = False
 
 
 class TelegramItemNotifier:
@@ -64,9 +68,13 @@ class TelegramItemNotifier:
         chat_id = self._chat_id_provider()
         if not chat_id:
             return NotifyResult(NotifyStatus.SKIPPED, "telegram_unlinked")
+        message = self._format(item, classification)
         try:
-            message = self._format(item, classification)
             message_id = self._send(str(chat_id), message)
+        except (requests.Timeout, requests.ConnectionError, requests.HTTPError) as e:
+            # A blip or a Telegram 5xx — worth another attempt.
+            logger.warning(f"Transient Telegram notify error: {e}")
+            return NotifyResult(NotifyStatus.FAILED, str(e), retryable=True)
         except Exception as e:
             logger.error(f"Failed to send Telegram notification: {e}")
             return NotifyResult(NotifyStatus.FAILED, str(e))
@@ -76,7 +84,9 @@ class TelegramItemNotifier:
 
     def _send(self, chat_id: str, text: str) -> Optional[str]:
         """POST the message to Telegram (MarkdownV2). Returns the provider
-        message id on success, else None."""
+        message id on success, or None on a permanent (4xx) rejection. Raises
+        on transient failures (network error, Telegram 5xx) so notify() can
+        mark the result retryable."""
         resp = requests.post(
             f"https://api.telegram.org/bot{self._bot_token}/sendMessage",
             json={
@@ -89,6 +99,8 @@ class TelegramItemNotifier:
         )
         if resp.status_code == 200:
             return str(resp.json().get("result", {}).get("message_id"))
+        if resp.status_code >= 500:
+            resp.raise_for_status()  # transient — let the caller retry
         logger.error("Telegram sendMessage failed: %s - %s", resp.status_code, resp.text)
         return None
 
