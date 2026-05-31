@@ -1,3 +1,4 @@
+import base64
 from datetime import datetime
 from typing import Any, Callable, List, Optional
 
@@ -5,12 +6,27 @@ from googleapiclient.discovery import build
 
 from sentinel.item import Item
 from sentinel.logging_config import get_logger
-from sentinel.email.email_client_base import EmailClient
+from sentinel.email.email_client_base import EmailClient, build_email_item
 from sentinel.email.gmail.auth import GmailAuth
-from sentinel.email.gmail.models import gmail_message_to_item
 from sentinel.email.mail_config import MailAccountConfig
 
 logger = get_logger(__name__)
+
+
+def _extract_body(payload: dict) -> str:
+    """Recursively pull the text/plain body out of a Gmail message payload.
+
+    Descends nested MIME parts (e.g. multipart/mixed wrapping multipart/
+    alternative) and tolerates parts with no inline data, such as attachments.
+    Returns "" if no text/plain part is found."""
+    data = (payload.get("body") or {}).get("data")
+    if payload.get("mimeType") == "text/plain" and data:
+        return base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
+    for part in payload.get("parts") or []:
+        text = _extract_body(part)
+        if text:
+            return text
+    return ""
 
 
 class GmailClient(EmailClient):
@@ -101,8 +117,25 @@ class GmailClient(EmailClient):
                 .execute()
             )
 
-            item = gmail_message_to_item(
-                message, stream_name=self.account_name, provider=self.config.provider
+            headers = message["payload"]["headers"]
+
+            def header(name: str, default: str) -> str:
+                return next((h["value"] for h in headers if h["name"] == name), default)
+
+            # Deep link into the Gmail web UI; /u/0/ targets the primary account.
+            thread_id = message.get("threadId")
+            url = f"https://mail.google.com/mail/u/0/#inbox/{thread_id}" if thread_id else None
+
+            item = build_email_item(
+                stream_name=self.account_name,
+                provider=self.config.provider,
+                msg_id=message["id"],
+                subject=header("Subject", "No Subject"),
+                sender=header("From", "Unknown Sender"),
+                recipient=header("To", "Unknown Recipient"),
+                received_date=header("Date", "Unknown Date"),
+                body=_extract_body(message["payload"]),
+                url=url,
             )
             logger.debug(f"Retrieved email from {item.author}, subject: {item.title[:50]}...")
             return item
