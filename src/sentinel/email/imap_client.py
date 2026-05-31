@@ -96,7 +96,7 @@ class IMAPClient(EmailClient):
             else:
                 search_criteria = f'(SINCE "{date_str}")'
 
-            status, messages = conn.uid("SEARCH", None, search_criteria)
+            status, messages = conn.uid("SEARCH", None, search_criteria)  # ty: ignore[invalid-argument-type]
             if status != "OK" or not messages or not messages[0]:
                 return []
 
