@@ -177,10 +177,12 @@ class Database:
         with self._lock:
             self.conn.execute("DELETE FROM stream WHERE name=%s", (name,))
 
-    # ----- event (dedup ledger + content) -------------------------------
+    # ----- event (dedup ledger) + classification -----------------------
 
     @_with_reconnect
     def is_item_processed(self, item_id: str) -> bool:
+        """Cheap pre-check to skip the LLM call for already-seen items. Not a
+        correctness guard — the atomic writes below settle dedup races."""
         with self._lock:
             row = self.conn.execute(
                 "SELECT 1 FROM event WHERE item_id=%s",
@@ -188,8 +190,7 @@ class Database:
             ).fetchone()
         return row is not None
 
-    @_with_reconnect
-    def insert_event(
+    def _insert_event(
         self,
         *,
         item_id: str,
@@ -199,69 +200,74 @@ class Database:
         url: Optional[str],
         author: Optional[str],
         received_at: datetime,
-        metadata: Optional[Dict[str, Any]] = None,
+        metadata: Optional[Dict[str, Any]],
     ) -> Optional[int]:
-        """Insert a new event. Returns its id, or None if item_id
-        already existed (dedup hit)."""
+        """Insert the event row; return its id, or None on a dedup conflict.
+        Caller holds self._lock and owns any surrounding transaction."""
         metadata_json = json.dumps(metadata) if metadata else None
-        with self._lock:
-            row = self.conn.execute(
-                """
-                INSERT INTO event (item_id, stream_name, title, body,
-                                   url, author, received_at, metadata)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-                ON CONFLICT (item_id) DO NOTHING
-                RETURNING id
-                """,
-                (item_id, stream_name, title, body, url, author,
-                 received_at, metadata_json),
-            ).fetchone()
+        row = self.conn.execute(
+            """
+            INSERT INTO event (item_id, stream_name, title, body,
+                               url, author, received_at, metadata)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+            ON CONFLICT (item_id) DO NOTHING
+            RETURNING id
+            """,
+            (item_id, stream_name, title, body, url, author,
+             received_at, metadata_json),
+        ).fetchone()
         return int(row["id"]) if row else None
 
-    # ----- classification -----------------------------------------------
+    @_with_reconnect
+    def insert_event(self, **event_fields: Any) -> Optional[int]:
+        """Insert a standalone event (the classification-disabled path only).
+        Returns its id, or None if the item_id already existed."""
+        with self._lock:
+            return self._insert_event(**event_fields)
 
     @_with_reconnect
-    def insert_classification(
+    def record_classified_event(
         self,
         *,
-        event_id: int,
         priority: str,
         summary: Optional[str],
         reasoning: Optional[str],
         model: str,
-        latency_ms: Optional[int] = None,
-    ) -> None:
-        with self._lock:
+        **event_fields: Any,
+    ) -> bool:
+        """Insert the event and its classification in one transaction.
+
+        Returns True if newly recorded, False if the item already existed
+        (another worker won the race) — in which case nothing is written and
+        the caller just moves on. The two writes can no longer half-apply:
+        either both land or neither does, so an item is never left with an
+        event but no classification (which would dedup-skip it forever)."""
+        with self._lock, self.conn.transaction():
+            event_id = self._insert_event(**event_fields)
+            if event_id is None:
+                return False
             self.conn.execute(
                 """
-                INSERT INTO classification
-                    (event_id, priority, summary, reasoning, model, latency_ms)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (event_id) DO UPDATE SET
-                    priority = excluded.priority,
-                    summary = excluded.summary,
-                    reasoning = excluded.reasoning,
-                    model = excluded.model,
-                    classified_at = NOW(),
-                    latency_ms = excluded.latency_ms
+                INSERT INTO classification (event_id, priority, summary, reasoning, model)
+                VALUES (%s, %s, %s, %s, %s)
                 """,
-                (event_id, priority, summary, reasoning, model, latency_ms),
+                (event_id, priority, summary, reasoning, model),
             )
+        return True
 
     @_with_reconnect
-    def insert_classification_failure(self, event_id: int, error: str) -> None:
-        with self._lock:
+    def record_failed_event(self, *, error: str, **event_fields: Any) -> bool:
+        """Insert the event and a permanent-failure marker in one transaction
+        so we stop retrying. Returns False if the item already existed."""
+        with self._lock, self.conn.transaction():
+            event_id = self._insert_event(**event_fields)
+            if event_id is None:
+                return False
             self.conn.execute(
-                """
-                INSERT INTO classification_failure (event_id, error, attempts, last_failed_at)
-                VALUES (%s, %s, 1, NOW())
-                ON CONFLICT (event_id) DO UPDATE SET
-                    error = excluded.error,
-                    attempts = classification_failure.attempts + 1,
-                    last_failed_at = NOW()
-                """,
+                "INSERT INTO classification_failure (event_id, error) VALUES (%s, %s)",
                 (event_id, error[:5000]),
             )
+        return True
 
     # ----- telegram_link_token ------------------------------------------
 

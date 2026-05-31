@@ -15,7 +15,7 @@ from openai import (
 )
 
 from sentinel.logging_config import get_logger
-from sentinel.classifier import OpenAIItemClassifier
+from sentinel.classifier import ClassificationResult, OpenAIItemClassifier
 from sentinel.notify import TelegramItemNotifier
 from sentinel.item import Item
 from sentinel.email.mail_config import MailAccountConfig
@@ -308,25 +308,17 @@ class ItemPipeline:
                 # Leave no row — the item is retried on the next poll.
                 logger.warning("%s outcome=classify_retry error=%s", ctx, exc)
                 return False
-            # Permanent failure: record the event + failure so we stop retrying.
-            event_id = await asyncio.to_thread(self._record_event, item)
-            if event_id is not None:
-                await asyncio.to_thread(
-                    self.db.insert_classification_failure, event_id, str(exc)
-                )
+            # Permanent failure: record event + failure atomically so we stop retrying.
+            await asyncio.to_thread(self._record_failure, item, str(exc))
             logger.error("%s outcome=classify_failed error=%s", ctx, exc)
             return False
 
-        event_id = await asyncio.to_thread(self._record_event, item)
-        if event_id is not None:
-            await asyncio.to_thread(
-                self.db.insert_classification,
-                event_id=event_id,
-                priority=classification.priority.value,
-                summary=classification.summary,
-                reasoning=classification.reasoning,
-                model=settings.LLM_MODEL or "unknown",
-            )
+        recorded = await asyncio.to_thread(self._record_classification, item, classification)
+        if not recorded:
+            # Another worker recorded this item between the dedup check and the
+            # write; it's already accounted for, so don't notify twice.
+            logger.info("%s outcome=dedup_skip race=write", ctx)
+            return False
 
         priority = classification.priority.value
         if not classification.is_important():
@@ -357,10 +349,9 @@ class ItemPipeline:
             )
         return True
 
-    def _record_event(self, item: Item) -> Optional[int]:
-        """Insert the event row (the dedup ledger). Returns its id, or None if
-        the item_id already existed."""
-        return self.db.insert_event(
+    def _event_fields(self, item: Item) -> Dict[str, Any]:
+        """The event-table columns derived from an item, shared by every write."""
+        return dict(
             item_id=item.id,
             stream_name=item.stream_name,
             title=item.title or "(no title)",
@@ -370,6 +361,26 @@ class ItemPipeline:
             received_at=item.received_at,
             metadata=item.metadata or None,
         )
+
+    def _record_event(self, item: Item) -> Optional[int]:
+        """Event-only write for the classification-disabled path."""
+        return self.db.insert_event(**self._event_fields(item))
+
+    def _record_classification(
+        self, item: Item, classification: ClassificationResult
+    ) -> bool:
+        """Atomically record the event + its classification. False ⇒ dedup race."""
+        return self.db.record_classified_event(
+            **self._event_fields(item),
+            priority=classification.priority.value,
+            summary=classification.summary,
+            reasoning=classification.reasoning,
+            model=settings.LLM_MODEL or "unknown",
+        )
+
+    def _record_failure(self, item: Item, error: str) -> bool:
+        """Atomically record the event + a permanent-failure marker."""
+        return self.db.record_failed_event(**self._event_fields(item), error=error)
 
 
 def _is_transient_classification_error(exc: Exception) -> bool:
