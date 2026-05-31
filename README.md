@@ -2,7 +2,7 @@
 > An intelligent notification system to find what matters
 
 Sentinel is a program to monitor your email inbox and alert you when
-something relevant arrives. It relies on OpenAI models for classification.
+something relevant arrives. It relies on OpenAI's `gpt-5.4-mini` model for classification.
 
 Sentinel is designed to give you the confidence to step away from your inbox.
 

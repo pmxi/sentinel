@@ -115,7 +115,7 @@ class IMAPClient:
 
             return items
         except Exception as e:
-            logger.error(f"Error getting emails after timestamp: {e}")
+            logger.error(f"Error getting emails after timestamp: {e}", exc_info=True)
             raise
 
     def _fetch_email(self, uid: str) -> Optional[Item]:
@@ -160,7 +160,7 @@ class IMAPClient:
                 body=body,
             )
         except Exception as e:
-            logger.error(f"Error fetching email uid={uid}: {e}")
+            logger.error(f"Error fetching email uid={uid}: {e}", exc_info=True)
             return None
 
     def _decode_header(self, header: str) -> str:
