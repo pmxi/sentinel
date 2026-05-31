@@ -31,3 +31,8 @@ Problems according to Claude:
   - #6 — data-model gaps: alert table + user_id on message/classification (blocks the flagged list).
   - #7 — no persistent cursor (in-memory only; message-table dedup covers restarts). The non-atomic message+classification write is now fixed (`Database.record_classified_message` writes both in one transaction).
   - #8 — LLM cost controls; no test suite.
+
+
+  UX notes
+
+  
