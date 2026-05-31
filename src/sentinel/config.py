@@ -14,13 +14,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def _flag(name: str, default: bool = False) -> bool:
-    raw = os.getenv(name)
-    if raw is None:
-        return default
-    return raw.strip().lower() in ("1", "true", "yes", "on")
-
-
 class Settings:
     DATABASE_URL: str = os.getenv("DATABASE_URL", "")
 
@@ -41,7 +34,6 @@ class Settings:
 
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
     LOG_DIR: str = os.getenv("LOG_DIR", "logs")
-    DISABLE_FILE_LOGGING: bool = _flag("DISABLE_FILE_LOGGING")
 
     SESSION_SECRET: str | None = os.getenv("SESSION_SECRET")
 
