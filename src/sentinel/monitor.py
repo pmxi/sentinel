@@ -198,15 +198,21 @@ class Monitor:
                     async with sem:
                         await pipeline.process(item)
 
-                async for item in stream.items():
-                    if self._shutdown.is_set():
-                        break
-                    t = asyncio.create_task(_handle(item))
-                    in_flight.add(t)
-                    t.add_done_callback(in_flight.discard)
+                try:
+                    async for item in stream.items():
+                        if self._shutdown.is_set():
+                            break
+                        t = asyncio.create_task(_handle(item))
+                        in_flight.add(t)
+                        t.add_done_callback(in_flight.discard)
 
-                if in_flight:
-                    await asyncio.gather(*in_flight, return_exceptions=True)
+                    if in_flight:
+                        await asyncio.gather(*in_flight, return_exceptions=True)
+                finally:
+                    # On cancellation (stream stopped/reconfigured) don't leave
+                    # item tasks running detached — cancel whatever's left.
+                    for t in in_flight:
+                        t.cancel()
                 return
             except asyncio.CancelledError:
                 raise
