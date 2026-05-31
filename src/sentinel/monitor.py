@@ -22,7 +22,6 @@ from sentinel.email.mail_config import MailAccountConfig
 from sentinel.email.stream import EmailStream
 from sentinel.config import settings
 from sentinel.database import Database
-from sentinel.services.streams import StreamService
 from sentinel.telegram_bot import start_in_thread as start_telegram_listener
 
 logger = get_logger("sentinel.monitor")
@@ -50,7 +49,6 @@ class Monitor:
         database: Database,
     ):
         self.db = database
-        self.stream_service = StreamService(database)
         self.classifier = OpenAIItemClassifier(
             api_key=settings.LLM_API_KEY or "",
             model=settings.LLM_MODEL,
@@ -166,7 +164,18 @@ class Monitor:
         return EmailStream(
             name=row["name"],
             config=config,
-            on_token_refreshed=lambda token_json, name=row["name"]: self.stream_service.persist_email_token(name, token_json),
+            on_token_refreshed=lambda token_json, name=row["name"]: self._persist_email_token(name, token_json),
+        )
+
+    def _persist_email_token(self, name: str, token_json: str) -> None:
+        """Write a refreshed OAuth token back into the stream's stored config."""
+        row = self.db.get_stream(name)
+        if not row:
+            return
+        config = MailAccountConfig.model_validate_json(row["config_json"])
+        config.auth.token_json = token_json
+        self.db.upsert_stream(
+            name, row["stream_type"], config.model_dump_json(), user_id=row.get("user_id")
         )
 
     async def _run_stream(self, stream: EmailStream, user_id: Optional[int]) -> None:

@@ -15,7 +15,9 @@ LLM-backed classifier, and pings you over Telegram when something is
 actually important. Classification criteria are plain-English notes you
 control.
 
-## Installation
+## How do I use this?
+
+Sentinel is in-progress. You may sign up at sentinel.parasmittal.com.
 
 Tested with Python 3.14.2 on macOS. Install
 [uv](https://docs.astral.sh/uv/getting-started/installation/), then sync

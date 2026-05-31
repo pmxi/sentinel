@@ -23,7 +23,6 @@ from sentinel.time_utils import utc_now
 from sentinel.config import settings
 from sentinel.database import Database
 from sentinel.monitor import Monitor
-from sentinel.services.streams import StreamService
 from sentinel.web.auth import GMAIL_SCOPES, SIGNIN_SCOPES, build_flow, client_config_json, userinfo_from_credentials
 from sentinel.web.imap_probe import probe_imap
 
@@ -129,7 +128,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
                         token_json=creds.to_json(),
                     ),
                 )
-                StreamService(db).save_stream(
+                db.upsert_stream(
                     f"gmail:{info['email']}", "email", config.model_dump_json(),
                     user_id=uid,
                 )
@@ -157,7 +156,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
                 db.set_user_criteria(uid, request.form.get("criteria", ""))
                 return redirect(url_for("console", saved=1))
             user = db.get_user(uid) or {}
-            inboxes = StreamService(db).list_stream_rows_for_user(uid)
+            inboxes = _inbox_view_rows(db.list_streams_for_user(uid))
         finally:
             db.close()
         return render_template(
@@ -201,8 +200,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
 
             db = open_db()
             try:
-                service = StreamService(db)
-                if name and service.get_stream(name):
+                if name and db.get_stream(name):
                     errors.append(f"You already have an inbox named {name!r}. Pick a different name.")
                 if not errors:
                     probe = probe_imap(server, port, username, password)
@@ -220,7 +218,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
                         ),
                         settings=AccountSettings(),
                     )
-                    service.add_stream(name, "email", config.model_dump_json(), user_id=session["user_id"])
+                    db.upsert_stream(name, "email", config.model_dump_json(), user_id=session["user_id"])
                     return redirect(url_for("console"))
             finally:
                 db.close()
@@ -249,10 +247,10 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     def delete_inbox(name: str):
         db = open_db()
         try:
-            row = StreamService(db).get_stream(name)
+            row = db.get_stream(name)
             # Only let a user delete their own inbox.
             if row and row.get("user_id") == session["user_id"]:
-                StreamService(db).delete_stream(name)
+                db.delete_stream(name)
         finally:
             db.close()
         return redirect(url_for("console"))
@@ -301,6 +299,34 @@ def _maybe_start_embedded_monitor(app: Flask) -> None:
             logger.exception("Embedded supervisor crashed: %s", exc)
 
     threading.Thread(target=_run_monitor, name="sentinel-worker", daemon=True).start()
+
+
+def _inbox_view_rows(streams: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Shape stored stream rows into what the console template renders
+    (enabled flag + a human-readable detail line), tolerating bad config."""
+    rows: List[Dict[str, Any]] = []
+    for row in streams:
+        entry: Dict[str, Any] = {
+            "name": row["name"],
+            "stream_type": row["stream_type"],
+            "enabled": True,
+            "detail": "",
+            "error": None,
+        }
+        try:
+            if row["stream_type"] == "email":
+                cfg = MailAccountConfig.model_validate_json(row["config_json"])
+                entry["enabled"] = cfg.enabled
+                entry["detail"] = (
+                    f"{cfg.auth.username}@{cfg.server}"
+                    if cfg.provider in (MailProvider.IMAP, "imap")
+                    else str(cfg.provider)
+                )
+        except Exception as exc:
+            entry["error"] = str(exc)
+            entry["enabled"] = False
+        rows.append(entry)
+    return rows
 
 
 def _imap_provider_presets() -> Dict[str, Dict[str, Any]]:
