@@ -107,19 +107,10 @@ are separate processes sharing one DB.
   Often the real launch bottleneck, not the code.
 - Privacy policy + ToS (required for verification).
 
-## Risks to design for
 
-- **TODO: stop storing email content (violates decision #3).** The worker
-  currently persists the full rendered email — subject, sender, body — in
-  `event.body` in plaintext for *every* message. Decision #3 says persist only
-  decisions/derived alert facts, never the body. Rework `event` into an
-  opaque-id dedup ledger + an `alert` table before launch (Google CASA will
-  flag stored bodies).
-- **Secrets at rest (open gap).** Gmail refresh tokens and IMAP app passwords
-  are stored unencrypted in `stream.config_json`. Encrypt before any real
-  multi-user use — a DB leak = access to users' inboxes.
-- **LLM cost scales with users × inbox volume.** Levers: classify only unread /
-  Primary-category mail, cheaper model, batching, or a cheap pre-filter (the
-  removed local scorer was exactly this hedge).
-- **Supervisor scale** — single asyncio worker is fine into low-thousands of
-  mailboxes; beyond that, shard workers.
+- #1 — stop storing email content (development.md TODO; no-backwards-compat policy means the event schema rework needs no migration).
+  - #2 — encrypt secrets at rest (pairs with splitting the secret out of the config_json JSONB).
+  - #5 — Gmail run_local_server interactive-auth fallback can hang the worker.
+  - #6 — data-model gaps: alert table + user_id on event/classification (blocks the flagged list).
+  - #7 — non-atomic event+classification write (narrow crash window → silently skipped email); no persistent cursor.
+  - #8 — LLM cost controls; no test suite.
