@@ -18,6 +18,9 @@ control.
 ## How do I use this?
 
 Sentinel is in-progress. You may sign up at sentinel.parasmittal.com.
+This is limited to 100 test users, and availability is not guaranteed.
+
+You can also host it yourself. `development.md` may contain useful information for you.
 
 Tested with Python 3.14.2 on macOS. Install
 [uv](https://docs.astral.sh/uv/getting-started/installation/), then sync

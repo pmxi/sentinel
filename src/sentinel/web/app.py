@@ -14,7 +14,7 @@ import threading
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
-from flask import Flask, abort, redirect, render_template, request, session, url_for
+from flask import Flask, abort, g, redirect, render_template, request, session, url_for
 
 from sentinel.logging_config import get_logger
 from sentinel.classifier.openai_classifier import _default_criteria
@@ -38,8 +38,17 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     app.secret_key = settings.require_session_secret()
     _maybe_start_embedded_monitor(app)
 
-    def open_db() -> Database:
-        return Database(app.config["DATABASE_URL"])
+    def get_db() -> Database:
+        """One Database per request, opened lazily and closed on teardown."""
+        if "db" not in g:
+            g.db = Database(app.config["DATABASE_URL"])
+        return g.db
+
+    @app.teardown_appcontext
+    def _close_db(_exc: Optional[BaseException] = None) -> None:
+        db = g.pop("db", None)
+        if db is not None:
+            db.close()
 
     @app.context_processor
     def inject_user():
@@ -55,13 +64,9 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         # Presence isn't enough — the row must still exist. A stale cookie (e.g.
         # the user's row was deleted) would otherwise pass and then crash the
         # first FK insert. Drop the orphaned session and make them re-auth.
-        db = open_db()
-        try:
-            if db.get_user(uid) is None:
-                session.clear()
-                return redirect(url_for("login"))
-        finally:
-            db.close()
+        if get_db().get_user(uid) is None:
+            session.clear()
+            return redirect(url_for("login"))
         return None
 
     # ---- auth -----------------------------------------------------------
@@ -111,33 +116,30 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         creds = flow.credentials
         info = userinfo_from_credentials(creds)
 
-        db = open_db()
-        try:
-            if action == "connect_gmail":
-                uid = session.get("user_id")
-                if uid is None or db.get_user(uid) is None:
-                    # No live user behind the session — don't attempt an insert
-                    # that would violate the stream→user FK; re-auth instead.
-                    session.clear()
-                    return redirect(url_for("login"))
-                config = MailAccountConfig(
-                    provider=MailProvider.GMAIL_API,
-                    auth=AuthConfig(
-                        method=AuthMethod.OAUTH2,
-                        client_config_json=client_config_json(),
-                        token_json=creds.to_json(),
-                    ),
-                )
-                db.upsert_stream(
-                    f"gmail:{info['email']}", "email", config.model_dump_json(),
-                    user_id=uid,
-                )
-            else:
-                user = db.upsert_user(info["sub"], info["email"], info.get("name"))
-                session["user_id"] = int(user["id"])
-                session["email"] = user["email"]
-        finally:
-            db.close()
+        db = get_db()
+        if action == "connect_gmail":
+            uid = session.get("user_id")
+            if uid is None or db.get_user(uid) is None:
+                # No live user behind the session — don't attempt an insert
+                # that would violate the stream→user FK; re-auth instead.
+                session.clear()
+                return redirect(url_for("login"))
+            config = MailAccountConfig(
+                provider=MailProvider.GMAIL_API,
+                auth=AuthConfig(
+                    method=AuthMethod.OAUTH2,
+                    client_config_json=client_config_json(),
+                    token_json=creds.to_json(),
+                ),
+            )
+            db.upsert_stream(
+                f"gmail:{info['email']}", "email", config.model_dump_json(),
+                user_id=uid,
+            )
+        else:
+            user = db.upsert_user(info["sub"], info["email"], info.get("name"))
+            session["user_id"] = int(user["id"])
+            session["email"] = user["email"]
         return redirect(url_for("console"))
 
     @app.route("/logout", methods=["POST"])
@@ -150,15 +152,12 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     @app.route("/", methods=["GET", "POST"])
     def console():
         uid = session["user_id"]
-        db = open_db()
-        try:
-            if request.method == "POST":
-                db.set_user_criteria(uid, request.form.get("criteria", ""))
-                return redirect(url_for("console", saved=1))
-            user = db.get_user(uid) or {}
-            inboxes = _inbox_view_rows(db.list_streams_for_user(uid))
-        finally:
-            db.close()
+        db = get_db()
+        if request.method == "POST":
+            db.set_user_criteria(uid, request.form.get("criteria", ""))
+            return redirect(url_for("console", saved=1))
+        user = db.get_user(uid) or {}
+        inboxes = _inbox_view_rows(db.list_streams_for_user(uid))
         return render_template(
             "console.html",
             inboxes=inboxes,
@@ -198,30 +197,27 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
                 errors.append(f"Port must be a number (got {port_str!r}).")
                 port = 993
 
-            db = open_db()
-            try:
-                if name and db.get_stream(name):
-                    errors.append(f"You already have an inbox named {name!r}. Pick a different name.")
-                if not errors:
-                    probe = probe_imap(server, port, username, password)
-                    if not probe.ok:
-                        errors.append(probe.error or "Connection failed.")
-                if not errors:
-                    config = MailAccountConfig(
-                        provider=MailProvider.IMAP,
-                        server=server,
-                        port=port,
-                        auth=AuthConfig(
-                            method=AuthMethod.PASSWORD,
-                            username=username,
-                            password=password,
-                        ),
-                        settings=AccountSettings(),
-                    )
-                    db.upsert_stream(name, "email", config.model_dump_json(), user_id=session["user_id"])
-                    return redirect(url_for("console"))
-            finally:
-                db.close()
+            db = get_db()
+            if name and db.get_stream(name):
+                errors.append(f"You already have an inbox named {name!r}. Pick a different name.")
+            if not errors:
+                probe = probe_imap(server, port, username, password)
+                if not probe.ok:
+                    errors.append(probe.error or "Connection failed.")
+            if not errors:
+                config = MailAccountConfig(
+                    provider=MailProvider.IMAP,
+                    server=server,
+                    port=port,
+                    auth=AuthConfig(
+                        method=AuthMethod.PASSWORD,
+                        username=username,
+                        password=password,
+                    ),
+                    settings=AccountSettings(),
+                )
+                db.upsert_stream(name, "email", config.model_dump_json(), user_id=session["user_id"])
+                return redirect(url_for("console"))
 
             return render_template(
                 "new_email_stream.html",
@@ -245,14 +241,11 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
 
     @app.route("/inbox/<name>/delete", methods=["POST"])
     def delete_inbox(name: str):
-        db = open_db()
-        try:
-            row = db.get_stream(name)
-            # Only let a user delete their own inbox.
-            if row and row.get("user_id") == session["user_id"]:
-                db.delete_stream(name)
-        finally:
-            db.close()
+        db = get_db()
+        row = db.get_stream(name)
+        # Only let a user delete their own inbox.
+        if row and row.get("user_id") == session["user_id"]:
+            db.delete_stream(name)
         return redirect(url_for("console"))
 
     @app.route("/telegram/link", methods=["POST"])
@@ -260,20 +253,12 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         if not settings.TELEGRAM_BOT_USERNAME:
             abort(500, "TELEGRAM_BOT_USERNAME not configured")
         token = secrets.token_urlsafe(24)
-        db = open_db()
-        try:
-            db.create_telegram_link_token(token, utc_now() + timedelta(minutes=10), session["user_id"])
-        finally:
-            db.close()
+        get_db().create_telegram_link_token(token, utc_now() + timedelta(minutes=10), session["user_id"])
         return redirect(f"https://t.me/{settings.TELEGRAM_BOT_USERNAME}?start={token}")
 
     @app.route("/telegram/unlink", methods=["POST"])
     def telegram_unlink():
-        db = open_db()
-        try:
-            db.set_user_telegram_chat_id(session["user_id"], None)
-        finally:
-            db.close()
+        get_db().set_user_telegram_chat_id(session["user_id"], None)
         return redirect(url_for("console"))
 
     return app
