@@ -28,16 +28,11 @@ _MAX_INFLIGHT = 48
 
 
 class _ClassificationResponse(BaseModel):
+    """Structured-output schema for the Responses API parse() call."""
+
     priority: Priority
     reasoning: str
     summary: str
-
-    def to_result(self) -> ClassificationResult:
-        return ClassificationResult(
-            priority=self.priority,
-            reasoning=self.reasoning,
-            summary=self.summary,
-        )
 
 
 class OpenAIItemClassifier:
@@ -92,7 +87,11 @@ class OpenAIItemClassifier:
             parsed = response.output_parsed
             if parsed is None:
                 raise ValueError("OpenAI Responses API returned no parsed output")
-            return parsed.to_result()
+            return ClassificationResult(
+                priority=parsed.priority,
+                reasoning=parsed.reasoning,
+                summary=parsed.summary,
+            )
 
     def _build_prompt(self, item: Item, notes: str) -> str:
         # The user's saved criteria, edited directly in the console, IS the
