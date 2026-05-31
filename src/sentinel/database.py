@@ -27,7 +27,12 @@ logger = logging.getLogger(__name__)
 
 def _with_reconnect(method: Callable[..., Any]) -> Callable[..., Any]:
     """Wrap a Database method so transient psycopg connection errors
-    drop the cached conn, reconnect, and retry once."""
+    drop the cached conn, reconnect, and retry once.
+
+    Applied explicitly to each public method below — never call a wrapped
+    method from inside another (a reconnect mid-transaction would retry only
+    the inner call). Multi-statement methods own their reconnect at the top.
+    """
     @functools.wraps(method)
     def wrapper(self: "Database", *args: Any, **kwargs: Any) -> Any:
         last_exc: Optional[BaseException] = None
@@ -38,7 +43,7 @@ def _with_reconnect(method: Callable[..., Any]) -> Callable[..., Any]:
                 last_exc = exc
                 logger.warning(
                     "postgres call %s failed (attempt %d/%d): %s; reconnecting",
-                    getattr(method, "__name__", method), attempt + 1, _MAX_RECONNECT_ATTEMPTS, exc,
+                    method.__name__, attempt + 1, _MAX_RECONNECT_ATTEMPTS, exc,
                 )
                 try:
                     self._reconnect()
@@ -87,6 +92,7 @@ class Database:
 
     # ----- app_user -----------------------------------------------------
 
+    @_with_reconnect
     def upsert_user(self, google_sub: str, email: str, name: Optional[str]) -> Dict[str, Any]:
         with self._lock:
             row = self.conn.execute(
@@ -99,23 +105,25 @@ class Database:
                 (google_sub, email, name),
             ).fetchone()
         assert row is not None
-        return dict(row)
+        return row
 
+    @_with_reconnect
     def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
         with self._lock:
-            row = self.conn.execute(
+            return self.conn.execute(
                 "SELECT id, google_sub, email, name, criteria, telegram_chat_id "
                 "FROM app_user WHERE id=%s",
                 (user_id,),
             ).fetchone()
-        return dict(row) if row else None
 
+    @_with_reconnect
     def set_user_criteria(self, user_id: int, criteria: Optional[str]) -> None:
         with self._lock:
             self.conn.execute(
                 "UPDATE app_user SET criteria=%s WHERE id=%s", (criteria or None, user_id)
             )
 
+    @_with_reconnect
     def set_user_telegram_chat_id(self, user_id: int, chat_id: Optional[str]) -> None:
         with self._lock:
             self.conn.execute(
@@ -124,6 +132,7 @@ class Database:
 
     # ----- stream -------------------------------------------------------
 
+    @_with_reconnect
     def upsert_stream(self, name: str, stream_type: str, config_json: str, user_id: Optional[int] = None) -> None:
         with self._lock:
             self.conn.execute(
@@ -137,38 +146,40 @@ class Database:
                 (name, stream_type, config_json, user_id),
             )
 
+    @_with_reconnect
     def get_stream(self, name: str) -> Optional[Dict[str, Any]]:
         with self._lock:
-            row = self.conn.execute(
+            return self.conn.execute(
                 "SELECT name, stream_type, config_json::text AS config_json, user_id "
                 "FROM stream WHERE name=%s",
                 (name,),
             ).fetchone()
-        return dict(row) if row else None
 
+    @_with_reconnect
     def list_streams_for_user(self, user_id: int) -> List[Dict[str, Any]]:
         with self._lock:
-            rows = self.conn.execute(
+            return self.conn.execute(
                 "SELECT name, stream_type, config_json::text AS config_json "
                 "FROM stream WHERE user_id=%s ORDER BY name",
                 (user_id,),
             ).fetchall()
-        return [dict(r) for r in rows]
 
+    @_with_reconnect
     def list_streams(self) -> List[Dict[str, Any]]:
         with self._lock:
-            rows = self.conn.execute(
+            return self.conn.execute(
                 "SELECT name, stream_type, config_json::text AS config_json, user_id "
                 "FROM stream ORDER BY name"
             ).fetchall()
-        return [dict(r) for r in rows]
 
+    @_with_reconnect
     def delete_stream(self, name: str) -> None:
         with self._lock:
             self.conn.execute("DELETE FROM stream WHERE name=%s", (name,))
 
     # ----- event (dedup ledger + content) -------------------------------
 
+    @_with_reconnect
     def is_item_processed(self, item_id: str) -> bool:
         with self._lock:
             row = self.conn.execute(
@@ -177,6 +188,7 @@ class Database:
             ).fetchone()
         return row is not None
 
+    @_with_reconnect
     def insert_event(
         self,
         *,
@@ -208,6 +220,7 @@ class Database:
 
     # ----- classification -----------------------------------------------
 
+    @_with_reconnect
     def insert_classification(
         self,
         *,
@@ -235,6 +248,7 @@ class Database:
                 (event_id, priority, summary, reasoning, model, latency_ms),
             )
 
+    @_with_reconnect
     def insert_classification_failure(self, event_id: int, error: str) -> None:
         with self._lock:
             self.conn.execute(
@@ -251,6 +265,7 @@ class Database:
 
     # ----- telegram_link_token ------------------------------------------
 
+    @_with_reconnect
     def create_telegram_link_token(self, token: str, expires_at: datetime, user_id: int) -> None:
         with self._lock:
             self.conn.execute(
@@ -258,6 +273,7 @@ class Database:
                 (token, expires_at, user_id),
             )
 
+    @_with_reconnect
     def consume_telegram_link_token(self, token: str) -> Optional[int]:
         """Validate + delete a link token; return the user_id that created it, or None."""
         with self._lock:
@@ -271,6 +287,7 @@ class Database:
             return None
         return row["user_id"]
 
+    @_with_reconnect
     def purge_expired_telegram_link_tokens(self) -> int:
         with self._lock:
             cur = self.conn.execute(
@@ -300,17 +317,3 @@ def _parse_datetime(value: Any) -> datetime:
     if isinstance(value, datetime):
         return value
     return parse_iso_datetime(str(value), assume_local=True)
-
-
-# Auto-wrap public methods with reconnect retry. Same pattern as before.
-_RECONNECT_EXEMPT: set[str] = {
-    "close", "_reconnect", "__init__", "__enter__", "__exit__",
-}
-for _name, _attr in list(vars(Database).items()):
-    if _name in _RECONNECT_EXEMPT or _name.startswith("_"):
-        continue
-    if isinstance(_attr, (staticmethod, classmethod, property)):
-        continue
-    if callable(_attr):
-        setattr(Database, _name, _with_reconnect(_attr))
-del _name, _attr
