@@ -23,7 +23,7 @@ Fortunately, we can operate in testing with at most 100 users for free.
 
 
 TODO stop storing email content
-.devcontainer is out of date TODO
+TODO .devcontainer is out of date
 
 Problems according to Claude:
   - #2 — encrypt secrets at rest (pairs with splitting the secret out of the config_json JSONB).
