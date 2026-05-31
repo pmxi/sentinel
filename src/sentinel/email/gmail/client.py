@@ -4,9 +4,8 @@ from typing import Any, Callable, List, Optional
 
 from googleapiclient.discovery import build
 
-from sentinel.item import Item
+from sentinel.item import Item, build_email_item
 from sentinel.logging_config import get_logger
-from sentinel.email.email_client_base import EmailClient, build_email_item
 from sentinel.email.gmail.auth import GmailAuth
 from sentinel.email.mail_config import MailAccountConfig
 
@@ -29,7 +28,7 @@ def _extract_body(payload: dict) -> str:
     return ""
 
 
-class GmailClient(EmailClient):
+class GmailClient:
     def __init__(
         self,
         account_name: str,
@@ -43,7 +42,8 @@ class GmailClient(EmailClient):
         back to the database.
         """
         logger.debug(f"Initializing GmailClient for account '{account_name}'")
-        super().__init__(account_name, config)
+        self.account_name = account_name
+        self.config = config
         if not config.auth.client_config_json:
             logger.error("client_config_json is required but not provided")
             raise ValueError("client_config_json is required")
@@ -66,6 +66,19 @@ class GmailClient(EmailClient):
         except Exception as e:
             logger.error(f"Failed to connect to Gmail API: {e}", exc_info=True)
             raise
+
+    def close(self) -> None:
+        """Release the service's underlying HTTP transport. Best-effort: the
+        googleapiclient service holds httplib2 connections on `_http`."""
+        http = getattr(self.service, "_http", None)
+        self.service = None
+        for obj in (http, getattr(http, "http", None)):
+            closer = getattr(obj, "close", None)
+            if callable(closer):
+                try:
+                    closer()
+                except Exception as e:
+                    logger.debug(f"Error closing Gmail transport: {e}")
 
     def get_emails_after_timestamp(
         self, after_timestamp: datetime, unread_only: bool = True

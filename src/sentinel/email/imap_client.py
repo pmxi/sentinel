@@ -5,9 +5,8 @@ from email.header import decode_header
 from email.message import Message
 from typing import List, Optional
 
-from sentinel.item import Item
+from sentinel.item import Item, build_email_item
 from sentinel.logging_config import get_logger
-from sentinel.email.email_client_base import EmailClient, build_email_item
 from sentinel.email.mail_config import AuthMethod, MailAccountConfig
 
 logger = get_logger(__name__)
@@ -18,12 +17,12 @@ logger = get_logger(__name__)
 _CONNECT_TIMEOUT_S = 30
 
 
-class IMAPClient(EmailClient):
+class IMAPClient:
     """Generic IMAP email client that supports multiple authentication methods"""
 
     def __init__(self, account_name: str, config: MailAccountConfig):
-        # Initialize base with account_name and its MailAccountConfig
-        super().__init__(account_name, config)
+        self.account_name = account_name
+        self.config = config
         self.connection = None
 
         # Validate IMAP configuration

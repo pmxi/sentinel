@@ -1,8 +1,8 @@
-"""EmailStream — drives the provider-specific EmailClients as an Item stream.
+"""EmailStream — drives the provider-specific email clients as an Item stream.
 
-The EmailClient hierarchy (IMAP, Gmail) is the internal sync-fetch
-implementation; each client already returns the pipeline's Item (see
-build_email_item). EmailStream wraps them:
+The clients (IMAP, Gmail) are the internal sync-fetch implementation; each one
+already returns the pipeline's Item (see build_email_item). EmailStream wraps
+them:
 
 - runs a blocking fetch on a thread (the clients are sync)
 - owns its own cursor (a datetime it's fetched past)
@@ -14,17 +14,20 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timedelta
-from typing import AsyncIterator, Callable, List, Optional
+from typing import AsyncIterator, Callable, List, Optional, Union
 
 from sentinel.logging_config import get_logger
 from sentinel.item import Item
-from sentinel.email.email_client_base import EmailClient
 from sentinel.email.gmail.client import GmailClient
 from sentinel.email.imap_client import IMAPClient
 from sentinel.email.mail_config import MailAccountConfig, MailProvider
 from sentinel.time_utils import utc_now
 
 logger = get_logger(__name__)
+
+# The two concrete sync clients EmailStream drives. They share no base class —
+# just a get_emails_after_timestamp()/close() shape, dispatched on provider.
+EmailClient = Union[GmailClient, IMAPClient]
 
 
 # How often the email stream re-checks the mailbox.
