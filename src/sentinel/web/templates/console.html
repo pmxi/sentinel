@@ -11,6 +11,7 @@
           <strong>{{ ibx.name }}</strong> — {{ ibx.detail or ibx.stream_type }}
           {% if ibx.error %}<span class="error">({{ ibx.error }})</span>{% endif %}
           <form method="post" action="{{ url_for('delete_inbox', name=ibx.name) }}" style="display:inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit">Remove</button>
           </form>
         </li>
@@ -30,6 +31,7 @@
   {% if saved %}<p role="status" class="flash">Saved.</p>{% endif %}
   <p class="hint">Plain-English criteria for which emails are important. Sent to the classifier as-is — edit it however you like.</p>
   <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
     <textarea name="criteria" rows="14" style="width:100%" spellcheck="false">{{ criteria }}</textarea>
     <p><button type="submit">Save</button></p>
   </form>
@@ -41,12 +43,14 @@
     <p>
       Telegram connected ✓
       <form method="post" action="{{ url_for('telegram_unlink') }}" style="display:inline">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
         <button type="submit">Unlink</button>
       </form>
     </p>
   {% elif telegram_bot_username %}
     <p class="hint">Important emails are sent to you on Telegram.</p>
     <form method="post" action="{{ url_for('telegram_link') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
       <button type="submit">Connect Telegram</button>
     </form>
   {% else %}

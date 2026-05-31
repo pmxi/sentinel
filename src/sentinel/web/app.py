@@ -83,6 +83,30 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         g.user_id = int(uid)
         return None
 
+    def _csrf_token() -> str:
+        token = session.get("_csrf_token")
+        if not token:
+            token = secrets.token_urlsafe(32)
+            session["_csrf_token"] = token
+        return token
+
+    @app.context_processor
+    def inject_csrf():
+        # Exposed to every template as {{ csrf_token }} for the hidden field.
+        return {"csrf_token": _csrf_token()}
+
+    @app.before_request
+    def csrf_protect():
+        # All state-changing routes are POST and behind login; the OAuth
+        # callback is a GET guarded by its own state check. Reject any POST
+        # whose form token doesn't match the session's.
+        if request.method == "POST":
+            sent = request.form.get("csrf_token", "")
+            expected = session.get("_csrf_token", "")
+            if not expected or not secrets.compare_digest(sent, expected):
+                abort(400, "Invalid or missing CSRF token — reload the page and try again.")
+        return None
+
     # ---- auth -----------------------------------------------------------
 
     @app.route("/login")
