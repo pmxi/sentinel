@@ -29,10 +29,12 @@ class ProbeResult:
 def probe_imap(server: str, port: int, username: str, password: str) -> ProbeResult:
     """Return ProbeResult(ok=True) if we can log in and open INBOX.
     Otherwise ok=False and `error` holds a human-readable reason."""
-    socket.setdefaulttimeout(_CONNECT_TIMEOUT_S)
     conn = None
     try:
-        conn = imaplib.IMAP4_SSL(server, port)
+        # Bound this one connection, not the whole process: passing timeout=
+        # here (instead of socket.setdefaulttimeout) avoids leaking a default
+        # onto every other socket in the process — notably the worker's.
+        conn = imaplib.IMAP4_SSL(server, port, timeout=_CONNECT_TIMEOUT_S)
         conn.login(username, password)
         status, _ = conn.select("INBOX", readonly=True)
         if status != "OK":

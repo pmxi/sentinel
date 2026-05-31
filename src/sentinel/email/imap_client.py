@@ -12,6 +12,11 @@ from sentinel.email.mail_config import AuthMethod, MailAccountConfig
 
 logger = get_logger(__name__)
 
+# Bound each IMAP connection so a stalled mail server can't hang a poll
+# forever. Set explicitly per-connection — never via socket.setdefaulttimeout,
+# which would leak onto every other socket in the process.
+_CONNECT_TIMEOUT_S = 30
+
 
 class IMAPClient(EmailClient):
     """Generic IMAP email client that supports multiple authentication methods"""
@@ -33,7 +38,7 @@ class IMAPClient(EmailClient):
             if server is None or port is None:
                 raise ValueError("IMAP server and port must be set")
             logger.info(f"Connecting to {server}:{port}")
-            self.connection = imaplib.IMAP4_SSL(server, port)
+            self.connection = imaplib.IMAP4_SSL(server, port, timeout=_CONNECT_TIMEOUT_S)
             self._authenticate()
 
             # Select the first configured folder (default INBOX)
