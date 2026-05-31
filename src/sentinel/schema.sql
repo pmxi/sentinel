@@ -14,8 +14,7 @@ CREATE TABLE IF NOT EXISTS app_user (
     email TEXT NOT NULL,
     name TEXT,
     criteria TEXT,
-    telegram_chat_id TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    telegram_chat_id TEXT
 );
 
 CREATE TABLE IF NOT EXISTS stream (
@@ -33,7 +32,6 @@ CREATE INDEX IF NOT EXISTS stream_user_idx ON stream (user_id);
 
 CREATE TABLE IF NOT EXISTS telegram_link_token (
     token TEXT PRIMARY KEY,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     expires_at TIMESTAMPTZ NOT NULL
 );
 -- The token records which user initiated the link, so the bot can bind the
