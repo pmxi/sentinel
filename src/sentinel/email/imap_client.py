@@ -47,6 +47,8 @@ class IMAPClient(EmailClient):
 
     def _authenticate(self):
         """Authenticate based on configured method"""
+        if self.connection is None:
+            raise RuntimeError("Cannot authenticate before connecting")
         if self.config.auth.method == AuthMethod.PASSWORD:
             if not self.config.auth.username or not self.config.auth.password:
                 raise ValueError("Username and password required for password auth")
