@@ -66,42 +66,53 @@ class EmailStream:
             logger.info(f"EmailStream {self.name!r} is disabled; not starting")
             return
 
-        # The first poll looks back max_lookback_hours; thereafter the in-memory
-        # cursor advances past the newest message seen. Dedup (the event table)
-        # makes re-fetches after a restart harmless.
-        while True:
-            try:
-                items = await asyncio.to_thread(self._fetch_batch)
-                for item in items:
-                    self._advance_cursor(item.received_at)
-                    yield item
-            except Exception as e:
-                logger.exception(
-                    f"[{self.name}] email fetch failed: {e}"
-                )
+        # One client for the stream's lifetime: built once, reused across polls,
+        # and rebuilt only after a fetch error (the connection may be stale).
+        # Always closed when the stream stops. The first poll looks back
+        # max_lookback_hours; thereafter the in-memory cursor advances past the
+        # newest message seen. Dedup (the event table) makes re-fetches harmless.
+        client: Optional[EmailClient] = None
+        try:
+            while True:
+                try:
+                    if client is None:
+                        client = await asyncio.to_thread(
+                            _create_email_client, self.name, self.config, self.on_token_refreshed
+                        )
+                    items = await asyncio.to_thread(self._fetch_batch, client)
+                    for item in items:
+                        self._advance_cursor(item.received_at)
+                        yield item
+                except Exception as e:
+                    logger.exception(f"[{self.name}] email fetch failed: {e}")
+                    # Drop the (possibly broken) client so the next poll rebuilds.
+                    await asyncio.to_thread(self._close_client, client)
+                    client = None
 
-            await asyncio.sleep(_POLL_SECONDS)
+                await asyncio.sleep(_POLL_SECONDS)
+        finally:
+            await asyncio.to_thread(self._close_client, client)
 
     # ------------------------------------------------------------------ internals
 
-    def _fetch_batch(self) -> List[Item]:
+    def _fetch_batch(self, client: EmailClient) -> List[Item]:
         """Blocking: fetch new emails as Items. Called via asyncio.to_thread."""
-        client = _create_email_client(
-            self.name,
-            self.config,
-            self.on_token_refreshed,
+        after = self._cursor or self._initial_cursor()
+        items = client.get_emails_after_timestamp(
+            after, unread_only=self.config.settings.process_only_unread
         )
+        logger.debug(
+            f"[{self.name}] fetched {len(items)} emails since {after.isoformat()}"
+        )
+        return items
+
+    def _close_client(self, client: Optional[EmailClient]) -> None:
+        if client is None:
+            return
         try:
-            after = self._cursor or self._initial_cursor()
-            items = client.get_emails_after_timestamp(
-                after, unread_only=self.config.settings.process_only_unread
-            )
-            logger.debug(
-                f"[{self.name}] fetched {len(items)} emails since {after.isoformat()}"
-            )
-            return items
-        finally:
             client.close()
+        except Exception as e:
+            logger.debug(f"[{self.name}] error closing client: {e}")
 
     def _initial_cursor(self) -> datetime:
         lookback = timedelta(hours=self.config.settings.max_lookback_hours)
