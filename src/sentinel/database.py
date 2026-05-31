@@ -78,7 +78,7 @@ class Database:
 
     def _create_tables(self) -> None:
         with self._lock:
-            self.conn.execute(_SCHEMA_SQL_PATH.read_text())
+            self.conn.execute(_SCHEMA_SQL_PATH.read_text().encode())
             self.conn.execute(
                 "INSERT INTO schema_meta (key, value) VALUES ('schema_version', %s) "
                 "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
