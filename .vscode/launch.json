@@ -5,21 +5,18 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Sentinel Monitor",
+            "name": "sentinel-web",
             "type": "debugpy",
             "request": "launch",
-            "module": "src.main",
+            "module": "sentinel.web.app",
             "justMyCode": true,
-            "console": "integratedTerminal",
-            "env": {
-                "PYTHONPATH": "${workspaceFolder}"
-            }
+            "console": "integratedTerminal"
         },
         {
-            "name": "Sentinel Monitor (File)",
+            "name": "sentinel-worker",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/sentinel.py",
+            "module": "sentinel.worker",
             "justMyCode": true,
             "console": "integratedTerminal"
         }
