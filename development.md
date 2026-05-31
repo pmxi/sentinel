@@ -4,7 +4,7 @@ Sentinel is becoming a **multi-tenant hosted SaaS**: users sign up with Google,
 connect their Gmail via OAuth, and Sentinel monitors their inbox and alerts
 them (out-of-band) when something important arrives.
 
-The classification engine (`EmailStream` → `OpenAIItemClassifier` → notify,
+The classification engine (`EmailStream` → `OpenAIMessageClassifier` → notify,
 driven by the supervisor in `monitor.py`) is reused as-is and wrapped in a
 tenancy + auth shell.
 
@@ -18,7 +18,7 @@ tenancy + auth shell.
 - **Connect Gmail** via OAuth `gmail.readonly`; IMAP app-password kept as a
   secondary connect path; multiple inboxes per user.
 - Multi-tenant DB foundation: `app_user`, per-user criteria + telegram_chat_id,
-  `stream.user_id`.
+  `inbox.user_id`.
 - Classifier: `gpt-5.4-mini`, reasoning effort `medium` (verified live).
 
 **Next:** Phase 4 — make the worker per-user, wire Telegram link-token → user,
@@ -108,9 +108,9 @@ are separate processes sharing one DB.
 - Privacy policy + ToS (required for verification).
 
 
-- #1 — stop storing email content (development.md TODO; no-backwards-compat policy means the event schema rework needs no migration).
+- #1 — stop storing email content (development.md TODO; no-backwards-compat policy means the message schema rework needs no migration).
   - #2 — encrypt secrets at rest (pairs with splitting the secret out of the config_json JSONB).
   - #5 — Gmail run_local_server interactive-auth fallback can hang the worker.
-  - #6 — data-model gaps: alert table + user_id on event/classification (blocks the flagged list).
-  - #7 — non-atomic event+classification write (narrow crash window → silently skipped email); no persistent cursor.
+  - #6 — data-model gaps: alert table + user_id on message/classification (blocks the flagged list).
+  - #7 — no persistent cursor (in-memory only; message-table dedup covers restarts). The non-atomic message+classification write is now fixed (`Database.record_classified_message` writes both in one transaction).
   - #8 — LLM cost controls; no test suite.
