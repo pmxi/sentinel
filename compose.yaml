@@ -1,0 +1,30 @@
+# Local dev Postgres for Sentinel.
+#   docker compose up -d --wait db   # start (waits until healthy)
+#   uv run sentinel-web              # schema.sql is applied on first connect
+#   docker compose down              # stop (data persists in the named volume)
+#   docker compose down -v           # stop and wipe the database
+#
+# Matches DATABASE_URL=postgresql://sentinel:sentinel@localhost:5432/sentinel
+# in .env. These are throwaway local-dev credentials — do not reuse them or
+# expose this port off-host.
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: sentinel
+      POSTGRES_PASSWORD: sentinel
+      POSTGRES_DB: sentinel
+    ports:
+      - "5432:5432"
+    # PG18 images store data under a version subdir; mount at /var/lib/postgresql
+    # (not the pre-18 /var/lib/postgresql/data) per the official image guidance.
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel -d sentinel"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
