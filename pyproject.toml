@@ -29,3 +29,8 @@ build-backend = "hatchling.build"
 packages = [
     "src/sentinel",
 ]
+
+[dependency-groups]
+dev = [
+    "ty>=0.0.40",
+]
