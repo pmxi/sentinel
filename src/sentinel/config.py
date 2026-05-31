@@ -58,6 +58,15 @@ class Settings:
         return cls.DATABASE_URL
 
     @classmethod
+    def require_session_secret(cls) -> str:
+        if not cls.SESSION_SECRET:
+            raise ValueError(
+                "SESSION_SECRET is required to sign login sessions. Generate one with "
+                '`python -c "import secrets; print(secrets.token_hex(32))"` and set it in .env.'
+            )
+        return cls.SESSION_SECRET
+
+    @classmethod
     def validate(cls) -> bool:
         if not cls.LLM_API_KEY:
             raise ValueError(
