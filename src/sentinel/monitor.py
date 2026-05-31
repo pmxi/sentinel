@@ -15,9 +15,9 @@ from openai import (
 )
 
 from sentinel.logging_config import get_logger
-from sentinel.classifier import ClassificationResult, OpenAIItemClassifier
-from sentinel.notify import NotifyResult, NotifyStatus, TelegramItemNotifier
-from sentinel.item import Item
+from sentinel.classifier import ClassificationResult, OpenAIMessageClassifier
+from sentinel.notify import NotifyResult, NotifyStatus, TelegramMessageNotifier
+from sentinel.message import Message
 from sentinel.email.mail_config import MailAccountConfig
 from sentinel.email.stream import EmailStream
 from sentinel.config import settings
@@ -49,7 +49,7 @@ class Monitor:
         database: Database,
     ):
         self.db = database
-        self.classifier = OpenAIItemClassifier(
+        self.classifier = OpenAIMessageClassifier(
             api_key=settings.LLM_API_KEY or "",
             model=settings.LLM_MODEL,
             reasoning_effort=settings.LLM_REASONING_EFFORT,
@@ -186,7 +186,7 @@ class Monitor:
             try:
                 # Each inbox is processed with its owner's criteria + Telegram
                 # target, both read live from the DB at point of use.
-                pipeline = ItemPipeline(
+                pipeline = MessagePipeline(
                     db=self.db,
                     classifier=self.classifier,
                     user_id=user_id,
@@ -194,15 +194,15 @@ class Monitor:
                 sem = asyncio.Semaphore(_PER_STREAM_CONCURRENCY)
                 in_flight: set[asyncio.Task] = set()
 
-                async def _handle(item: Item) -> None:
+                async def _handle(message: Message) -> None:
                     async with sem:
-                        await pipeline.process(item)
+                        await pipeline.process(message)
 
                 try:
-                    async for item in stream.items():
+                    async for message in stream.messages():
                         if self._shutdown.is_set():
                             break
-                        t = asyncio.create_task(_handle(item))
+                        t = asyncio.create_task(_handle(message))
                         in_flight.add(t)
                         t.add_done_callback(in_flight.discard)
 
@@ -210,7 +210,7 @@ class Monitor:
                         await asyncio.gather(*in_flight, return_exceptions=True)
                 finally:
                     # On cancellation (stream stopped/reconfigured) don't leave
-                    # item tasks running detached — cancel whatever's left.
+                    # message tasks running detached — cancel whatever's left.
                     for t in in_flight:
                         t.cancel()
                 return
@@ -261,24 +261,24 @@ class Monitor:
         self._stream_config_sig.clear()
 
 
-class ItemPipeline:
-    """Per-user processing for one item: dedup → classify → record → notify.
+class MessagePipeline:
+    """Per-user processing for one message: dedup → classify → record → notify.
 
     The dedup ledger is the `message` table, and a row is written only once the
-    item reaches a terminal outcome (classified, or permanently failed). A
-    transient classifier error therefore leaves no row, so the item is retried
+    message reaches a terminal outcome (classified, or permanently failed). A
+    transient classifier error therefore leaves no row, so the message is retried
     on the next poll instead of being silently swallowed.
 
     User state — classification criteria and Telegram chat_id — is read live
     from the DB at point of use, so linking Telegram or editing criteria takes
-    effect on the owner's next item without restarting the worker.
+    effect on the owner's next message without restarting the worker.
     """
 
     def __init__(
         self,
         *,
         db: Database,
-        classifier: OpenAIItemClassifier,
+        classifier: OpenAIMessageClassifier,
         user_id: Optional[int] = None,
     ):
         self.db = db
@@ -286,9 +286,9 @@ class ItemPipeline:
         self.classifier = classifier
         # Per-user delivery: one shared Sentinel bot, the user's own chat_id,
         # resolved at send time (see _current_chat_id).
-        self.notifier: Optional[TelegramItemNotifier] = None
+        self.notifier: Optional[TelegramMessageNotifier] = None
         if settings.TELEGRAM_BOT_TOKEN and user_id is not None:
-            self.notifier = TelegramItemNotifier(
+            self.notifier = TelegramMessageNotifier(
                 bot_token=settings.TELEGRAM_BOT_TOKEN,
                 chat_id_provider=self._current_chat_id,
             )
@@ -301,36 +301,36 @@ class ItemPipeline:
         return (self.db.get_user(self.user_id) or {}).get("telegram_chat_id")
 
     async def _notify_with_retry(
-        self, item: Item, classification: ClassificationResult
+        self, message: Message, classification: ClassificationResult
     ) -> "NotifyResult":
         """Send the alert, retrying a few times on transient (retryable)
         failures with exponential backoff. Only called when notifier is set."""
         assert self.notifier is not None
         delay = _NOTIFY_RETRY_BASE_DELAY
-        result = await asyncio.to_thread(self.notifier.notify, item, classification)
+        result = await asyncio.to_thread(self.notifier.notify, message, classification)
         for _ in range(_NOTIFY_RETRY_ATTEMPTS - 1):
             if result.status != NotifyStatus.FAILED or not result.retryable:
                 return result
             await asyncio.sleep(delay)
             delay *= 2
-            result = await asyncio.to_thread(self.notifier.notify, item, classification)
+            result = await asyncio.to_thread(self.notifier.notify, message, classification)
         return result
 
-    def _log_ctx(self, item: Item) -> str:
-        """Stable key=value prefix so one item's journey is greppable across
+    def _log_ctx(self, message: Message) -> str:
+        """Stable key=value prefix so one message's journey is greppable across
         the pipeline's log lines."""
-        stream = item.stream_name or "-"
+        stream = message.stream_name or "-"
         user = self.user_id if self.user_id is not None else "-"
-        return f"item={item.id} stream={stream} user={user}"
+        return f"msg={message.id} stream={stream} user={user}"
 
-    async def process(self, item: Item) -> bool:
-        ctx = self._log_ctx(item)
-        if await asyncio.to_thread(self.db.is_message_recorded, item.id):
+    async def process(self, message: Message) -> bool:
+        ctx = self._log_ctx(message)
+        if await asyncio.to_thread(self.db.is_message_recorded, message.id):
             logger.debug("%s outcome=dedup_skip", ctx)
             return False
 
         if _CLASSIFICATION_DISABLED:
-            await asyncio.to_thread(self._record_message, item)
+            await asyncio.to_thread(self._record_message, message)
             logger.info("%s outcome=classification_disabled", ctx)
             return False
 
@@ -340,20 +340,20 @@ class ItemPipeline:
             notes = (user or {}).get("criteria") or ""
 
         try:
-            classification = await self.classifier.classify(item, notes=notes)
+            classification = await self.classifier.classify(message, notes=notes)
         except Exception as exc:
             if _is_transient_classification_error(exc):
-                # Leave no row — the item is retried on the next poll.
+                # Leave no row — the message is retried on the next poll.
                 logger.warning("%s outcome=classify_retry error=%s", ctx, exc)
                 return False
             # Permanent failure: record message + failure atomically so we stop retrying.
-            await asyncio.to_thread(self._record_failure, item, str(exc))
+            await asyncio.to_thread(self._record_failure, message, str(exc))
             logger.error("%s outcome=classify_failed error=%s", ctx, exc)
             return False
 
-        recorded = await asyncio.to_thread(self._record_classification, item, classification)
+        recorded = await asyncio.to_thread(self._record_classification, message, classification)
         if not recorded:
-            # Another worker recorded this item between the dedup check and the
+            # Another worker recorded this message between the dedup check and the
             # write; it's already accounted for, so don't notify twice.
             logger.info("%s outcome=dedup_skip race=write", ctx)
             return False
@@ -372,7 +372,7 @@ class ItemPipeline:
             )
             return True
 
-        result = await self._notify_with_retry(item, classification)
+        result = await self._notify_with_retry(message, classification)
         if result.status == NotifyStatus.SENT:
             logger.info(
                 "%s outcome=classified priority=important notify=sent msg=%s", ctx, result.detail
@@ -387,38 +387,38 @@ class ItemPipeline:
             )
         return True
 
-    def _message_fields(self, item: Item) -> Dict[str, Any]:
-        """The message-table columns derived from an item, shared by every write."""
+    def _message_fields(self, message: Message) -> Dict[str, Any]:
+        """The message-table columns, shared by every write."""
         return dict(
-            source_id=item.id,
-            stream_name=item.stream_name,
-            title=item.title or "(no title)",
-            body=item.body or None,
-            url=item.url,
-            author=item.author or None,
-            received_at=item.received_at,
-            metadata=item.metadata or None,
+            source_id=message.id,
+            stream_name=message.stream_name,
+            title=message.title or "(no title)",
+            body=message.body or None,
+            url=message.url,
+            author=message.author or None,
+            received_at=message.received_at,
+            metadata=message.metadata or None,
         )
 
-    def _record_message(self, item: Item) -> Optional[int]:
+    def _record_message(self, message: Message) -> Optional[int]:
         """Message-only write for the classification-disabled path."""
-        return self.db.insert_message(**self._message_fields(item))
+        return self.db.insert_message(**self._message_fields(message))
 
     def _record_classification(
-        self, item: Item, classification: ClassificationResult
+        self, message: Message, classification: ClassificationResult
     ) -> bool:
         """Atomically record the message + its classification. False ⇒ dedup race."""
         return self.db.record_classified_message(
-            **self._message_fields(item),
+            **self._message_fields(message),
             priority=classification.priority.value,
             summary=classification.summary,
             reasoning=classification.reasoning,
             model=settings.LLM_MODEL or "unknown",
         )
 
-    def _record_failure(self, item: Item, error: str) -> bool:
+    def _record_failure(self, message: Message, error: str) -> bool:
         """Atomically record the message + a permanent-failure marker."""
-        return self.db.record_failed_message(**self._message_fields(item), error=error)
+        return self.db.record_failed_message(**self._message_fields(message), error=error)
 
 
 def _is_transient_classification_error(exc: Exception) -> bool:

@@ -1,7 +1,7 @@
-"""The Item — the core object the classifier and notifier consume.
+"""The Message — the core object the classifier and notifier consume.
 
-The email adapters (`sentinel.email`) build an `Item` from a fetched message at
-the boundary (see `build_email_item` below), so the pipeline never depends on
+The email adapters (`sentinel.email`) build a `Message` from a fetched email at
+the boundary (see `build_message` below), so the pipeline never depends on
 email internals.
 """
 
@@ -16,8 +16,8 @@ from sentinel.time_utils import ensure_utc, parse_iso_datetime, utc_now
 
 
 @dataclass
-class Item:
-    """One classifiable unit (an email), reshaped for the pipeline.
+class Message:
+    """One classifiable message (an email), reshaped for the pipeline.
 
     Fields are chosen for what the classifier and notifier actually need:
     - `stream_name` is the inbox this came from (logging + the message's column)
@@ -38,7 +38,7 @@ class Item:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-def build_email_item(
+def build_message(
     *,
     stream_name: str,
     provider: str,
@@ -49,11 +49,11 @@ def build_email_item(
     received_date: str,
     body: str,
     url: Optional[str] = None,
-) -> Item:
-    """Build the pipeline's Item from one email's extracted fields.
+) -> Message:
+    """Build the pipeline's Message from one email's extracted fields.
 
-    The single email->Item boundary: renders the body the classifier reads,
-    parses the date, and namespaces the id by stream so message ids from
+    The single email->Message boundary: renders the body the classifier reads,
+    parses the date, and namespaces the id by inbox so message ids from
     different inboxes can't collide in the globally-unique dedup ledger.
     """
     rendered_body = (
@@ -63,7 +63,7 @@ def build_email_item(
         f"Date: {received_date}\n\n"
         f"{body}"
     )
-    return Item(
+    return Message(
         id=f"{stream_name}:{msg_id}",
         stream_name=stream_name,
         title=subject or "(no subject)",

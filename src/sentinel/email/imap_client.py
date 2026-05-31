@@ -2,10 +2,10 @@ import email
 import imaplib
 from datetime import datetime
 from email.header import decode_header
-from email.message import Message
+from email.message import Message as EmailMessage
 from typing import List, Optional
 
-from sentinel.item import Item, build_email_item
+from sentinel.message import Message, build_message
 from sentinel.logging_config import get_logger
 from sentinel.email.mail_config import AuthMethod, MailAccountConfig
 
@@ -79,7 +79,7 @@ class IMAPClient:
 
     def get_emails_after_timestamp(
         self, after_timestamp: datetime, unread_only: bool = True
-    ) -> List[Item]:
+    ) -> List[Message]:
         """Get emails received after a specific timestamp.
 
         Searches and fetches by UID, not message sequence number: UIDs are
@@ -98,28 +98,28 @@ class IMAPClient:
             else:
                 search_criteria = f'(SINCE "{date_str}")'
 
-            status, messages = conn.uid("SEARCH", None, search_criteria)  # ty: ignore[invalid-argument-type]
-            if status != "OK" or not messages or not messages[0]:
+            status, search_result = conn.uid("SEARCH", None, search_criteria)  # ty: ignore[invalid-argument-type]
+            if status != "OK" or not search_result or not search_result[0]:
                 return []
 
-            uids = messages[0].split()
-            items: List[Item] = []
+            uids = search_result[0].split()
+            messages: List[Message] = []
 
             for uid in uids:
-                item = self._fetch_email(uid.decode())
-                if item is None:
+                message = self._fetch_email(uid.decode())
+                if message is None:
                     continue
                 # IMAP SINCE is day-granular, so filter precisely here.
-                if item.received_at > after_timestamp:
-                    items.append(item)
+                if message.received_at > after_timestamp:
+                    messages.append(message)
 
-            return items
+            return messages
         except Exception as e:
             logger.error(f"Error getting emails after timestamp: {e}", exc_info=True)
             raise
 
-    def _fetch_email(self, uid: str) -> Optional[Item]:
-        """Fetch and parse a single email by UID into an Item."""
+    def _fetch_email(self, uid: str) -> Optional[Message]:
+        """Fetch and parse a single email by UID into a Message."""
         try:
             conn = self._get_connection()
 
@@ -149,7 +149,7 @@ class IMAPClient:
             # Extract body
             body = self._extract_body(msg)
 
-            return build_email_item(
+            return build_message(
                 stream_name=self.account_name,
                 provider=self.config.provider,
                 msg_id=uid,
@@ -181,7 +181,7 @@ class IMAPClient:
                 decoded_parts.append(str(part))
         return " ".join(decoded_parts)
 
-    def _extract_body(self, msg: Message) -> str:
+    def _extract_body(self, msg: EmailMessage) -> str:
         """Extract email body"""
         body = ""
 

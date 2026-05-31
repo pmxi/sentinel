@@ -1,7 +1,7 @@
-"""EmailStream — drives the provider-specific email clients as an Item stream.
+"""EmailStream — drives the provider-specific email clients as a Message stream.
 
 The clients (IMAP, Gmail) are the internal sync-fetch implementation; each one
-already returns the pipeline's Item (see build_email_item). EmailStream wraps
+already returns the pipeline's Message (see build_message). EmailStream wraps
 them:
 
 - runs a blocking fetch on a thread (the clients are sync)
@@ -17,7 +17,7 @@ from datetime import datetime, timedelta
 from typing import AsyncIterator, Callable, List, Optional, Union
 
 from sentinel.logging_config import get_logger
-from sentinel.item import Item
+from sentinel.message import Message
 from sentinel.email.gmail.client import GmailClient
 from sentinel.email.imap_client import IMAPClient
 from sentinel.email.mail_config import MailAccountConfig, MailProvider
@@ -61,7 +61,7 @@ class EmailStream:
         self.on_token_refreshed = on_token_refreshed
         self._cursor: datetime | None = None
 
-    async def items(self) -> AsyncIterator[Item]:
+    async def messages(self) -> AsyncIterator[Message]:
         if not self.config.enabled:
             logger.info(f"EmailStream {self.name!r} is disabled; not starting")
             return
@@ -79,13 +79,13 @@ class EmailStream:
                         client = await asyncio.to_thread(
                             _create_email_client, self.name, self.config, self.on_token_refreshed
                         )
-                    items = await asyncio.to_thread(self._fetch_batch, client)
+                    batch = await asyncio.to_thread(self._fetch_batch, client)
                     # Yield oldest-first so the cursor only advances past a
                     # message once it (and everything earlier) has been emitted;
                     # provider list order isn't guaranteed chronological.
-                    for item in sorted(items, key=lambda i: i.received_at):
-                        self._advance_cursor(item.received_at)
-                        yield item
+                    for message in sorted(batch, key=lambda m: m.received_at):
+                        self._advance_cursor(message.received_at)
+                        yield message
                 except Exception as e:
                     logger.exception(f"[{self.name}] email fetch failed: {e}")
                     # Drop the (possibly broken) client so the next poll rebuilds.
@@ -98,16 +98,16 @@ class EmailStream:
 
     # ------------------------------------------------------------------ internals
 
-    def _fetch_batch(self, client: EmailClient) -> List[Item]:
-        """Blocking: fetch new emails as Items. Called via asyncio.to_thread."""
+    def _fetch_batch(self, client: EmailClient) -> List[Message]:
+        """Blocking: fetch new emails as Messages. Called via asyncio.to_thread."""
         after = self._cursor or self._initial_cursor()
-        items = client.get_emails_after_timestamp(
+        messages = client.get_emails_after_timestamp(
             after, unread_only=self.config.settings.process_only_unread
         )
         logger.debug(
-            f"[{self.name}] fetched {len(items)} emails since {after.isoformat()}"
+            f"[{self.name}] fetched {len(messages)} emails since {after.isoformat()}"
         )
-        return items
+        return messages
 
     def _close_client(self, client: Optional[EmailClient]) -> None:
         if client is None:

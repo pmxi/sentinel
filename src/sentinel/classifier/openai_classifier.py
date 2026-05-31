@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from sentinel.logging_config import get_logger
 from sentinel.classifier.base import ClassificationResult, Priority
-from sentinel.item import Item
+from sentinel.message import Message
 
 logger = get_logger(__name__)
 
@@ -35,7 +35,7 @@ class _ClassificationResponse(BaseModel):
     summary: str
 
 
-class OpenAIItemClassifier:
+class OpenAIMessageClassifier:
     """Concrete classifier that delegates to the OpenAI Responses API.
 
     Uses the async client so each classify call yields the event loop instead
@@ -68,13 +68,13 @@ class OpenAIItemClassifier:
         )
         self._inflight = asyncio.Semaphore(_MAX_INFLIGHT)
 
-    async def classify(self, item: Item, notes: str = "") -> ClassificationResult:
+    async def classify(self, message: Message, notes: str = "") -> ClassificationResult:
         async with self._inflight:
             t0 = time.monotonic()
             try:
                 response = await self.client.responses.parse(
                     model=self.model,
-                    input=self._build_prompt(item, notes),
+                    input=self._build_prompt(message, notes),
                     text_format=_ClassificationResponse,
                     **self._extra_params,
                 )
@@ -93,20 +93,20 @@ class OpenAIItemClassifier:
                 summary=parsed.summary,
             )
 
-    def _build_prompt(self, item: Item, notes: str) -> str:
+    def _build_prompt(self, message: Message, notes: str) -> str:
         # The user's saved criteria, edited directly in the console, IS the
         # criteria. Fall back to the built-in default only when it's empty.
         criteria = (notes or "").strip() or _default_criteria()
-        body = item.body
+        body = message.body
         if len(body) > _MAX_BODY_CHARS:
             logger.warning(
-                "Item body truncated for LLM: id=%s title=%r original=%d chars limit=%d chars",
-                item.id, item.title[:80], len(body), _MAX_BODY_CHARS,
+                "Message body truncated for LLM: id=%s title=%r original=%d chars limit=%d chars",
+                message.id, message.title[:80], len(body), _MAX_BODY_CHARS,
             )
             body = body[:_MAX_BODY_CHARS] + f"\n\n[... truncated to {_MAX_BODY_CHARS:,} chars ...]"
         return f"""
 You are a classification assistant. The user wants to be alerted only to the
-emails that genuinely matter to them. Classify the following item as IMPORTANT or NORMAL.
+emails that genuinely matter to them. Classify the following message as IMPORTANT or NORMAL.
 
 {criteria}
 
