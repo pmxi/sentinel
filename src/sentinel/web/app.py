@@ -67,6 +67,9 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         if get_db().get_user(uid) is None:
             session.clear()
             return redirect(url_for("login"))
+        # Validated for the rest of the request — handlers read g.user_id
+        # instead of indexing the session directly.
+        g.user_id = int(uid)
         return None
 
     # ---- auth -----------------------------------------------------------
@@ -151,7 +154,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
 
     @app.route("/", methods=["GET", "POST"])
     def console():
-        uid = session["user_id"]
+        uid = g.user_id
         db = get_db()
         if request.method == "POST":
             db.set_user_criteria(uid, request.form.get("criteria", ""))
@@ -216,7 +219,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
                     ),
                     settings=AccountSettings(),
                 )
-                db.upsert_stream(name, "email", config.model_dump_json(), user_id=session["user_id"])
+                db.upsert_stream(name, "email", config.model_dump_json(), user_id=g.user_id)
                 return redirect(url_for("console"))
 
             return render_template(
@@ -244,7 +247,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         db = get_db()
         row = db.get_stream(name)
         # Only let a user delete their own inbox.
-        if row and row.get("user_id") == session["user_id"]:
+        if row and row.get("user_id") == g.user_id:
             db.delete_stream(name)
         return redirect(url_for("console"))
 
@@ -253,12 +256,12 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         if not settings.TELEGRAM_BOT_USERNAME:
             abort(500, "TELEGRAM_BOT_USERNAME not configured")
         token = secrets.token_urlsafe(24)
-        get_db().create_telegram_link_token(token, utc_now() + timedelta(minutes=10), session["user_id"])
+        get_db().create_telegram_link_token(token, utc_now() + timedelta(minutes=10), g.user_id)
         return redirect(f"https://t.me/{settings.TELEGRAM_BOT_USERNAME}?start={token}")
 
     @app.route("/telegram/unlink", methods=["POST"])
     def telegram_unlink():
-        get_db().set_user_telegram_chat_id(session["user_id"], None)
+        get_db().set_user_telegram_chat_id(g.user_id, None)
         return redirect(url_for("console"))
 
     return app
