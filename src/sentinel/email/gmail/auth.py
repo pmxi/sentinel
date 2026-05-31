@@ -50,4 +50,4 @@ class GmailAuth:
             if self.on_token_refreshed:
                 self.on_token_refreshed(creds.to_json())
 
-        return creds  # type: ignore
+        return creds
