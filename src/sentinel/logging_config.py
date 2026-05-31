@@ -5,7 +5,7 @@ import logging.handlers
 import os
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 FILE_FORMAT = "%(asctime)s.%(msecs)03dZ %(levelname)-5s %(name)s %(filename)s:%(lineno)d - %(message)s"
 FILE_DATEFMT = "%Y-%m-%dT%H:%M:%S"
@@ -17,7 +17,7 @@ CONSOLE_DATEFMT = "%H:%M:%S"
 class _UTCFormatter(logging.Formatter):
     """Formatter that emits timestamps in UTC regardless of host timezone."""
 
-    converter = time.gmtime
+    converter: Callable[[float | None], time.struct_time] = time.gmtime
 
 
 _file_handler: Optional[logging.Handler] = None
