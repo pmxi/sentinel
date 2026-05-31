@@ -68,8 +68,9 @@ class Monitor:
         logger.info("Starting Sentinel supervisor")
         self._install_signal_handlers()
 
+        listener = None
         if settings.TELEGRAM_BOT_TOKEN:
-            start_telegram_listener(settings.require_database_url())
+            listener = start_telegram_listener(settings.require_database_url())
 
         await self._refresh_streams(initial=True)
 
@@ -83,6 +84,8 @@ class Monitor:
             except (asyncio.CancelledError, Exception):
                 pass
             await self._cancel_all()
+            if listener is not None:
+                listener.stop()
 
     async def _refresh_loop(self) -> None:
         """Periodically diff DB-configured streams against running tasks."""
