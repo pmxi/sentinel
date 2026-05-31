@@ -70,7 +70,7 @@ class EmailStream:
         # and rebuilt only after a fetch error (the connection may be stale).
         # Always closed when the stream stops. The first poll looks back
         # max_lookback_hours; thereafter the in-memory cursor advances past the
-        # newest message seen. Dedup (the event table) makes re-fetches harmless.
+        # newest message seen. Dedup (the message table) makes re-fetches harmless.
         client: Optional[EmailClient] = None
         try:
             while True:

@@ -58,9 +58,9 @@ def _with_reconnect(method: Callable[..., Any]) -> Callable[..., Any]:
 class Database:
     """Multi-tenant PostgreSQL store shared by the web console and worker.
 
-    Schema is in schema.sql. The two key tables are `event` (one row per
-    observed item, also the dedup ledger via UNIQUE(item_id))
-    and `classification` (LLM result, FK to event).
+    Schema is in schema.sql. The two key tables are `message` (one row per
+    observed message, also the dedup ledger via UNIQUE(source_id))
+    and `classification` (LLM result, FK to message).
     """
 
     def __init__(self, database_url: str):
@@ -177,23 +177,23 @@ class Database:
         with self._lock:
             self.conn.execute("DELETE FROM stream WHERE name=%s", (name,))
 
-    # ----- event (dedup ledger) + classification -----------------------
+    # ----- message (dedup ledger) + classification ---------------------
 
     @_with_reconnect
-    def is_item_processed(self, item_id: str) -> bool:
-        """Cheap pre-check to skip the LLM call for already-seen items. Not a
+    def is_message_recorded(self, source_id: str) -> bool:
+        """Cheap pre-check to skip the LLM call for already-seen messages. Not a
         correctness guard — the atomic writes below settle dedup races."""
         with self._lock:
             row = self.conn.execute(
-                "SELECT 1 FROM event WHERE item_id=%s",
-                (item_id,),
+                "SELECT 1 FROM message WHERE source_id=%s",
+                (source_id,),
             ).fetchone()
         return row is not None
 
-    def _insert_event(
+    def _insert_message(
         self,
         *,
-        item_id: str,
+        source_id: str,
         stream_name: str,
         title: str,
         body: Optional[str],
@@ -202,70 +202,70 @@ class Database:
         received_at: datetime,
         metadata: Optional[Dict[str, Any]],
     ) -> Optional[int]:
-        """Insert the event row; return its id, or None on a dedup conflict.
+        """Insert the message row; return its id, or None on a dedup conflict.
         Caller holds self._lock and owns any surrounding transaction."""
         metadata_json = json.dumps(metadata) if metadata else None
         row = self.conn.execute(
             """
-            INSERT INTO event (item_id, stream_name, title, body,
-                               url, author, received_at, metadata)
+            INSERT INTO message (source_id, stream_name, title, body,
+                                 url, author, received_at, metadata)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
-            ON CONFLICT (item_id) DO NOTHING
+            ON CONFLICT (source_id) DO NOTHING
             RETURNING id
             """,
-            (item_id, stream_name, title, body, url, author,
+            (source_id, stream_name, title, body, url, author,
              received_at, metadata_json),
         ).fetchone()
         return int(row["id"]) if row else None
 
     @_with_reconnect
-    def insert_event(self, **event_fields: Any) -> Optional[int]:
-        """Insert a standalone event (the classification-disabled path only).
-        Returns its id, or None if the item_id already existed."""
+    def insert_message(self, **message_fields: Any) -> Optional[int]:
+        """Insert a standalone message (the classification-disabled path only).
+        Returns its id, or None if the source_id already existed."""
         with self._lock:
-            return self._insert_event(**event_fields)
+            return self._insert_message(**message_fields)
 
     @_with_reconnect
-    def record_classified_event(
+    def record_classified_message(
         self,
         *,
         priority: str,
         summary: Optional[str],
         reasoning: Optional[str],
         model: str,
-        **event_fields: Any,
+        **message_fields: Any,
     ) -> bool:
-        """Insert the event and its classification in one transaction.
+        """Insert the message and its classification in one transaction.
 
-        Returns True if newly recorded, False if the item already existed
+        Returns True if newly recorded, False if the message already existed
         (another worker won the race) — in which case nothing is written and
         the caller just moves on. The two writes can no longer half-apply:
-        either both land or neither does, so an item is never left with an
-        event but no classification (which would dedup-skip it forever)."""
+        either both land or neither does, so a message is never left with a
+        row but no classification (which would dedup-skip it forever)."""
         with self._lock, self.conn.transaction():
-            event_id = self._insert_event(**event_fields)
-            if event_id is None:
+            message_id = self._insert_message(**message_fields)
+            if message_id is None:
                 return False
             self.conn.execute(
                 """
-                INSERT INTO classification (event_id, priority, summary, reasoning, model)
+                INSERT INTO classification (message_id, priority, summary, reasoning, model)
                 VALUES (%s, %s, %s, %s, %s)
                 """,
-                (event_id, priority, summary, reasoning, model),
+                (message_id, priority, summary, reasoning, model),
             )
         return True
 
     @_with_reconnect
-    def record_failed_event(self, *, error: str, **event_fields: Any) -> bool:
-        """Insert the event and a permanent-failure marker in one transaction
-        so we stop retrying. Returns False if the item already existed."""
+    def record_failed_message(self, *, error: str, **message_fields: Any) -> bool:
+        """Insert the message and a permanent-failure marker in one transaction
+        so we stop retrying. Returns False if the message already existed."""
         with self._lock, self.conn.transaction():
-            event_id = self._insert_event(**event_fields)
-            if event_id is None:
+            message_id = self._insert_message(**message_fields)
+            if message_id is None:
                 return False
             self.conn.execute(
-                "INSERT INTO classification_failure (event_id, error) VALUES (%s, %s)",
-                (event_id, error[:5000]),
+                "INSERT INTO classification_failure (message_id, error) VALUES (%s, %s)",
+                (message_id, error[:5000]),
             )
         return True
 

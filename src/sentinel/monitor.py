@@ -30,7 +30,7 @@ _RESTART_DELAY_SECONDS = 30
 _STREAM_REFRESH_SECONDS = 30
 
 # Global classification kill switch. When True, observed mail is recorded as an
-# event but never sent to the LLM (no classification, no alerts). Per the
+# message but never sent to the LLM (no classification, no alerts). Per the
 # product's locked design this is False — classification is always on.
 _CLASSIFICATION_DISABLED = False
 
@@ -264,7 +264,7 @@ class Monitor:
 class ItemPipeline:
     """Per-user processing for one item: dedup → classify → record → notify.
 
-    The dedup ledger is the `event` table, and a row is written only once the
+    The dedup ledger is the `message` table, and a row is written only once the
     item reaches a terminal outcome (classified, or permanently failed). A
     transient classifier error therefore leaves no row, so the item is retried
     on the next poll instead of being silently swallowed.
@@ -325,12 +325,12 @@ class ItemPipeline:
 
     async def process(self, item: Item) -> bool:
         ctx = self._log_ctx(item)
-        if await asyncio.to_thread(self.db.is_item_processed, item.id):
+        if await asyncio.to_thread(self.db.is_message_recorded, item.id):
             logger.debug("%s outcome=dedup_skip", ctx)
             return False
 
         if _CLASSIFICATION_DISABLED:
-            await asyncio.to_thread(self._record_event, item)
+            await asyncio.to_thread(self._record_message, item)
             logger.info("%s outcome=classification_disabled", ctx)
             return False
 
@@ -346,7 +346,7 @@ class ItemPipeline:
                 # Leave no row — the item is retried on the next poll.
                 logger.warning("%s outcome=classify_retry error=%s", ctx, exc)
                 return False
-            # Permanent failure: record event + failure atomically so we stop retrying.
+            # Permanent failure: record message + failure atomically so we stop retrying.
             await asyncio.to_thread(self._record_failure, item, str(exc))
             logger.error("%s outcome=classify_failed error=%s", ctx, exc)
             return False
@@ -387,10 +387,10 @@ class ItemPipeline:
             )
         return True
 
-    def _event_fields(self, item: Item) -> Dict[str, Any]:
-        """The event-table columns derived from an item, shared by every write."""
+    def _message_fields(self, item: Item) -> Dict[str, Any]:
+        """The message-table columns derived from an item, shared by every write."""
         return dict(
-            item_id=item.id,
+            source_id=item.id,
             stream_name=item.stream_name,
             title=item.title or "(no title)",
             body=item.body or None,
@@ -400,16 +400,16 @@ class ItemPipeline:
             metadata=item.metadata or None,
         )
 
-    def _record_event(self, item: Item) -> Optional[int]:
-        """Event-only write for the classification-disabled path."""
-        return self.db.insert_event(**self._event_fields(item))
+    def _record_message(self, item: Item) -> Optional[int]:
+        """Message-only write for the classification-disabled path."""
+        return self.db.insert_message(**self._message_fields(item))
 
     def _record_classification(
         self, item: Item, classification: ClassificationResult
     ) -> bool:
-        """Atomically record the event + its classification. False ⇒ dedup race."""
-        return self.db.record_classified_event(
-            **self._event_fields(item),
+        """Atomically record the message + its classification. False ⇒ dedup race."""
+        return self.db.record_classified_message(
+            **self._message_fields(item),
             priority=classification.priority.value,
             summary=classification.summary,
             reasoning=classification.reasoning,
@@ -417,8 +417,8 @@ class ItemPipeline:
         )
 
     def _record_failure(self, item: Item, error: str) -> bool:
-        """Atomically record the event + a permanent-failure marker."""
-        return self.db.record_failed_event(**self._event_fields(item), error=error)
+        """Atomically record the message + a permanent-failure marker."""
+        return self.db.record_failed_message(**self._message_fields(item), error=error)
 
 
 def _is_transient_classification_error(exc: Exception) -> bool:

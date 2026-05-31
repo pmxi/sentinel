@@ -20,7 +20,7 @@ class Item:
     """One classifiable unit (an email), reshaped for the pipeline.
 
     Fields are chosen for what the classifier and notifier actually need:
-    - `stream_name` is the inbox this came from (logging + the event's column)
+    - `stream_name` is the inbox this came from (logging + the message's column)
     - `title` is the first-line summary (the email subject)
     - `body` is the full text the classifier reasons over
     - `author` is what fronts a notification ("who sent this")
