@@ -9,6 +9,7 @@ content — alerts go out-of-band (Telegram); the inbox lives in your mail clien
 from __future__ import annotations
 
 import asyncio
+import functools
 import secrets
 import threading
 from datetime import timedelta
@@ -29,6 +30,16 @@ from sentinel.web.imap_probe import probe_imap
 logger = get_logger(__name__)
 
 _PUBLIC_ENDPOINTS = {"login", "auth_google", "oauth_callback", "static"}
+
+
+def _require_google_oauth(view):
+    """Abort with a clear error if Google OAuth isn't configured."""
+    @functools.wraps(view)
+    def wrapped(*args, **kwargs):
+        if not settings.google_oauth_configured():
+            abort(500, "Google OAuth not configured (set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET).")
+        return view(*args, **kwargs)
+    return wrapped
 
 
 def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask:
@@ -81,9 +92,8 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         return render_template("login.html", google_oauth=settings.google_oauth_configured())
 
     @app.route("/auth/google")
+    @_require_google_oauth
     def auth_google():
-        if not settings.google_oauth_configured():
-            abort(500, "Google OAuth not configured (set GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET).")
         flow = build_flow(SIGNIN_SCOPES)
         url, state = flow.authorization_url(
             access_type="online", include_granted_scopes="true", prompt="select_account"
@@ -93,9 +103,8 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         return redirect(url)
 
     @app.route("/gmail/connect")
+    @_require_google_oauth
     def gmail_connect():
-        if not settings.google_oauth_configured():
-            abort(500, "Google OAuth not configured.")
         flow = build_flow(GMAIL_SCOPES)
         url, state = flow.authorization_url(
             access_type="offline", include_granted_scopes="true", prompt="consent"
