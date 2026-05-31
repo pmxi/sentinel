@@ -5,8 +5,6 @@ Watch, so every character counts):
 
     <sender address>     (tappable link to the item if url is set)
 
-    <title>
-
     <summary>
 
 The first line is the sender's bare email address (display name stripped).
@@ -103,7 +101,6 @@ class TelegramItemNotifier:
 
         return (
             f"{first_line}\n\n"
-            f"{_md2_escape(item.title)}\n\n"
             f"{_md2_escape(summary)}"
         )
 
