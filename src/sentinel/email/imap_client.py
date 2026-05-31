@@ -58,13 +58,11 @@ class IMAPClient:
                 raise ValueError("Username and password required for password auth")
             logger.info(f"Authenticating with password for {self.config.auth.username}")
             self.connection.login(self.config.auth.username, self.config.auth.password)
-
-        elif self.config.auth.method == AuthMethod.OAUTH2:
-            raise NotImplementedError(
-                f"OAuth2 not yet implemented for {self.config.server}"
-            )
         else:
-            raise ValueError(f"Unsupported auth method: {self.config.auth.method}")
+            # IMAP + OAuth2 is rejected when the config is loaded
+            # (MailAccountConfig.validate_provider_fields), so reaching here
+            # means a genuinely unsupported method.
+            raise ValueError(f"Unsupported IMAP auth method: {self.config.auth.method}")
 
     def close(self):
         """Close the IMAP connection"""

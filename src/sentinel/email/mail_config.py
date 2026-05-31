@@ -54,8 +54,11 @@ class MailAccountConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_provider_fields(self):
-        if self.provider == MailProvider.IMAP and not self.server:
-            raise ValueError("server is required for IMAP provider")
+        if self.provider == MailProvider.IMAP:
+            if not self.server:
+                raise ValueError("server is required for IMAP provider")
+            if self.auth.method == AuthMethod.OAUTH2:
+                raise ValueError("IMAP provider supports password auth only; OAuth2 is not implemented")
         return self
 
     class Config:
