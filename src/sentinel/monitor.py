@@ -56,9 +56,11 @@ class Monitor:
         # Live registry of running stream tasks.  Hot-reload diffs this
         # against the DB snapshot every _STREAM_REFRESH_SECONDS.
         self._stream_tasks: Dict[str, asyncio.Task] = {}
-        # (stream_type, config_json) per running stream — config drift
-        # detection without re-parsing JSON every refresh.
-        self._stream_config_sig: Dict[str, tuple[str, str]] = {}
+        # (stream_type, config_json, user_id) per running stream — config drift
+        # detection without re-parsing JSON every refresh. Must match the
+        # signature built in _refresh_streams exactly, or every refresh would
+        # see a "change" and pointlessly restart the stream.
+        self._stream_config_sig: Dict[str, tuple[str, str, Optional[int]]] = {}
 
     async def run(self) -> None:
         logger.info("Starting Sentinel supervisor")
@@ -141,7 +143,7 @@ class Monitor:
             name=f"stream:{name}",
         )
         self._stream_tasks[name] = task
-        self._stream_config_sig[name] = (row["stream_type"], row["config_json"])
+        self._stream_config_sig[name] = (row["stream_type"], row["config_json"], row.get("user_id"))
 
     async def _stop_stream(self, name: str, *, reason: str) -> None:
         task = self._stream_tasks.pop(name, None)
