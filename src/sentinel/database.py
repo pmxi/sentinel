@@ -43,7 +43,7 @@ def _with_reconnect(method: Callable[..., Any]) -> Callable[..., Any]:
                 last_exc = exc
                 logger.warning(
                     "postgres call %s failed (attempt %d/%d): %s; reconnecting",
-                    method.__name__, attempt + 1, _MAX_RECONNECT_ATTEMPTS, exc,
+                    getattr(method, "__name__", "?"), attempt + 1, _MAX_RECONNECT_ATTEMPTS, exc,
                 )
                 try:
                     self._reconnect()
