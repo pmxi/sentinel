@@ -63,7 +63,7 @@ class Database:
             raise ValueError("DATABASE_URL is required for the PostgreSQL store.")
         self.database_url = database_url
         self._lock = threading.RLock()
-        self.conn = psycopg.connect(database_url, row_factory=dict_row)
+        self.conn = psycopg.Connection[Dict[str, Any]].connect(database_url, row_factory=dict_row)
         self.conn.autocommit = True
         self._create_tables()
 
@@ -73,7 +73,7 @@ class Database:
                 self.conn.close()
             except Exception:
                 pass
-            self.conn = psycopg.connect(self.database_url, row_factory=dict_row)
+            self.conn = psycopg.Connection[Dict[str, Any]].connect(self.database_url, row_factory=dict_row)
             self.conn.autocommit = True
 
     def _create_tables(self) -> None:
@@ -98,6 +98,7 @@ class Database:
                 """,
                 (google_sub, email, name),
             ).fetchone()
+        assert row is not None
         return dict(row)
 
     def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
