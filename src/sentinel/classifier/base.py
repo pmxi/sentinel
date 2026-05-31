@@ -19,10 +19,3 @@ class ClassificationResult:
 
     def is_important(self) -> bool:
         return self.priority == Priority.IMPORTANT
-
-    def __str__(self) -> str:
-        return (
-            f"Priority: {self.priority.value.capitalize()}\n"
-            f"Reasoning: {self.reasoning}\n"
-            f"Summary: {self.summary or 'N/A'}"
-        )
