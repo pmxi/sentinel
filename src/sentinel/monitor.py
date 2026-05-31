@@ -279,7 +279,7 @@ class ItemPipeline:
     def _log_ctx(self, item: Item) -> str:
         """Stable key=value prefix so one item's journey is greppable across
         the pipeline's log lines."""
-        stream = (item.metadata or {}).get("stream_name", "") or "-"
+        stream = item.stream_name or "-"
         user = self.user_id if self.user_id is not None else "-"
         return f"item={item.id} stream={stream} user={user}"
 
@@ -360,25 +360,14 @@ class ItemPipeline:
         the item_id already existed."""
         return self.db.insert_event(
             item_id=item.id,
-            stream_name=(item.metadata or {}).get("stream_name", "") or "",
+            stream_name=item.stream_name,
             title=item.title or "(no title)",
             body=item.body or None,
             url=item.url,
             author=item.author or None,
             received_at=item.received_at,
-            metadata=_filter_metadata(item.metadata),
+            metadata=item.metadata or None,
         )
-
-
-# stream_name is already its own column; don't duplicate it inside metadata.
-_RESERVED_METADATA_KEYS = {"stream_name"}
-
-
-def _filter_metadata(md: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    if not md:
-        return None
-    out = {k: v for k, v in md.items() if k not in _RESERVED_METADATA_KEYS}
-    return out or None
 
 
 def _is_transient_classification_error(exc: Exception) -> bool:

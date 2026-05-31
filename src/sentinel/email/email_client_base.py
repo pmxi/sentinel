@@ -54,6 +54,7 @@ def build_email_item(
     )
     return Item(
         id=f"{stream_name}:{msg_id}",
+        stream_name=stream_name,
         title=subject or "(no subject)",
         body=rendered_body,
         author=sender or "unknown sender",
@@ -61,7 +62,6 @@ def build_email_item(
         received_at=_parse_received_date(received_date),
         metadata={
             "provider": provider,
-            "stream_name": stream_name,
             "recipient": recipient,
         },
     )
