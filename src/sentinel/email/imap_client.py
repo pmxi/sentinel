@@ -150,7 +150,7 @@ class IMAPClient:
             body = self._extract_body(msg)
 
             return build_message(
-                stream_name=self.account_name,
+                inbox_name=self.account_name,
                 provider=self.config.provider,
                 msg_id=uid,
                 subject=subject,

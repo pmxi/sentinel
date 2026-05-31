@@ -173,7 +173,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
                     token_json=creds.to_json(),
                 ),
             )
-            db.upsert_stream(
+            db.upsert_inbox(
                 f"gmail:{info['email']}", "email", config.model_dump_json(),
                 user_id=uid,
             )
@@ -198,7 +198,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
             db.set_user_criteria(uid, request.form.get("criteria", ""))
             return redirect(url_for("console", saved=1))
         user = db.get_user(uid) or {}
-        inboxes = _inbox_view_rows(db.list_streams_for_user(uid))
+        inboxes = _inbox_view_rows(db.list_inboxes_for_user(uid))
         return render_template(
             "console.html",
             inboxes=inboxes,
@@ -239,7 +239,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
                 port = 993
 
             db = get_db()
-            if name and db.get_stream(name):
+            if name and db.get_inbox(name):
                 errors.append(f"You already have an inbox named {name!r}. Pick a different name.")
             if not errors:
                 probe = probe_imap(server, port, username, password)
@@ -257,7 +257,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
                     ),
                     settings=AccountSettings(),
                 )
-                db.upsert_stream(name, "email", config.model_dump_json(), user_id=g.user_id)
+                db.upsert_inbox(name, "email", config.model_dump_json(), user_id=g.user_id)
                 return redirect(url_for("console"))
 
             return render_template(
@@ -283,10 +283,10 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     @app.route("/inbox/<name>/delete", methods=["POST"])
     def delete_inbox(name: str):
         db = get_db()
-        row = db.get_stream(name)
+        row = db.get_inbox(name)
         # Only let a user delete their own inbox.
         if row and row.get("user_id") == g.user_id:
-            db.delete_stream(name)
+            db.delete_inbox(name)
         return redirect(url_for("console"))
 
     @app.route("/telegram/link", methods=["POST"])
@@ -327,20 +327,20 @@ def _maybe_start_embedded_monitor(app: Flask) -> None:
     threading.Thread(target=_run_monitor, name="sentinel-worker", daemon=True).start()
 
 
-def _inbox_view_rows(streams: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Shape stored stream rows into what the console template renders
+def _inbox_view_rows(inboxes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Shape stored inbox rows into what the console template renders
     (enabled flag + a human-readable detail line), tolerating bad config."""
     rows: List[Dict[str, Any]] = []
-    for row in streams:
+    for row in inboxes:
         entry: Dict[str, Any] = {
             "name": row["name"],
-            "stream_type": row["stream_type"],
+            "inbox_type": row["inbox_type"],
             "enabled": True,
             "detail": "",
             "error": None,
         }
         try:
-            if row["stream_type"] == "email":
+            if row["inbox_type"] == "email":
                 cfg = MailAccountConfig.model_validate_json(row["config_json"])
                 entry["enabled"] = cfg.enabled
                 entry["detail"] = (

@@ -8,7 +8,7 @@
     <ul class="inbox-list">
       {% for ibx in inboxes %}
         <li>
-          <strong>{{ ibx.name }}</strong> — {{ ibx.detail or ibx.stream_type }}
+          <strong>{{ ibx.name }}</strong> — {{ ibx.detail or ibx.inbox_type }}
           {% if ibx.error %}<span class="error">({{ ibx.error }})</span>{% endif %}
           <form method="post" action="{{ url_for('delete_inbox', name=ibx.name) }}" style="display:inline">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">

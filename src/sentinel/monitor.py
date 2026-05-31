@@ -58,7 +58,7 @@ class Monitor:
         # Live registry of running stream tasks.  Hot-reload diffs this
         # against the DB snapshot every _STREAM_REFRESH_SECONDS.
         self._stream_tasks: Dict[str, asyncio.Task] = {}
-        # (stream_type, config_json, user_id) per running stream — config drift
+        # (inbox_type, config_json, user_id) per running stream — config drift
         # detection without re-parsing JSON every refresh. Must match the
         # signature built in _refresh_streams exactly, or every refresh would
         # see a "change" and pointlessly restart the stream.
@@ -101,10 +101,10 @@ class Monitor:
                 logger.warning("stream refresh failed: %s", exc)
 
     async def _refresh_streams(self, initial: bool = False) -> None:
-        rows = await asyncio.to_thread(self.db.list_streams)
+        rows = await asyncio.to_thread(self.db.list_inboxes)
         desired: Dict[str, Dict[str, Any]] = {r["name"]: r for r in rows}
 
-        # Cancel tasks for streams that no longer exist.
+        # Cancel tasks for inboxes that no longer exist.
         removed = [n for n in self._stream_tasks if n not in desired]
         for name in removed:
             await self._stop_stream(name, reason="removed from DB")
@@ -112,10 +112,10 @@ class Monitor:
         added = 0
         updated = 0
         for name, row in desired.items():
-            # user_id is part of the signature so reassigning ownership (e.g. a
-            # stream that gains an owner) restarts the task and rebuilds the
+            # user_id is part of the signature so reassigning ownership (e.g. an
+            # inbox that gains an owner) restarts the task and rebuilds the
             # pipeline — otherwise it keeps the stale owner and never notifies.
-            sig = (row["stream_type"], row["config_json"], row.get("user_id"))
+            sig = (row["inbox_type"], row["config_json"], row.get("user_id"))
             running = self._stream_tasks.get(name)
             if running is None or running.done():
                 self._start_stream(name, row)
@@ -140,7 +140,7 @@ class Monitor:
         except Exception as exc:
             logger.error(
                 "Failed to build stream %r (type=%s): %s",
-                name, row["stream_type"], exc,
+                name, row["inbox_type"], exc,
             )
             return
         task = asyncio.create_task(
@@ -148,7 +148,7 @@ class Monitor:
             name=f"stream:{name}",
         )
         self._stream_tasks[name] = task
-        self._stream_config_sig[name] = (row["stream_type"], row["config_json"], row.get("user_id"))
+        self._stream_config_sig[name] = (row["inbox_type"], row["config_json"], row.get("user_id"))
 
     async def _stop_stream(self, name: str, *, reason: str) -> None:
         task = self._stream_tasks.pop(name, None)
@@ -171,14 +171,14 @@ class Monitor:
         )
 
     def _persist_email_token(self, name: str, token_json: str) -> None:
-        """Write a refreshed OAuth token back into the stream's stored config."""
-        row = self.db.get_stream(name)
+        """Write a refreshed OAuth token back into the inbox's stored config."""
+        row = self.db.get_inbox(name)
         if not row:
             return
         config = MailAccountConfig.model_validate_json(row["config_json"])
         config.auth.token_json = token_json
-        self.db.upsert_stream(
-            name, row["stream_type"], config.model_dump_json(), user_id=row.get("user_id")
+        self.db.upsert_inbox(
+            name, row["inbox_type"], config.model_dump_json(), user_id=row.get("user_id")
         )
 
     async def _run_stream(self, stream: EmailStream, user_id: Optional[int]) -> None:
@@ -319,9 +319,9 @@ class MessagePipeline:
     def _log_ctx(self, message: Message) -> str:
         """Stable key=value prefix so one message's journey is greppable across
         the pipeline's log lines."""
-        stream = message.stream_name or "-"
+        inbox = message.inbox_name or "-"
         user = self.user_id if self.user_id is not None else "-"
-        return f"msg={message.id} stream={stream} user={user}"
+        return f"msg={message.id} inbox={inbox} user={user}"
 
     async def process(self, message: Message) -> bool:
         ctx = self._log_ctx(message)
@@ -391,7 +391,7 @@ class MessagePipeline:
         """The message-table columns, shared by every write."""
         return dict(
             source_id=message.id,
-            stream_name=message.stream_name,
+            inbox_name=message.inbox_name,
             title=message.title or "(no title)",
             body=message.body or None,
             url=message.url,

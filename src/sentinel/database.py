@@ -130,52 +130,52 @@ class Database:
                 "UPDATE app_user SET telegram_chat_id=%s WHERE id=%s", (chat_id, user_id)
             )
 
-    # ----- stream -------------------------------------------------------
+    # ----- inbox --------------------------------------------------------
 
     @_with_reconnect
-    def upsert_stream(self, name: str, stream_type: str, config_json: str, user_id: Optional[int] = None) -> None:
+    def upsert_inbox(self, name: str, inbox_type: str, config_json: str, user_id: Optional[int] = None) -> None:
         with self._lock:
             self.conn.execute(
-                "INSERT INTO stream (name, stream_type, config_json, user_id, updated_at) "
+                "INSERT INTO inbox (name, inbox_type, config_json, user_id, updated_at) "
                 "VALUES (%s, %s, %s::jsonb, %s, NOW()) "
                 "ON CONFLICT(name) DO UPDATE SET "
-                "    stream_type = excluded.stream_type, "
+                "    inbox_type  = excluded.inbox_type, "
                 "    config_json = excluded.config_json, "
                 "    user_id     = excluded.user_id, "
                 "    updated_at  = NOW()",
-                (name, stream_type, config_json, user_id),
+                (name, inbox_type, config_json, user_id),
             )
 
     @_with_reconnect
-    def get_stream(self, name: str) -> Optional[Dict[str, Any]]:
+    def get_inbox(self, name: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             return self.conn.execute(
-                "SELECT name, stream_type, config_json::text AS config_json, user_id "
-                "FROM stream WHERE name=%s",
+                "SELECT name, inbox_type, config_json::text AS config_json, user_id "
+                "FROM inbox WHERE name=%s",
                 (name,),
             ).fetchone()
 
     @_with_reconnect
-    def list_streams_for_user(self, user_id: int) -> List[Dict[str, Any]]:
+    def list_inboxes_for_user(self, user_id: int) -> List[Dict[str, Any]]:
         with self._lock:
             return self.conn.execute(
-                "SELECT name, stream_type, config_json::text AS config_json "
-                "FROM stream WHERE user_id=%s ORDER BY name",
+                "SELECT name, inbox_type, config_json::text AS config_json "
+                "FROM inbox WHERE user_id=%s ORDER BY name",
                 (user_id,),
             ).fetchall()
 
     @_with_reconnect
-    def list_streams(self) -> List[Dict[str, Any]]:
+    def list_inboxes(self) -> List[Dict[str, Any]]:
         with self._lock:
             return self.conn.execute(
-                "SELECT name, stream_type, config_json::text AS config_json, user_id "
-                "FROM stream ORDER BY name"
+                "SELECT name, inbox_type, config_json::text AS config_json, user_id "
+                "FROM inbox ORDER BY name"
             ).fetchall()
 
     @_with_reconnect
-    def delete_stream(self, name: str) -> None:
+    def delete_inbox(self, name: str) -> None:
         with self._lock:
-            self.conn.execute("DELETE FROM stream WHERE name=%s", (name,))
+            self.conn.execute("DELETE FROM inbox WHERE name=%s", (name,))
 
     # ----- message (dedup ledger) + classification ---------------------
 
@@ -194,7 +194,7 @@ class Database:
         self,
         *,
         source_id: str,
-        stream_name: str,
+        inbox_name: str,
         title: str,
         body: Optional[str],
         url: Optional[str],
@@ -207,13 +207,13 @@ class Database:
         metadata_json = json.dumps(metadata) if metadata else None
         row = self.conn.execute(
             """
-            INSERT INTO message (source_id, stream_name, title, body,
+            INSERT INTO message (source_id, inbox_name, title, body,
                                  url, author, received_at, metadata)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
             ON CONFLICT (source_id) DO NOTHING
             RETURNING id
             """,
-            (source_id, stream_name, title, body, url, author,
+            (source_id, inbox_name, title, body, url, author,
              received_at, metadata_json),
         ).fetchone()
         return int(row["id"]) if row else None

@@ -20,7 +20,7 @@ class Message:
     """One classifiable message (an email), reshaped for the pipeline.
 
     Fields are chosen for what the classifier and notifier actually need:
-    - `stream_name` is the inbox this came from (logging + the message's column)
+    - `inbox_name` is the inbox this came from (logging + the message's column)
     - `title` is the first-line summary (the email subject)
     - `body` is the full text the classifier reasons over
     - `author` is what fronts a notification ("who sent this")
@@ -29,7 +29,7 @@ class Message:
     """
 
     id: str
-    stream_name: str
+    inbox_name: str
     title: str
     body: str
     author: str
@@ -40,7 +40,7 @@ class Message:
 
 def build_message(
     *,
-    stream_name: str,
+    inbox_name: str,
     provider: str,
     msg_id: str,
     subject: str,
@@ -64,8 +64,8 @@ def build_message(
         f"{body}"
     )
     return Message(
-        id=f"{stream_name}:{msg_id}",
-        stream_name=stream_name,
+        id=f"{inbox_name}:{msg_id}",
+        inbox_name=inbox_name,
         title=subject or "(no subject)",
         body=rendered_body,
         author=sender or "unknown sender",

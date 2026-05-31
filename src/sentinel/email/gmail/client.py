@@ -140,7 +140,7 @@ class GmailClient:
             url = f"https://mail.google.com/mail/u/0/#inbox/{thread_id}" if thread_id else None
 
             message = build_message(
-                stream_name=self.account_name,
+                inbox_name=self.account_name,
                 provider=self.config.provider,
                 msg_id=raw["id"],
                 subject=header("Subject", "No Subject"),
