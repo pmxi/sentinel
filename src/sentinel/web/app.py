@@ -107,11 +107,16 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     @app.route("/oauth/google/callback")
     def oauth_callback():
         state = session.pop("oauth_state", None)
-        action = session.pop("oauth_action", "login")
+        action = session.pop("oauth_action", None)
         if request.args.get("error"):
             abort(400, f"Google returned: {request.args.get('error')}")
         if not state or request.args.get("state") != state:
             abort(400, "OAuth state mismatch — please try again.")
+        # Require an explicit action set by the route that started the flow —
+        # never default to "login", which would mask a bug and could process a
+        # connect-Gmail callback as a sign-in.
+        if action not in ("login", "connect_gmail"):
+            abort(400, "Unknown OAuth action — please restart from the sign-in page.")
 
         scopes = GMAIL_SCOPES if action == "connect_gmail" else SIGNIN_SCOPES
         flow = build_flow(scopes, state=state)
