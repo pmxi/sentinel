@@ -80,7 +80,10 @@ class EmailStream:
                             _create_email_client, self.name, self.config, self.on_token_refreshed
                         )
                     items = await asyncio.to_thread(self._fetch_batch, client)
-                    for item in items:
+                    # Yield oldest-first so the cursor only advances past a
+                    # message once it (and everything earlier) has been emitted;
+                    # provider list order isn't guaranteed chronological.
+                    for item in sorted(items, key=lambda i: i.received_at):
                         self._advance_cursor(item.received_at)
                         yield item
                 except Exception as e:

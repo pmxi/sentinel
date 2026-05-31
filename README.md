@@ -5,6 +5,7 @@ Sentinel is a program to monitor your email inbox and alert you when
 something relevant arrives.
 
 Sentinel is designed to give you the confidence to step away from your inbox.
+
 Most of us drown in email. The stuff that matters is mixed in with
 newsletters, spam, and low-value updates. Responding fast to the important
 things without drowning in the rest is the problem Sentinel solves.
