@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Connect Telegram — Sentinel{% endblock %}
+{% block content %}
+
+<section>
+  <h2>Connect Telegram</h2>
+  <p class="hint">This link is valid for 10 minutes. Once it says you're connected, head back.</p>
+
+  <h3>On your phone</h3>
+  <p>Scan this with your phone's camera (or Telegram's in-app scanner). It opens Sentinel's bot — just tap <strong>Start</strong>.</p>
+  <p><img src="{{ qr_data_uri }}" alt="QR code to open the Sentinel Telegram bot" width="220" height="220"></p>
+
+  <h3>On this device</h3>
+  <p>If Telegram is installed here, just open the link:</p>
+  <p><a class="button" href="{{ deep_link }}">Open in Telegram</a></p>
+
+  <h3>No Telegram on this device?</h3>
+  <p>
+    Open Telegram anywhere (the app, or <a href="https://web.telegram.org">web.telegram.org</a>),
+    search for <strong>@{{ bot_username }}</strong>, and send this message:
+  </p>
+  <p><code>/start {{ token }}</code></p>
+
+  <p><a href="{{ url_for('console') }}">← Back to Sentinel</a></p>
+</section>
+
+{% endblock %}

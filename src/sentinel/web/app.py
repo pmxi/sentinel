@@ -15,6 +15,7 @@ import threading
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
+import segno
 from flask import Flask, abort, g, redirect, render_template, request, session, url_for
 
 from sentinel.logging_config import get_logger
@@ -295,7 +296,15 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
             abort(500, "TELEGRAM_BOT_USERNAME not configured")
         token = secrets.token_urlsafe(24)
         get_db().create_telegram_link_token(token, utc_now() + timedelta(minutes=10), g.user_id)
-        return redirect(f"https://t.me/{settings.TELEGRAM_BOT_USERNAME}?start={token}")
+        deep_link = f"https://t.me/{settings.TELEGRAM_BOT_USERNAME}?start={token}"
+        qr_data_uri = segno.make(deep_link, error="m").svg_data_uri(scale=5, border=2)
+        return render_template(
+            "telegram_link.html",
+            deep_link=deep_link,
+            qr_data_uri=qr_data_uri,
+            bot_username=settings.TELEGRAM_BOT_USERNAME,
+            token=token,
+        )
 
     @app.route("/telegram/unlink", methods=["POST"])
     def telegram_unlink():

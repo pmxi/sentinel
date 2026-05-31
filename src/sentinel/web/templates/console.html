@@ -27,18 +27,8 @@
 </section>
 
 <section>
-  <h2>What matters to you</h2>
-  {% if saved %}<p role="status" class="flash">Saved.</p>{% endif %}
-  <p class="hint">Plain-English criteria for which emails are important. Sent to the classifier as-is — edit it however you like.</p>
-  <form method="post">
-    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <textarea name="criteria" rows="14" style="width:100%" spellcheck="false">{{ criteria }}</textarea>
-    <p><button type="submit">Save</button></p>
-  </form>
-</section>
-
-<section>
   <h2>Alerts</h2>
+  <p class="hint">Required: without an alert channel connected, Sentinel has no way to reach you, so nothing happens.</p>
   {% if telegram_linked %}
     <p>
       Telegram connected ✓
@@ -56,6 +46,17 @@
   {% else %}
     <p class="hint">Set <code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_BOT_USERNAME</code> in the environment to enable Telegram alerts.</p>
   {% endif %}
+</section>
+
+<section>
+  <h2>What matters to you</h2>
+  {% if saved %}<p role="status" class="flash">Saved.</p>{% endif %}
+  <p class="hint">Plain-English criteria for which emails are important. Sent to the classifier as-is — edit it however you like.</p>
+  <form method="post">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <textarea name="criteria" rows="14" style="width:100%" spellcheck="false">{{ criteria }}</textarea>
+    <p><button type="submit">Save</button></p>
+  </form>
 </section>
 
 {% endblock %}
