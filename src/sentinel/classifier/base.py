@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol, runtime_checkable
-
-from sentinel.item import Item
 
 
 class Priority(str, Enum):
@@ -29,9 +26,3 @@ class ClassificationResult:
             f"Reasoning: {self.reasoning}\n"
             f"Summary: {self.summary or 'N/A'}"
         )
-
-
-@runtime_checkable
-class Classifier(Protocol):
-    async def classify(self, item: Item, notes: str = "") -> ClassificationResult:
-        """Classify an item with optional runtime-provided notes."""
