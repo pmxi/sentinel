@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Callable, List, Optional
 
-from googleapiclient.discovery import build  # type: ignore
+from googleapiclient.discovery import build
 
 from sentinel.item import Item
 from sentinel.logging_config import get_logger
