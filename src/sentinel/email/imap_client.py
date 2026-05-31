@@ -28,8 +28,12 @@ class IMAPClient(EmailClient):
     def _get_connection(self) -> imaplib.IMAP4_SSL:
         """Get or create IMAP connection"""
         if self.connection is None:
-            logger.info(f"Connecting to {self.config.server}:{self.config.port}")
-            self.connection = imaplib.IMAP4_SSL(self.config.server, self.config.port)
+            server = self.config.server
+            port = self.config.port
+            if server is None or port is None:
+                raise ValueError("IMAP server and port must be set")
+            logger.info(f"Connecting to {server}:{port}")
+            self.connection = imaplib.IMAP4_SSL(server, port)
             self._authenticate()
 
             # Select the first configured folder (default INBOX)
