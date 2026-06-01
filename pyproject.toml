@@ -35,3 +35,8 @@ packages = [
 dev = [
     "ty>=0.0.40",
 ]
+# Production-only: the WSGI server that fronts the Flask app under systemd.
+# Installed on the server with `uv sync --no-dev --group prod`.
+prod = [
+    "gunicorn>=23.0.0",
+]

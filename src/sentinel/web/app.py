@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional
 
 import segno
 from flask import Flask, abort, g, redirect, render_template, request, session, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from sentinel.logging_config import get_logger
 from sentinel.classifier.openai_classifier import _default_criteria
@@ -46,8 +47,21 @@ def _require_google_oauth(view):
 def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask:
     app = Flask(__name__, template_folder="templates", static_folder="static")
     app.debug = debug
+    # In production the app sits behind Nginx terminating TLS. Trust the proxy's
+    # forwarded headers so request.url reflects the public https:// URL — the
+    # OAuth token exchange (fetch_token(authorization_response=request.url)) and
+    # oauthlib's https check depend on it. Nginx must send X-Forwarded-Proto/Host.
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
     app.config["DATABASE_URL"] = database_url or settings.require_database_url()
     app.secret_key = settings.require_session_secret()
+    # Harden the session cookie when served over HTTPS. Gated on the redirect
+    # scheme so the http:// dev setup (where Secure cookies wouldn't be sent)
+    # still works without configuration.
+    app.config.update(
+        SESSION_COOKIE_SECURE=settings.GOOGLE_REDIRECT_URI.startswith("https://"),
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+    )
     _maybe_start_embedded_monitor(app)
 
     def get_db() -> Database:
