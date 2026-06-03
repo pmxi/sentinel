@@ -351,4 +351,4 @@ Restore: `pg_restore -d sentinel --clean /var/backups/sentinel-<date>.dump`.
 ### Firewall
 
 Only 22/80/443 should be open; PostgreSQL (5432) stays bound to localhost and
-is never exposed. If you use `ufw`, confirm with `sudo ufw status`.
+is never exposed.
