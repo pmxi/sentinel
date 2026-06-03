@@ -8,10 +8,8 @@ content — alerts go out-of-band (Telegram); the inbox lives in your mail clien
 
 from __future__ import annotations
 
-import asyncio
 import functools
 import secrets
-import threading
 from datetime import timedelta
 from typing import Any, Dict, List, Optional
 
@@ -25,7 +23,6 @@ from sentinel.email.mail_config import AccountSettings, AuthConfig, AuthMethod, 
 from sentinel.time_utils import utc_now
 from sentinel.config import settings
 from sentinel.database import Database
-from sentinel.monitor import Monitor
 from sentinel.web.auth import GMAIL_SCOPES, SIGNIN_SCOPES, build_flow, client_config_json, userinfo_from_credentials
 from sentinel.web.imap_probe import probe_imap
 
@@ -62,7 +59,6 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
     )
-    _maybe_start_embedded_monitor(app)
 
     def get_db() -> Database:
         """One Database per request, opened lazily and closed on teardown."""
@@ -326,28 +322,6 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         return redirect(url_for("console"))
 
     return app
-
-
-def _maybe_start_embedded_monitor(app: Flask) -> None:
-    import os
-
-    if os.getenv("SENTINEL_EMBED_WORKER", "true").strip().lower() not in ("1", "true", "yes", "on"):
-        logger.info("SENTINEL_EMBED_WORKER off; web will not run the supervisor (use sentinel-worker).")
-        return
-    if not settings.LLM_API_KEY:
-        logger.info("LLM_API_KEY not configured; skipping embedded supervisor.")
-        return
-    if app.debug and os.environ.get("WERKZEUG_RUN_MAIN") != "true":
-        return
-
-    def _run_monitor() -> None:
-        try:
-            db = Database(app.config["DATABASE_URL"])
-            asyncio.run(Monitor(db).run())
-        except Exception as exc:
-            logger.exception("Embedded supervisor crashed: %s", exc)
-
-    threading.Thread(target=_run_monitor, name="sentinel-worker", daemon=True).start()
 
 
 def _inbox_view_rows(inboxes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

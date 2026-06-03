@@ -62,13 +62,16 @@ automatically on first connect.
 
 ### 3. Run the dev server
 
+Sentinel runs as two processes — the web console and the classification
+worker. Start each in its own terminal:
+
 ```bash
-uv run sentinel-web
+uv run sentinel-web      # web console at http://localhost:8765
+uv run sentinel-worker   # polls inboxes, classifies, sends alerts
 ```
 
-That's the one command you need. It serves the web console at
-**http://localhost:8765** and — when `OPENAI_API_KEY` is set — runs the
-classification worker in-process, so there's no second daemon to manage.
+The console is usable on its own for connecting inboxes and editing criteria;
+the worker is what actually classifies mail and sends Telegram alerts.
 
 > Open it as `localhost`, **not** `127.0.0.1`. Google OAuth redirects back to
 > the `localhost` callback, and browser session cookies are host-specific —
@@ -82,19 +85,8 @@ Open the link, **sign in with Google**, then from the console you can:
 
 The console never displays your email — alerts go out-of-band over Telegram.
 
-#### Running the worker separately (optional)
-
-For production scale you typically run multiple stateless web processes, so
-the embedded worker is turned off and the supervisor runs on its own:
-
-```bash
-SENTINEL_EMBED_WORKER=false uv run sentinel-web     # web only
-uv run sentinel-worker                               # the supervisor
-```
-
-In dev you don't need this — a single `sentinel-web` does both. Don't run an
-embedded `sentinel-web` *and* a standalone `sentinel-worker` at once, or
-you'll get two supervisors and duplicate notifications.
+> Run exactly one `sentinel-worker`. Two supervisors against the same database
+> means duplicate notifications.
 
 ---
 

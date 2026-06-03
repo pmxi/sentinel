@@ -15,8 +15,7 @@ Two long-running processes, each a systemd unit, both behind the existing Nginx:
                           ┌────────────────────────────────────────────┐
   Internet ── 443 ──▶ Nginx (TLS, existing) ── proxy_pass ──▶ 127.0.0.1:8765
                           │                                   sentinel-web
-                          │                                   (gunicorn, N workers,
-                          │                                    SENTINEL_EMBED_WORKER=false)
+                          │                                   (gunicorn, N workers)
                           │
                           │   sentinel-worker  ── polls inboxes, classifies,
                           │   (one process)        sends Telegram alerts
@@ -24,11 +23,10 @@ Two long-running processes, each a systemd unit, both behind the existing Nginx:
                           └────────┴──▶ PostgreSQL 18 (native, localhost:5432)
 ```
 
-Why split web and worker (instead of the embedded-worker dev default):
-- The worker is a daemon thread inside the web process when embedded, so
-  `SENTINEL_EMBED_WORKER=true` + more than one web process = multiple
-  supervisors = **duplicate Telegram alerts**. Splitting frees the web tier to
-  run multiple gunicorn workers.
+Why web and worker are separate processes:
+- A single supervisor owns classification. More than one supervisor against the
+  same database = **duplicate Telegram alerts**, so the web tier (which runs
+  multiple gunicorn workers) never runs one — only the lone `sentinel-worker`.
 - Independent failure domains, restarts, and logs. A wedged poll can't take
   down the console; a web deploy doesn't interrupt classification.
 
@@ -138,10 +136,6 @@ SESSION_SECRET=...
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_BOT_USERNAME=YourSentinelBot
 
-# Production process model: the web tier does NOT embed the worker; the
-# standalone sentinel-worker unit is the single supervisor.
-SENTINEL_EMBED_WORKER=false
-
 # Log to stdout so journald captures it (no app-managed log files).
 DISABLE_FILE_LOGGING=true
 LOG_LEVEL=INFO
@@ -227,8 +221,8 @@ sudo systemctl enable --now sentinel-web sentinel-worker
 sudo systemctl status sentinel-web sentinel-worker
 ```
 
-`gunicorn` runs `create_app()` once per worker; with `SENTINEL_EMBED_WORKER=false`
-none of them start a supervisor, so the lone `sentinel-worker` is the only one.
+`gunicorn` runs `create_app()` once per worker; the web tier never starts a
+supervisor, so the lone `sentinel-worker` is the only one.
 
 ---
 
