@@ -63,10 +63,22 @@ automatically on first connect.
 ### 3. Run the dev server
 
 Sentinel runs as two processes — the web console and the classification
-worker. Start each in its own terminal:
+worker. `honcho` starts both from the `Procfile` in one command:
 
 ```bash
-uv run sentinel-web      # web console at http://localhost:8765
+uv run honcho start
+```
+
+It serves the console at **http://localhost:8765** and runs the worker
+alongside it, with labelled output (`web | …` / `worker | …`); Ctrl-C stops
+both. This is the same two-process topology as production — just supervised
+locally instead of by systemd.
+
+To run them separately (e.g. in their own terminals), use the entry points
+directly:
+
+```bash
+uv run sentinel-web      # web console only
 uv run sentinel-worker   # polls inboxes, classifies, sends alerts
 ```
 

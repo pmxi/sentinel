@@ -34,6 +34,9 @@ packages = [
 [dependency-groups]
 dev = [
     "ty>=0.0.40",
+    # Runs the web + worker processes together from the Procfile (`honcho start`)
+    # so a single dev command brings up the same two-process topology as prod.
+    "honcho>=2.0.0",
 ]
 # Production-only: the WSGI server that fronts the Flask app under systemd.
 # Installed on the server with `uv sync --no-dev --group prod`.
