@@ -16,7 +16,6 @@ from psycopg.rows import dict_row
 
 from sentinel.time_utils import parse_iso_datetime, utc_now
 
-_CURRENT_SCHEMA_VERSION = 2
 _RECONNECT_BACKOFF_BASE = 0.5
 _MAX_RECONNECT_ATTEMPTS = 3
 _SCHEMA_SQL_PATH = Path(__file__).parent / "schema.sql"
@@ -83,11 +82,6 @@ class Database:
     def _create_tables(self) -> None:
         with self._lock:
             self.conn.execute(_SCHEMA_SQL_PATH.read_text().encode())
-            self.conn.execute(
-                "INSERT INTO schema_meta (key, value) VALUES ('schema_version', %s) "
-                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-                (str(_CURRENT_SCHEMA_VERSION),),
-            )
 
     # ----- app_user -----------------------------------------------------
 

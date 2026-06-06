@@ -1,11 +1,6 @@
 -- Sentinel schema (singular table names).
 -- Applied idempotently at startup by Database._create_tables().
 
-CREATE TABLE IF NOT EXISTS schema_meta (
-    key TEXT PRIMARY KEY,
-    value TEXT NOT NULL
-);
-
 -- App-level accounts (Google sign-in). `user` is a reserved word, so app_user.
 -- Per-user classification criteria + notification target live here too.
 CREATE TABLE IF NOT EXISTS app_user (
