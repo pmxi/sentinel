@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import signal
 from typing import Any, Dict, Optional
 
@@ -36,6 +37,14 @@ _PER_STREAM_CONCURRENCY = 8
 # Bounded inline retry for transient Telegram delivery failures.
 _NOTIFY_RETRY_ATTEMPTS = 3
 _NOTIFY_RETRY_BASE_DELAY = 1.0
+
+
+async def _drain(task: asyncio.Task) -> None:
+    """Cancel a task and wait for it to settle, ignoring whatever it raises
+    during teardown."""
+    task.cancel()
+    with contextlib.suppress(BaseException):
+        await task
 
 
 class Monitor:
@@ -73,11 +82,7 @@ class Monitor:
         try:
             await self._shutdown.wait()
         finally:
-            refresh_task.cancel()
-            try:
-                await refresh_task
-            except (asyncio.CancelledError, Exception):
-                pass
+            await _drain(refresh_task)
             await self._cancel_all()
             if listener is not None:
                 listener.stop()
@@ -148,11 +153,7 @@ class Monitor:
         if task is None or task.done():
             return
         logger.info("Stopping stream %r (%s)", name, reason)
-        task.cancel()
-        try:
-            await task
-        except (asyncio.CancelledError, Exception):
-            pass
+        await _drain(task)
 
     def _build_stream(self, row: Dict[str, Any]) -> EmailStream:
         config = MailAccountConfig.model_validate_json(row["config_json"])
@@ -241,14 +242,13 @@ class Monitor:
         self._shutdown.set()
 
     async def _cancel_all(self) -> None:
+        # Cancel everything first so the tasks tear down concurrently, then
+        # drain each in turn.
         tasks = list(self._stream_tasks.values())
         for task in tasks:
             task.cancel()
         for task in tasks:
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
+            await _drain(task)
         self._stream_tasks.clear()
         self._stream_config_sig.clear()
 
