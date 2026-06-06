@@ -18,6 +18,7 @@ import google.oauth2.id_token
 from google_auth_oauthlib.flow import Flow
 
 from sentinel.config import settings
+from sentinel.email.gmail.auth import GMAIL_READONLY_SCOPE
 
 # oauthlib refuses non-HTTPS redirects and rejects Google's habit of adding
 # `openid` to the granted scope set. Relax both — insecure transport only when
@@ -34,7 +35,7 @@ SIGNIN_SCOPES: List[str] = [
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
 ]
-GMAIL_SCOPES: List[str] = SIGNIN_SCOPES + ["https://www.googleapis.com/auth/gmail.readonly"]
+GMAIL_SCOPES: List[str] = SIGNIN_SCOPES + [GMAIL_READONLY_SCOPE]
 
 
 def _client_config() -> Dict[str, Any]:

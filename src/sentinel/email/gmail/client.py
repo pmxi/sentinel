@@ -44,11 +44,7 @@ class GmailClient:
         logger.debug(f"Initializing GmailClient for account '{account_name}'")
         self.account_name = account_name
         self.config = config
-        if not config.auth.client_config_json:
-            logger.error("client_config_json is required but not provided")
-            raise ValueError("client_config_json is required")
         self.auth = GmailAuth(
-            client_config_json=config.auth.client_config_json,
             token_json=config.auth.token_json,
             on_token_refreshed=on_token_refreshed,
         )
