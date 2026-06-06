@@ -2,7 +2,7 @@
 
 Operator config (DB url, OpenAI key, Telegram bot, ...) is set via environment
 variables — there is no interactive setup step. Per-user preferences live in
-the database (see services/preferences.py).
+the database (app_user.criteria, accessed via Database).
 """
 
 from __future__ import annotations
