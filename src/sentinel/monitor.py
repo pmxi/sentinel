@@ -29,11 +29,6 @@ logger = get_logger("sentinel.monitor")
 _RESTART_DELAY_SECONDS = 30
 _STREAM_REFRESH_SECONDS = 30
 
-# Global classification kill switch. When True, observed mail is recorded as an
-# message but never sent to the LLM (no classification, no alerts). Per the
-# product's locked design this is False — classification is always on.
-_CLASSIFICATION_DISABLED = False
-
 # Per-stream concurrency. Inbox polls return at most a handful of new messages
 # per minute, so a small cap is plenty to overlap the LLM round-trips.
 _PER_STREAM_CONCURRENCY = 8
@@ -329,11 +324,6 @@ class MessagePipeline:
             logger.debug("%s outcome=dedup_skip", ctx)
             return False
 
-        if _CLASSIFICATION_DISABLED:
-            await asyncio.to_thread(self._record_message, message)
-            logger.info("%s outcome=classification_disabled", ctx)
-            return False
-
         notes = ""
         if self.user_id is not None:
             user = await asyncio.to_thread(self.db.get_user, self.user_id)
@@ -399,10 +389,6 @@ class MessagePipeline:
             received_at=message.received_at,
             metadata=message.metadata or None,
         )
-
-    def _record_message(self, message: Message) -> Optional[int]:
-        """Message-only write for the classification-disabled path."""
-        return self.db.insert_message(**self._message_fields(message))
 
     def _record_classification(
         self, message: Message, classification: ClassificationResult

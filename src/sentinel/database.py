@@ -219,13 +219,6 @@ class Database:
         return int(row["id"]) if row else None
 
     @_with_reconnect
-    def insert_message(self, **message_fields: Any) -> Optional[int]:
-        """Insert a standalone message (the classification-disabled path only).
-        Returns its id, or None if the source_id already existed."""
-        with self._lock:
-            return self._insert_message(**message_fields)
-
-    @_with_reconnect
     def record_classified_message(
         self,
         *,
