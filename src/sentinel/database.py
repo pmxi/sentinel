@@ -133,24 +133,23 @@ class Database:
     # ----- inbox --------------------------------------------------------
 
     @_with_reconnect
-    def upsert_inbox(self, name: str, inbox_type: str, config_json: str, user_id: Optional[int] = None) -> None:
+    def upsert_inbox(self, name: str, config_json: str, user_id: Optional[int] = None) -> None:
         with self._lock:
             self.conn.execute(
-                "INSERT INTO inbox (name, inbox_type, config_json, user_id, updated_at) "
-                "VALUES (%s, %s, %s::jsonb, %s, NOW()) "
+                "INSERT INTO inbox (name, config_json, user_id, updated_at) "
+                "VALUES (%s, %s::jsonb, %s, NOW()) "
                 "ON CONFLICT(name) DO UPDATE SET "
-                "    inbox_type  = excluded.inbox_type, "
                 "    config_json = excluded.config_json, "
                 "    user_id     = excluded.user_id, "
                 "    updated_at  = NOW()",
-                (name, inbox_type, config_json, user_id),
+                (name, config_json, user_id),
             )
 
     @_with_reconnect
     def get_inbox(self, name: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             return self.conn.execute(
-                "SELECT name, inbox_type, config_json::text AS config_json, user_id "
+                "SELECT name, config_json::text AS config_json, user_id "
                 "FROM inbox WHERE name=%s",
                 (name,),
             ).fetchone()
@@ -159,7 +158,7 @@ class Database:
     def list_inboxes_for_user(self, user_id: int) -> List[Dict[str, Any]]:
         with self._lock:
             return self.conn.execute(
-                "SELECT name, inbox_type, config_json::text AS config_json "
+                "SELECT name, config_json::text AS config_json "
                 "FROM inbox WHERE user_id=%s ORDER BY name",
                 (user_id,),
             ).fetchall()
@@ -168,7 +167,7 @@ class Database:
     def list_inboxes(self) -> List[Dict[str, Any]]:
         with self._lock:
             return self.conn.execute(
-                "SELECT name, inbox_type, config_json::text AS config_json, user_id "
+                "SELECT name, config_json::text AS config_json, user_id "
                 "FROM inbox ORDER BY name"
             ).fetchall()
 

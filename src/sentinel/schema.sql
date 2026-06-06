@@ -19,7 +19,6 @@ CREATE TABLE IF NOT EXISTS app_user (
 
 CREATE TABLE IF NOT EXISTS inbox (
     name TEXT PRIMARY KEY,
-    inbox_type TEXT NOT NULL,
     config_json JSONB NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

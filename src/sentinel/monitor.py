@@ -53,11 +53,11 @@ class Monitor:
         # Live registry of running stream tasks.  Hot-reload diffs this
         # against the DB snapshot every _STREAM_REFRESH_SECONDS.
         self._stream_tasks: Dict[str, asyncio.Task] = {}
-        # (inbox_type, config_json, user_id) per running stream — config drift
-        # detection without re-parsing JSON every refresh. Must match the
-        # signature built in _refresh_streams exactly, or every refresh would
-        # see a "change" and pointlessly restart the stream.
-        self._stream_config_sig: Dict[str, tuple[str, str, Optional[int]]] = {}
+        # (config_json, user_id) per running stream — config drift detection
+        # without re-parsing JSON every refresh. Must match the signature built
+        # in _refresh_streams exactly, or every refresh would see a "change" and
+        # pointlessly restart the stream.
+        self._stream_config_sig: Dict[str, tuple[str, Optional[int]]] = {}
 
     async def run(self) -> None:
         logger.info("Starting Sentinel supervisor")
@@ -110,7 +110,7 @@ class Monitor:
             # user_id is part of the signature so reassigning ownership (e.g. an
             # inbox that gains an owner) restarts the task and rebuilds the
             # pipeline — otherwise it keeps the stale owner and never notifies.
-            sig = (row["inbox_type"], row["config_json"], row.get("user_id"))
+            sig = (row["config_json"], row.get("user_id"))
             running = self._stream_tasks.get(name)
             if running is None or running.done():
                 self._start_stream(name, row)
@@ -133,17 +133,14 @@ class Monitor:
         try:
             stream = self._build_stream(row)
         except Exception as exc:
-            logger.error(
-                "Failed to build stream %r (type=%s): %s",
-                name, row["inbox_type"], exc,
-            )
+            logger.error("Failed to build stream %r: %s", name, exc)
             return
         task = asyncio.create_task(
             self._run_stream(stream, row.get("user_id")),
             name=f"stream:{name}",
         )
         self._stream_tasks[name] = task
-        self._stream_config_sig[name] = (row["inbox_type"], row["config_json"], row.get("user_id"))
+        self._stream_config_sig[name] = (row["config_json"], row.get("user_id"))
 
     async def _stop_stream(self, name: str, *, reason: str) -> None:
         task = self._stream_tasks.pop(name, None)
@@ -173,7 +170,7 @@ class Monitor:
         config = MailAccountConfig.model_validate_json(row["config_json"])
         config.auth.token_json = token_json
         self.db.upsert_inbox(
-            name, row["inbox_type"], config.model_dump_json(), user_id=row.get("user_id")
+            name, config.model_dump_json(), user_id=row.get("user_id")
         )
 
     async def _run_stream(self, stream: EmailStream, user_id: Optional[int]) -> None:

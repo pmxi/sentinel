@@ -185,7 +185,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
                 ),
             )
             db.upsert_inbox(
-                f"gmail:{info['email']}", "email", config.model_dump_json(),
+                f"gmail:{info['email']}", config.model_dump_json(),
                 user_id=uid,
             )
         else:
@@ -268,7 +268,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
                     ),
                     settings=AccountSettings(),
                 )
-                db.upsert_inbox(name, "email", config.model_dump_json(), user_id=g.user_id)
+                db.upsert_inbox(name, config.model_dump_json(), user_id=g.user_id)
                 return redirect(url_for("console"))
 
             return render_template(
@@ -331,20 +331,18 @@ def _inbox_view_rows(inboxes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     for row in inboxes:
         entry: Dict[str, Any] = {
             "name": row["name"],
-            "inbox_type": row["inbox_type"],
             "enabled": True,
             "detail": "",
             "error": None,
         }
         try:
-            if row["inbox_type"] == "email":
-                cfg = MailAccountConfig.model_validate_json(row["config_json"])
-                entry["enabled"] = cfg.enabled
-                entry["detail"] = (
-                    f"{cfg.auth.username}@{cfg.server}"
-                    if cfg.provider in (MailProvider.IMAP, "imap")
-                    else str(cfg.provider)
-                )
+            cfg = MailAccountConfig.model_validate_json(row["config_json"])
+            entry["enabled"] = cfg.enabled
+            entry["detail"] = (
+                f"{cfg.auth.username}@{cfg.server}"
+                if cfg.provider in (MailProvider.IMAP, "imap")
+                else str(cfg.provider)
+            )
         except Exception as exc:
             entry["error"] = str(exc)
             entry["enabled"] = False
