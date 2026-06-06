@@ -200,10 +200,6 @@ class IMAPClient:
         else:
             payload = msg.get_payload(decode=True)
             if payload and isinstance(payload, bytes):
-                try:
-                    body = payload.decode("utf-8", errors="ignore")
-                except (UnicodeDecodeError, AttributeError):
-                    # Fallback to string representation
-                    body = str(payload)
+                body = payload.decode("utf-8", errors="ignore")
 
         return body
