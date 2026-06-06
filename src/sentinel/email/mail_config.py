@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional
+from typing import Optional
 
 from pydantic import BaseModel, model_validator
 
@@ -39,7 +39,6 @@ class AuthConfig(BaseModel):
 class AccountSettings(BaseModel):
     process_only_unread: bool = True
     max_lookback_hours: int = 24
-    folders: List[str] = ["INBOX"]
 
 
 class MailAccountConfig(BaseModel):

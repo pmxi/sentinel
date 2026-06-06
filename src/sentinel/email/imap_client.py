@@ -39,14 +39,7 @@ class IMAPClient:
             logger.info(f"Connecting to {server}:{port}")
             self.connection = imaplib.IMAP4_SSL(server, port, timeout=_CONNECT_TIMEOUT_S)
             self._authenticate()
-
-            # Select the first configured folder (default INBOX)
-            folder = (
-                self.config.settings.folders[0]
-                if self.config.settings.folders
-                else "INBOX"
-            )
-            self.connection.select(folder)
+            self.connection.select("INBOX")
         return self.connection
 
     def _authenticate(self):
