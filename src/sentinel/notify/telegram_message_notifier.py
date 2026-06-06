@@ -22,6 +22,7 @@ import requests
 from sentinel.logging_config import get_logger
 from sentinel.classifier import ClassificationResult
 from sentinel.message import Message
+from sentinel.telegram_api import telegram_url
 
 logger = get_logger(__name__)
 
@@ -88,7 +89,7 @@ class TelegramMessageNotifier:
         on transient failures (network error, Telegram 5xx) so notify() can
         mark the result retryable."""
         resp = requests.post(
-            f"https://api.telegram.org/bot{self._bot_token}/sendMessage",
+            telegram_url(self._bot_token, "sendMessage"),
             json={
                 "chat_id": chat_id,
                 "text": text,

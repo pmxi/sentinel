@@ -21,11 +21,11 @@ import requests
 from sentinel.config import settings
 from sentinel.database import Database
 from sentinel.logging_config import get_logger
+from sentinel.telegram_api import telegram_url
 
 logger = get_logger(__name__)
 
 
-TELEGRAM_API = "https://api.telegram.org"
 POLL_TIMEOUT_S = 25  # long-poll; Telegram holds the connection up to this long
 PURGE_INTERVAL_S = 300  # clean up expired link tokens every ~5 min
 
@@ -86,12 +86,13 @@ class TelegramBotListener:
                 logger.debug(f"purged {purged} expired telegram link token(s)")
 
     def _get_updates(self) -> list[Dict[str, Any]]:
+        assert settings.TELEGRAM_BOT_TOKEN is not None  # guarded by run_forever
         params: Dict[str, Any] = {"timeout": POLL_TIMEOUT_S}
         if self._offset is not None:
             params["offset"] = self._offset
         try:
             r = requests.get(
-                f"{TELEGRAM_API}/bot{settings.TELEGRAM_BOT_TOKEN}/getUpdates",
+                telegram_url(settings.TELEGRAM_BOT_TOKEN, "getUpdates"),
                 params=params,
                 timeout=POLL_TIMEOUT_S + 10,
             )
@@ -153,9 +154,10 @@ class TelegramBotListener:
         )
 
     def _reply(self, chat_id: int, text: str) -> None:
+        assert settings.TELEGRAM_BOT_TOKEN is not None  # guarded by run_forever
         try:
             requests.post(
-                f"{TELEGRAM_API}/bot{settings.TELEGRAM_BOT_TOKEN}/sendMessage",
+                telegram_url(settings.TELEGRAM_BOT_TOKEN, "sendMessage"),
                 json={"chat_id": chat_id, "text": text, "parse_mode": "Markdown"},
                 timeout=10,
             )
