@@ -304,4 +304,4 @@ class Database:
 def _parse_datetime(value: Any) -> datetime:
     if isinstance(value, datetime):
         return value
-    return parse_iso_datetime(str(value), assume_local=True)
+    return parse_iso_datetime(str(value))
