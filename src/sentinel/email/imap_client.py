@@ -17,6 +17,18 @@ logger = get_logger(__name__)
 _CONNECT_TIMEOUT_S = 30
 
 
+def connect_imap(
+    server: str, port: int, username: str, password: str, *, timeout: int
+) -> imaplib.IMAP4_SSL:
+    """Open an IMAP4_SSL connection and log in; the caller selects a mailbox.
+
+    `timeout` is passed per-connection (never via socket.setdefaulttimeout,
+    which would leak a default onto every other socket in the process)."""
+    conn = imaplib.IMAP4_SSL(server, port, timeout=timeout)
+    conn.login(username, password)
+    return conn
+
+
 class IMAPClient:
     """Generic IMAP email client that supports multiple authentication methods"""
 
@@ -30,32 +42,30 @@ class IMAPClient:
             raise ValueError(f"IMAP server not specified for account {account_name}")
 
     def _get_connection(self) -> imaplib.IMAP4_SSL:
-        """Get or create IMAP connection"""
+        """Get or create the IMAP connection (logged in, INBOX selected)."""
         if self.connection is None:
             server = self.config.server
             port = self.config.port
             if server is None or port is None:
                 raise ValueError("IMAP server and port must be set")
+            username, password = self._password_credentials()
             logger.info(f"Connecting to {server}:{port}")
-            self.connection = imaplib.IMAP4_SSL(server, port, timeout=_CONNECT_TIMEOUT_S)
-            self._authenticate()
+            self.connection = connect_imap(
+                server, port, username, password, timeout=_CONNECT_TIMEOUT_S
+            )
             self.connection.select("INBOX")
         return self.connection
 
-    def _authenticate(self):
-        """Authenticate based on configured method"""
-        if self.connection is None:
-            raise RuntimeError("Cannot authenticate before connecting")
-        if self.config.auth.method == AuthMethod.PASSWORD:
-            if not self.config.auth.username or not self.config.auth.password:
-                raise ValueError("Username and password required for password auth")
-            logger.info(f"Authenticating with password for {self.config.auth.username}")
-            self.connection.login(self.config.auth.username, self.config.auth.password)
-        else:
+    def _password_credentials(self) -> tuple[str, str]:
+        """Validate and return (username, password) for password auth."""
+        if self.config.auth.method != AuthMethod.PASSWORD:
             # IMAP + OAuth2 is rejected when the config is loaded
             # (MailAccountConfig.validate_provider_fields), so reaching here
             # means a genuinely unsupported method.
             raise ValueError(f"Unsupported IMAP auth method: {self.config.auth.method}")
+        if not self.config.auth.username or not self.config.auth.password:
+            raise ValueError("Username and password required for password auth")
+        return self.config.auth.username, self.config.auth.password
 
     def close(self):
         """Close the IMAP connection"""

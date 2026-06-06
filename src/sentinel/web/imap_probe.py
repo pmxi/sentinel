@@ -13,6 +13,7 @@ import ssl
 from dataclasses import dataclass
 from typing import Optional
 
+from sentinel.email.imap_client import connect_imap
 from sentinel.logging_config import get_logger
 
 logger = get_logger(__name__)
@@ -31,11 +32,7 @@ def probe_imap(server: str, port: int, username: str, password: str) -> ProbeRes
     Otherwise ok=False and `error` holds a human-readable reason."""
     conn = None
     try:
-        # Bound this one connection, not the whole process: passing timeout=
-        # here (instead of socket.setdefaulttimeout) avoids leaking a default
-        # onto every other socket in the process — notably the worker's.
-        conn = imaplib.IMAP4_SSL(server, port, timeout=_CONNECT_TIMEOUT_S)
-        conn.login(username, password)
+        conn = connect_imap(server, port, username, password, timeout=_CONNECT_TIMEOUT_S)
         status, _ = conn.select("INBOX", readonly=True)
         if status != "OK":
             return ProbeResult(ok=False, error=f"Could not open INBOX (status {status})")
