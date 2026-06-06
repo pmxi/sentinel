@@ -56,9 +56,6 @@ CREATE TABLE IF NOT EXISTS message (
     --   observed_at  = when sentinel wrote this row
     received_at TIMESTAMPTZ NOT NULL,
     observed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    -- Source-specific extras (provider, recipient, ...). JSONB so we can still
-    -- spot-check via ->> when needed.
-    metadata JSONB,
     UNIQUE (source_id)
 );
 

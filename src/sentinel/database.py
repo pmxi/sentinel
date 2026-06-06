@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import functools
-import json
 import logging
 import threading
 import time
@@ -199,21 +198,18 @@ class Database:
         url: Optional[str],
         author: Optional[str],
         received_at: datetime,
-        metadata: Optional[Dict[str, Any]],
     ) -> Optional[int]:
         """Insert the message row; return its id, or None on a dedup conflict.
         Caller holds self._lock and owns any surrounding transaction."""
-        metadata_json = json.dumps(metadata) if metadata else None
         row = self.conn.execute(
             """
             INSERT INTO message (source_id, inbox_name, title, body,
-                                 url, author, received_at, metadata)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)
+                                 url, author, received_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (source_id) DO NOTHING
             RETURNING id
             """,
-            (source_id, inbox_name, title, body, url, author,
-             received_at, metadata_json),
+            (source_id, inbox_name, title, body, url, author, received_at),
         ).fetchone()
         return int(row["id"]) if row else None
 

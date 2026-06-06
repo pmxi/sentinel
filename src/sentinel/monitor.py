@@ -384,7 +384,6 @@ class MessagePipeline:
             url=message.url,
             author=message.author or None,
             received_at=message.received_at,
-            metadata=message.metadata or None,
         )
 
     def _record_classification(

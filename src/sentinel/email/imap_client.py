@@ -151,7 +151,6 @@ class IMAPClient:
 
             return build_message(
                 inbox_name=self.account_name,
-                provider=self.config.provider,
                 msg_id=uid,
                 subject=subject,
                 sender=sender,

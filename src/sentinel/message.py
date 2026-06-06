@@ -7,10 +7,10 @@ email internals.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from email.utils import parsedate_to_datetime
-from typing import Any, Dict, Optional
+from typing import Optional
 
 from sentinel.time_utils import ensure_utc, parse_iso_datetime, utc_now
 
@@ -25,7 +25,6 @@ class Message:
     - `body` is the full text the classifier reasons over
     - `author` is what fronts a notification ("who sent this")
     - `url` is the deep link if the source provides one
-    - `metadata` carries genuinely optional, source-specific extras
     """
 
     id: str
@@ -35,13 +34,11 @@ class Message:
     author: str
     url: str | None
     received_at: datetime
-    metadata: Dict[str, Any] = field(default_factory=dict)
 
 
 def build_message(
     *,
     inbox_name: str,
-    provider: str,
     msg_id: str,
     subject: str,
     sender: str,
@@ -71,10 +68,6 @@ def build_message(
         author=sender or "unknown sender",
         url=url,
         received_at=_parse_received_date(received_date),
-        metadata={
-            "provider": provider,
-            "recipient": recipient,
-        },
     )
 
 

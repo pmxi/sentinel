@@ -141,7 +141,6 @@ class GmailClient:
 
             message = build_message(
                 inbox_name=self.account_name,
-                provider=self.config.provider,
                 msg_id=raw["id"],
                 subject=header("Subject", "No Subject"),
                 sender=header("From", "Unknown Sender"),
