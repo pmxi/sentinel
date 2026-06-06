@@ -143,11 +143,11 @@ class IMAPClient:
 
             msg = email.message_from_bytes(raw_email)
 
-            # Extract headers
-            subject = self._decode_header(msg["Subject"] or "No Subject")
-            sender = self._decode_header(msg["From"] or "Unknown Sender")
-            recipient = self._decode_header(msg["To"] or "Unknown Recipient")
-            date = msg["Date"] or "Unknown Date"
+            # Extract headers (build_message owns the missing-value fallbacks)
+            subject = self._decode_header(msg["Subject"])
+            sender = self._decode_header(msg["From"])
+            recipient = self._decode_header(msg["To"])
+            date = msg["Date"] or ""
 
             # Extract body
             body = self._extract_body(msg)
@@ -165,7 +165,7 @@ class IMAPClient:
             logger.error(f"Error fetching email uid={uid}: {e}", exc_info=True)
             return None
 
-    def _decode_header(self, header: str) -> str:
+    def _decode_header(self, header: Optional[str]) -> str:
         """Decode email header"""
         if not header:
             return ""

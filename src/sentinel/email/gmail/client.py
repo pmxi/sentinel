@@ -138,10 +138,10 @@ class GmailClient:
             message = build_message(
                 inbox_name=self.account_name,
                 msg_id=raw["id"],
-                subject=header("Subject", "No Subject"),
-                sender=header("From", "Unknown Sender"),
-                recipient=header("To", "Unknown Recipient"),
-                received_date=header("Date", "Unknown Date"),
+                subject=header("Subject", ""),
+                sender=header("From", ""),
+                recipient=header("To", ""),
+                received_date=header("Date", ""),
                 body=_extract_body(raw["payload"]),
                 url=url,
             )

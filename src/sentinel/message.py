@@ -52,7 +52,13 @@ def build_message(
     The single email->Message boundary: renders the body the classifier reads,
     parses the date, and namespaces the id by inbox so message ids from
     different inboxes can't collide in the globally-unique dedup ledger.
+
+    This is the one place placeholder fallbacks for missing headers live, so the
+    clients can pass raw header values (or "") without each repeating them.
     """
+    subject = subject or "(no subject)"
+    sender = sender or "unknown sender"
+    recipient = recipient or "unknown recipient"
     rendered_body = (
         f"From: {sender}\n"
         f"To: {recipient}\n"
@@ -63,9 +69,9 @@ def build_message(
     return Message(
         id=f"{inbox_name}:{msg_id}",
         inbox_name=inbox_name,
-        title=subject or "(no subject)",
+        title=subject,
         body=rendered_body,
-        author=sender or "unknown sender",
+        author=sender,
         url=url,
         received_at=_parse_received_date(received_date),
     )
