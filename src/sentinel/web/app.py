@@ -340,7 +340,7 @@ def _inbox_view_rows(inboxes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
             entry["enabled"] = cfg.enabled
             entry["detail"] = (
                 f"{cfg.auth.username}@{cfg.server}"
-                if cfg.provider in (MailProvider.IMAP, "imap")
+                if cfg.provider == MailProvider.IMAP
                 else str(cfg.provider)
             )
         except Exception as exc:
