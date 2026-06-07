@@ -2,7 +2,7 @@
 {% block title %}Connect an inbox — Sentinel{% endblock %}
 {% block content %}
 <section class="new-account">
-  <h2>Connect an inbox</h2>
+  <h1>Connect an inbox</h1>
   <p class="hint">Sentinel connects to your mailbox over IMAP with an <em>app password</em> (not your regular login password). Most providers require you to enable 2-factor auth first, then generate a dedicated password for Sentinel from your account security settings.</p>
 
   {% if errors %}
@@ -60,8 +60,10 @@
       </p>
     </details>
 
-    <button type="submit">Test &amp; save</button>
-    <a href="{{ url_for('console') }}">Cancel</a>
+    <div class="actions-row">
+      <button type="submit">Test &amp; save</button>
+      <a href="{{ url_for('console') }}">Cancel</a>
+    </div>
   </form>
 </section>
 

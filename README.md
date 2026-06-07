@@ -64,7 +64,10 @@ brew services run postgresql@18   # runs for this session, no boot-time daemon
 createdb sentinel                 # one-time; psql tools live in /opt/homebrew/opt/postgresql@18/bin
 ```
 
-(`brew services stop postgresql@18` when you're done.) The schema is applied
+Use `brew services run` only — **not** `brew services start`. `run` keeps
+Postgres up for this session; `start` registers a launchd agent that auto-starts
+it on every login/boot, which you don't want for a dev dependency. Stop it with
+`brew services stop postgresql@18` when you're done. The schema is applied
 automatically on first connect.
 
 ### 3. Run the dev server
@@ -96,7 +99,8 @@ the worker is what actually classifies mail and sends the push alerts.
 > the `localhost` callback, and browser session cookies are host-specific —
 > mixing the two breaks sign-in with an "OAuth state mismatch" error.
 
-Open the link, **sign in with Google**, then from the console you can:
+The root URL is a public homepage; **sign in with Google** and a one-time
+first-run walkthrough drops you on your dashboard (`/dashboard`), where you can:
 - Connect inboxes — **Gmail via OAuth** (`gmail.readonly`), or any provider
   via an [app password](#getting-an-app-password)
 - Edit your classification criteria (plain-English notes that drive the LLM)

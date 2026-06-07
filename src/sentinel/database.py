@@ -102,7 +102,7 @@ class Database:
     def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
         with self._lock:
             return self.conn.execute(
-                "SELECT id, google_sub, email, name, criteria "
+                "SELECT id, google_sub, email, name, criteria, onboarded_at "
                 "FROM app_user WHERE id=%s",
                 (user_id,),
             ).fetchone()
@@ -112,6 +112,17 @@ class Database:
         with self._lock:
             self.conn.execute(
                 "UPDATE app_user SET criteria=%s WHERE id=%s", (criteria or None, user_id)
+            )
+
+    @_with_reconnect
+    def mark_user_onboarded(self, user_id: int) -> None:
+        """Stamp first-run onboarding as done. Idempotent — only sets the
+        timestamp the first time so we never move it on later visits."""
+        with self._lock:
+            self.conn.execute(
+                "UPDATE app_user SET onboarded_at=NOW() "
+                "WHERE id=%s AND onboarded_at IS NULL",
+                (user_id,),
             )
 
     # ----- push_subscription --------------------------------------------

@@ -44,6 +44,7 @@ _STATIC_DIR = Path(__file__).parent / "static"
 # before / outside an authenticated page context (the SW controls the whole
 # origin and must load at the root scope).
 _PUBLIC_ENDPOINTS = {
+    "home",
     "login",
     "auth_google",
     "oauth_callback",
@@ -111,12 +112,19 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         # Presence isn't enough — the row must still exist. A stale cookie (e.g.
         # the user's row was deleted) would otherwise pass and then crash the
         # first FK insert. Drop the orphaned session and make them re-auth.
-        if get_db().get_user(uid) is None:
+        user = get_db().get_user(uid)
+        if user is None:
             session.clear()
             return redirect(url_for("login"))
-        # Validated for the rest of the request — handlers read g.user_id
-        # instead of indexing the session directly.
+        # Validated for the rest of the request — handlers read g.user_id /
+        # g.user instead of indexing the session directly.
         g.user_id = int(uid)
+        g.user = user
+        # First-run onboarding: a never-onboarded user hitting the dashboard is
+        # diverted to the welcome walkthrough once. Gating only `console` keeps
+        # the JSON push_* fetch routes and /welcome itself out of the redirect.
+        if request.endpoint == "console" and user.get("onboarded_at") is None:
+            return redirect(url_for("welcome"))
         return None
 
     def _csrf_token() -> str:
@@ -226,9 +234,35 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         session.clear()
         return redirect(url_for("login"))
 
-    # ---- console --------------------------------------------------------
+    # ---- public homepage ------------------------------------------------
 
-    @app.route("/", methods=["GET", "POST"])
+    @app.route("/")
+    def home():
+        # Signed-in visitors skip the marketing page and go to their dashboard.
+        if session.get("user_id"):
+            return redirect(url_for("console"))
+        return render_template("home.html", google_oauth=settings.google_oauth_configured())
+
+    # ---- onboarding -----------------------------------------------------
+
+    @app.route("/welcome")
+    def welcome():
+        # Shown once after first sign-in (see require_login). Reuses the push
+        # enable/disable block so notifications can be turned on right here.
+        return render_template(
+            "welcome.html",
+            push_enabled=bool(get_db().get_push_subscriptions(g.user_id)),
+            vapid_public_key=settings.VAPID_PUBLIC_KEY,
+        )
+
+    @app.route("/welcome/done", methods=["POST"])
+    def mark_onboarded():
+        get_db().mark_user_onboarded(g.user_id)
+        return redirect(url_for("console"))
+
+    # ---- dashboard ------------------------------------------------------
+
+    @app.route("/dashboard", methods=["GET", "POST"])
     def console():
         uid = g.user_id
         db = get_db()
@@ -371,24 +405,33 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
 
 
 def _inbox_view_rows(inboxes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Shape stored inbox rows into what the console template renders
-    (enabled flag + a human-readable detail line), tolerating bad config."""
+    """Shape stored inbox rows into what the console template renders: a clean
+    email, a provider label + key (the key drives the per-provider accent
+    colour), and a short detail line. Tolerates bad config."""
     rows: List[Dict[str, Any]] = []
     for row in inboxes:
+        name = row["name"]
         entry: Dict[str, Any] = {
-            "name": row["name"],
+            "name": name,
+            # `name` is stored as "<provider>:<email>"; fall back to it whole.
+            "email": name.split(":", 1)[-1],
             "enabled": True,
+            "provider_key": "imap",
+            "provider_label": "IMAP",
             "detail": "",
             "error": None,
         }
         try:
             cfg = MailAccountConfig.model_validate_json(row["config_json"])
             entry["enabled"] = cfg.enabled
-            entry["detail"] = (
-                f"{cfg.auth.username}@{cfg.server}"
-                if cfg.provider == MailProvider.IMAP
-                else str(cfg.provider)
-            )
+            if cfg.provider == MailProvider.IMAP:
+                entry["provider_key"] = "imap"
+                entry["provider_label"] = "IMAP"
+                entry["email"] = cfg.auth.username or entry["email"]
+                entry["detail"] = cfg.server or ""
+            else:
+                entry["provider_key"] = "gmail"
+                entry["provider_label"] = "Gmail"
         except Exception as exc:
             entry["error"] = str(exc)
             entry["enabled"] = False

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Welcome — Sentinel{% endblock %}
+{% block content %}
+
+<section class="welcome">
+  <h1>You’re in. One quick step.</h1>
+  <p class="lead">Sentinel reaches you through push notifications. On iPhone and iPad
+  those only work once Sentinel is added to your home screen — it takes ten seconds.</p>
+
+  <figure class="gif-frame">
+    <div class="gif-placeholder">Demo coming soon</div>
+    <figcaption>Add Sentinel to your home screen</figcaption>
+  </figure>
+
+  <ol class="steps compact">
+    <li><span class="step-num">01</span><div><p>In Safari, tap the <strong>Share</strong> button.</p></div></li>
+    <li><span class="step-num">02</span><div><p>Choose <strong>Add to Home Screen</strong>.</p></div></li>
+    <li><span class="step-num">03</span><div><p>Open Sentinel from the new icon, then enable notifications below.</p></div></li>
+  </ol>
+</section>
+
+<section id="push-setup" data-vapid-key="{{ vapid_public_key }}" data-csrf="{{ csrf_token }}">
+  <h2>Enable notifications</h2>
+  <p id="push-status" role="status">{% if push_enabled %}<span class="status-sent">● Notifications on</span>{% endif %}</p>
+  <p class="hint">Turn these on for every device you want pinged. (On desktop you can do it right here.)</p>
+  <div class="actions-row">
+    <button id="push-enable" type="button"{% if push_enabled %} style="display:none"{% endif %}>Enable notifications</button>
+    <button id="push-disable" type="button" class="secondary"{% if not push_enabled %} style="display:none"{% endif %}>Turn off on this device</button>
+  </div>
+  <p id="push-ios-hint" class="hint" style="display:none">
+    On iPhone/iPad notifications only work from the installed app — follow the steps above first.
+  </p>
+  <script src="{{ url_for('static', filename='push.js') }}" defer></script>
+</section>
+
+<section class="welcome-done">
+  <form method="post" action="{{ url_for('mark_onboarded') }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="primary">Continue to dashboard</button>
+  </form>
+</section>
+
+{% endblock %}

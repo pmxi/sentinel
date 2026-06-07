@@ -12,6 +12,11 @@ CREATE TABLE IF NOT EXISTS app_user (
     criteria TEXT
 );
 
+-- First-run onboarding (the "add to home screen" walkthrough) is shown once,
+-- right after first sign-in; this stamps when the user finished it. NULL = not
+-- yet onboarded.
+ALTER TABLE app_user ADD COLUMN IF NOT EXISTS onboarded_at TIMESTAMPTZ;
+
 -- Web Push subscriptions. A user installs the PWA on each device and enables
 -- notifications, producing one subscription per device. endpoint is the push
 -- service URL (unique identity); p256dh/auth are the client's encryption keys.

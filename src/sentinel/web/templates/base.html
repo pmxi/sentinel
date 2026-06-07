@@ -12,15 +12,17 @@
 </head>
 <body>
   <header>
-    <h1><a href="{{ url_for('console') }}">Sentinel</a></h1>
+    <a class="wordmark" href="{{ url_for('console') if current_email else url_for('home') }}">Sentinel</a>
     {% if current_email %}
       <div class="user">
         <span class="user-email">{{ current_email }}</span>
-        <form method="post" action="{{ url_for('logout') }}" style="display:inline">
+        <form method="post" action="{{ url_for('logout') }}">
           <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-          <button type="submit">Sign out</button>
+          <button type="submit" class="ghost small">Sign out</button>
         </form>
       </div>
+    {% elif request.endpoint != 'login' %}
+      <a class="nav-link" href="{{ url_for('login') }}">Sign in</a>
     {% endif %}
   </header>
   <main>

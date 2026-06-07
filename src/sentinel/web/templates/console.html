@@ -1,46 +1,53 @@
 {% extends "base.html" %}
-{% block title %}Sentinel{% endblock %}
+{% block title %}Dashboard — Sentinel{% endblock %}
 {% block content %}
 
 <section>
-  <h2>Inbox</h2>
+  <h2>Inboxes</h2>
   {% if inboxes %}
     <ul class="inbox-list">
       {% for ibx in inboxes %}
-        <li>
-          <strong>{{ ibx.name }}</strong> — {{ ibx.detail or "email" }}
-          {% if ibx.error %}<span class="error">({{ ibx.error }})</span>{% endif %}
-          <form method="post" action="{{ url_for('delete_inbox', name=ibx.name) }}" style="display:inline">
+        <li class="inbox-row {{ ibx.provider_key }}">
+          <div class="inbox-main">
+            <div class="inbox-email">{{ ibx.email }}</div>
+            <div class="inbox-meta">
+              <span class="chip {{ ibx.provider_key }}">{{ ibx.provider_label }}</span>
+              {% if ibx.error %}
+                <span class="error">{{ ibx.error }}</span>
+              {% elif ibx.detail %}
+                <span>{{ ibx.detail }}</span>
+              {% endif %}
+            </div>
+          </div>
+          <form method="post" action="{{ url_for('delete_inbox', name=ibx.name) }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit">Remove</button>
+            <button type="submit" class="ghost small">Remove</button>
           </form>
         </li>
       {% endfor %}
     </ul>
   {% else %}
-    <p>No inbox connected yet.</p>
+    <p class="hint">No inbox connected yet.</p>
   {% endif %}
-  <p>
-    {% if google_oauth %}<a class="button" href="{{ url_for('gmail_connect') }}">Connect Gmail</a>{% endif %}
-    <a class="button" href="{{ url_for('connect_inbox') }}">Connect via IMAP (app password)</a>
-  </p>
+  <div class="actions-row">
+    {% if google_oauth %}<a class="button gmail" href="{{ url_for('gmail_connect') }}">Connect Gmail</a>{% endif %}
+    <a class="button secondary" href="{{ url_for('connect_inbox') }}">Connect via IMAP</a>
+  </div>
 </section>
 
 <section id="push-setup" data-vapid-key="{{ vapid_public_key }}" data-csrf="{{ csrf_token }}">
   <h2>Alerts</h2>
-  <p class="hint">Required: without notifications enabled, Sentinel has no way to reach you, so nothing happens. Enable them on every device you want pinged.</p>
-
-  <p id="push-status" role="status">{% if push_enabled %}Notifications on ✓{% endif %}</p>
-
-  <button id="push-enable" type="button"{% if push_enabled %} style="display:none"{% endif %}>Enable notifications</button>
-  <button id="push-disable" type="button"{% if not push_enabled %} style="display:none"{% endif %}>Turn off on this device</button>
-
+  <p id="push-status" role="status">{% if push_enabled %}<span class="status-sent">● Notifications on</span>{% endif %}</p>
+  <p class="hint">Without notifications enabled, Sentinel has no way to reach you. Enable them on every device you want pinged.</p>
+  <div class="actions-row">
+    <button id="push-enable" type="button"{% if push_enabled %} style="display:none"{% endif %}>Enable notifications</button>
+    <button id="push-disable" type="button" class="secondary"{% if not push_enabled %} style="display:none"{% endif %}>Turn off on this device</button>
+  </div>
   <p id="push-ios-hint" class="hint" style="display:none">
     On iPhone/iPad, tap the <strong>Share</strong> button in Safari, choose
     <strong>Add to Home Screen</strong>, then open Sentinel from the new icon and
     enable notifications there. (iOS only delivers notifications to the installed app.)
   </p>
-
   <script src="{{ url_for('static', filename='push.js') }}" defer></script>
 </section>
 
@@ -75,8 +82,8 @@
   <p class="hint">Plain-English criteria for which emails are important. Sent to the classifier as-is — edit it however you like.</p>
   <form method="post">
     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-    <textarea name="criteria" rows="14" style="width:100%" spellcheck="false">{{ criteria }}</textarea>
-    <p><button type="submit">Save</button></p>
+    <textarea name="criteria" rows="14" spellcheck="false">{{ criteria }}</textarea>
+    <p class="form-actions"><button type="submit">Save</button></p>
   </form>
 </section>
 

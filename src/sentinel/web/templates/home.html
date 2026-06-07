@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Sentinel — only the email that matters{% endblock %}
+{% block content %}
+
+<section class="hero">
+  <h1 class="hero-title">Stop watching<br>your inbox.</h1>
+  <p class="hero-sub">Sentinel reads your incoming mail and pings you only when
+  something <em>actually</em> matters — so you can close the tab and get on with your day.</p>
+  {% if google_oauth %}
+    <a class="button primary" href="{{ url_for('auth_google') }}">Get started</a>
+  {% else %}
+    <a class="button primary" href="{{ url_for('login') }}">Get started</a>
+  {% endif %}
+</section>
+
+<section class="band">
+  <h2>How it works</h2>
+  <ol class="steps">
+    <li>
+      <span class="step-num">01</span>
+      <div>
+        <h3>Connect your mail</h3>
+        <p>Sign in and link Gmail in one click, or any inbox over IMAP. Sentinel
+        reads — it never sends, replies, or deletes.</p>
+      </div>
+    </li>
+    <li>
+      <span class="step-num">02</span>
+      <div>
+        <h3>Describe what matters</h3>
+        <p>Plain English: “my kids’ school,” “anything from my landlord,”
+        “replies to job applications.” No rules, no filters to maintain.</p>
+      </div>
+    </li>
+    <li>
+      <span class="step-num">03</span>
+      <div>
+        <h3>Get a push when it lands</h3>
+        <p>An important email arrives, you get a notification on your phone with a
+        one-line summary. Everything else stays quiet.</p>
+      </div>
+    </li>
+  </ol>
+</section>
+
+<section class="closer">
+  <p>Most of us drown in email. The handful of messages that matter are buried under
+  newsletters, receipts, and noise. Sentinel watches for them so you don’t have to.</p>
+  {% if google_oauth %}
+    <a class="button primary" href="{{ url_for('auth_google') }}">Get started</a>
+  {% else %}
+    <a class="button primary" href="{{ url_for('login') }}">Get started</a>
+  {% endif %}
+</section>
+
+{% endblock %}
