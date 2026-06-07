@@ -11,7 +11,7 @@ newsletters, spam, and low-value updates. Responding fast to the important
 things without drowning in the rest is the problem Sentinel solves.
 
 Sentinel watches your email mailboxes, runs every new message through an
-LLM-backed classifier, and pings you over Telegram when something is
+LLM-backed classifier, and sends you a Web Push notification when something is
 actually important. Classification criteria are plain-English notes you
 control.
 
@@ -43,9 +43,16 @@ template and fill it in:
 cp .env.example .env
 ```
 
-At minimum set `DATABASE_URL`, `OPENAI_API_KEY`, and (for sign-in /
-Connect-Gmail) the Google OAuth creds. See `.env.example` for the full list
-and `development.md` for the Google Cloud setup.
+At minimum set `DATABASE_URL`, `OPENAI_API_KEY`, the VAPID keys (for Web Push
+alerts), and (for sign-in / Connect-Gmail) the Google OAuth creds. Generate the
+VAPID keypair once and paste the output into `.env`:
+
+```bash
+uv run python -m sentinel.scripts.gen_vapid_keys
+```
+
+See `.env.example` for the full list and `development.md` for the Google Cloud
+setup.
 
 ### 2. Start Postgres
 
@@ -83,7 +90,7 @@ uv run sentinel-worker   # polls inboxes, classifies, sends alerts
 ```
 
 The console is usable on its own for connecting inboxes and editing criteria;
-the worker is what actually classifies mail and sends Telegram alerts.
+the worker is what actually classifies mail and sends the push alerts.
 
 > Open it as `localhost`, **not** `127.0.0.1`. Google OAuth redirects back to
 > the `localhost` callback, and browser session cookies are host-specific —
@@ -93,9 +100,14 @@ Open the link, **sign in with Google**, then from the console you can:
 - Connect inboxes — **Gmail via OAuth** (`gmail.readonly`), or any provider
   via an [app password](#getting-an-app-password)
 - Edit your classification criteria (plain-English notes that drive the LLM)
-- Link your Telegram chat in one click
+- **Enable notifications** to receive Web Push alerts on that device
 
-The console never displays your email — alerts go out-of-band over Telegram.
+> **On iPhone/iPad:** Web Push only works from an installed app. In Safari, tap
+> **Share → Add to Home Screen**, open Sentinel from the new icon, then tap
+> **Enable notifications**. (A Safari tab alone won't receive alerts.) This also
+> requires the console to be served over HTTPS in production.
+
+The console never displays your email — alerts go out-of-band via Web Push.
 
 > Run exactly one `sentinel-worker`. Two supervisors against the same database
 > means duplicate notifications.

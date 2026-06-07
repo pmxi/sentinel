@@ -1,6 +1,6 @@
 """Operator/runtime settings, loaded from the environment (.env).
 
-Operator config (DB url, OpenAI key, Telegram bot, ...) is set via environment
+Operator config (DB url, OpenAI key, VAPID keys, ...) is set via environment
 variables — there is no interactive setup step. Per-user preferences live in
 the database (app_user.criteria, accessed via Database).
 """
@@ -22,8 +22,14 @@ class Settings:
     # Reasoning effort for gpt-5.x reasoning models: low | medium | high (or empty to disable).
     LLM_REASONING_EFFORT: str | None = os.getenv("LLM_REASONING_EFFORT", "medium")
 
-    TELEGRAM_BOT_TOKEN: str | None = os.getenv("TELEGRAM_BOT_TOKEN")
-    TELEGRAM_BOT_USERNAME: str | None = os.getenv("TELEGRAM_BOT_USERNAME")
+    # Web Push (VAPID). Generate a keypair with
+    #   python -m sentinel.scripts.gen_vapid_keys
+    # PUBLIC_KEY is the browser-side applicationServerKey; PRIVATE_KEY is
+    # base64(PEM); SUBJECT is a mailto: or https: contact the push service can
+    # reach if your sends misbehave.
+    VAPID_PUBLIC_KEY: str | None = os.getenv("VAPID_PUBLIC_KEY")
+    VAPID_PRIVATE_KEY: str | None = os.getenv("VAPID_PRIVATE_KEY")
+    VAPID_SUBJECT: str = os.getenv("VAPID_SUBJECT", "mailto:admin@example.com")
 
     # Google OAuth client (sign-in via OIDC + Connect-Gmail via gmail.readonly).
     GOOGLE_CLIENT_ID: str | None = os.getenv("GOOGLE_CLIENT_ID")
@@ -40,6 +46,10 @@ class Settings:
     @classmethod
     def google_oauth_configured(cls) -> bool:
         return bool(cls.GOOGLE_CLIENT_ID and cls.GOOGLE_CLIENT_SECRET)
+
+    @classmethod
+    def vapid_configured(cls) -> bool:
+        return bool(cls.VAPID_PUBLIC_KEY and cls.VAPID_PRIVATE_KEY)
 
     @classmethod
     def require_database_url(cls) -> str:
@@ -64,7 +74,20 @@ class Settings:
             raise ValueError(
                 "LLM_API_KEY (or OPENAI_API_KEY) is required. Set it in .env."
             )
+        cls.require_vapid()
         return True
+
+    @classmethod
+    def require_vapid(cls) -> None:
+        """Web Push is the only alert channel, so both halves of the VAPID
+        keypair are mandatory. Generate them with
+        `python -m sentinel.scripts.gen_vapid_keys`."""
+        if not cls.vapid_configured():
+            raise ValueError(
+                "VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY are required for Web Push "
+                "alerts. Generate a keypair with "
+                "`python -m sentinel.scripts.gen_vapid_keys` and set them in .env."
+            )
 
 
 settings = Settings()

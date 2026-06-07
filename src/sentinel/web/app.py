@@ -1,26 +1,36 @@
 """Sentinel web console (multi-tenant).
 
 Sign in with Google, connect inboxes (Gmail via OAuth, or any provider via
-IMAP app-password), edit your classification criteria, and link Telegram.
-Everything is scoped to the signed-in user. The console never displays email
-content — alerts go out-of-band (Telegram); the inbox lives in your mail client.
+IMAP app-password), edit your classification criteria, and enable Web Push
+notifications. Everything is scoped to the signed-in user. The console never
+displays email content — alerts go out-of-band (Web Push to the installed PWA);
+the inbox lives in your mail client.
 """
 
 from __future__ import annotations
 
 import functools
 import secrets
-from datetime import timedelta
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import segno
-from flask import Flask, abort, g, redirect, render_template, request, session, url_for
+from flask import (
+    Flask,
+    abort,
+    g,
+    jsonify,
+    redirect,
+    render_template,
+    request,
+    send_from_directory,
+    session,
+    url_for,
+)
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from sentinel.logging_config import get_logger
 from sentinel.classifier.openai_classifier import _default_criteria
 from sentinel.email.mail_config import AccountSettings, AuthConfig, AuthMethod, MailAccountConfig, MailProvider
-from sentinel.time_utils import utc_now
 from sentinel.config import settings
 from sentinel.database import Database
 from sentinel.web.auth import GMAIL_SCOPES, SIGNIN_SCOPES, build_flow, client_config_json, userinfo_from_credentials
@@ -28,7 +38,19 @@ from sentinel.web.imap_probe import probe_imap
 
 logger = get_logger(__name__)
 
-_PUBLIC_ENDPOINTS = {"login", "auth_google", "oauth_callback", "static"}
+_STATIC_DIR = Path(__file__).parent / "static"
+
+# service_worker + web_manifest are public so the browser can fetch them
+# before / outside an authenticated page context (the SW controls the whole
+# origin and must load at the root scope).
+_PUBLIC_ENDPOINTS = {
+    "login",
+    "auth_google",
+    "oauth_callback",
+    "static",
+    "service_worker",
+    "web_manifest",
+}
 
 
 def _require_google_oauth(view):
@@ -51,6 +73,9 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
     app.config["DATABASE_URL"] = database_url or settings.require_database_url()
     app.secret_key = settings.require_session_secret()
+    # Web Push is the only alert channel — fail fast if the keypair is missing
+    # rather than letting users connect inboxes that can never reach them.
+    settings.require_vapid()
     # Harden the session cookie when served over HTTPS. Gated on the redirect
     # scheme so the http:// dev setup (where Secure cookies wouldn't be sent)
     # still works without configuration.
@@ -110,9 +135,11 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
     def csrf_protect():
         # All state-changing routes are POST and behind login; the OAuth
         # callback is a GET guarded by its own state check. Reject any POST
-        # whose form token doesn't match the session's.
+        # whose token doesn't match the session's. Form posts send it as a
+        # hidden field; JSON fetch() calls (the push endpoints) send it as the
+        # X-CSRF-Token header.
         if request.method == "POST":
-            sent = request.form.get("csrf_token", "")
+            sent = request.form.get("csrf_token") or request.headers.get("X-CSRF-Token", "")
             expected = session.get("_csrf_token", "")
             if not expected or not secrets.compare_digest(sent, expected):
                 abort(400, "Invalid or missing CSRF token — reload the page and try again.")
@@ -214,8 +241,8 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
             "console.html",
             inboxes=inboxes,
             criteria=(user.get("criteria") or _default_criteria()),
-            telegram_linked=bool(user.get("telegram_chat_id")),
-            telegram_bot_username=settings.TELEGRAM_BOT_USERNAME,
+            push_enabled=bool(db.get_push_subscriptions(uid)),
+            vapid_public_key=settings.VAPID_PUBLIC_KEY,
             google_oauth=settings.google_oauth_configured(),
             saved=request.args.get("saved") == "1",
         )
@@ -300,26 +327,44 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
             db.delete_inbox(name)
         return redirect(url_for("console"))
 
-    @app.route("/telegram/link", methods=["POST"])
-    def telegram_link():
-        if not settings.TELEGRAM_BOT_USERNAME:
-            abort(500, "TELEGRAM_BOT_USERNAME not configured")
-        token = secrets.token_urlsafe(24)
-        get_db().create_telegram_link_token(token, utc_now() + timedelta(minutes=10), g.user_id)
-        deep_link = f"https://t.me/{settings.TELEGRAM_BOT_USERNAME}?start={token}"
-        qr_data_uri = segno.make(deep_link, error="m").svg_data_uri(scale=5, border=2)
-        return render_template(
-            "telegram_link.html",
-            deep_link=deep_link,
-            qr_data_uri=qr_data_uri,
-            bot_username=settings.TELEGRAM_BOT_USERNAME,
-            token=token,
-        )
+    # ---- web push -------------------------------------------------------
 
-    @app.route("/telegram/unlink", methods=["POST"])
-    def telegram_unlink():
-        get_db().set_user_telegram_chat_id(g.user_id, None)
-        return redirect(url_for("console"))
+    @app.route("/push/subscribe", methods=["POST"])
+    def push_subscribe():
+        """Register the calling browser's push subscription for this user.
+        Body is the JSON PushSubscription object the service worker produced."""
+        sub = request.get_json(silent=True) or {}
+        endpoint = sub.get("endpoint")
+        keys = sub.get("keys") or {}
+        p256dh, auth = keys.get("p256dh"), keys.get("auth")
+        if not (endpoint and p256dh and auth):
+            return jsonify(error="malformed subscription"), 400
+        get_db().add_push_subscription(g.user_id, endpoint, p256dh, auth)
+        return jsonify(ok=True), 201
+
+    @app.route("/push/unsubscribe", methods=["POST"])
+    def push_unsubscribe():
+        sub = request.get_json(silent=True) or {}
+        endpoint = sub.get("endpoint")
+        if endpoint:
+            get_db().delete_push_subscription(endpoint)
+        return jsonify(ok=True)
+
+    @app.route("/sw.js")
+    def service_worker():
+        # Served from the origin root so the service worker can claim the whole
+        # scope; Service-Worker-Allowed lets a root-scope SW live under /static.
+        resp = send_from_directory(_STATIC_DIR, "sw.js")
+        resp.headers["Content-Type"] = "application/javascript"
+        resp.headers["Service-Worker-Allowed"] = "/"
+        resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+    @app.route("/manifest.webmanifest")
+    def web_manifest():
+        resp = send_from_directory(_STATIC_DIR, "manifest.webmanifest")
+        resp.headers["Content-Type"] = "application/manifest+json"
+        return resp
 
     return app
 

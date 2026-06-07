@@ -14,8 +14,6 @@ from typing import Any, Callable, Dict, List, Optional, Type
 import psycopg
 from psycopg.rows import dict_row
 
-from sentinel.time_utils import parse_iso_datetime, utc_now
-
 _RECONNECT_BACKOFF_BASE = 0.5
 _MAX_RECONNECT_ATTEMPTS = 3
 _SCHEMA_SQL_PATH = Path(__file__).parent / "schema.sql"
@@ -93,7 +91,7 @@ class Database:
                 INSERT INTO app_user (google_sub, email, name)
                 VALUES (%s, %s, %s)
                 ON CONFLICT (google_sub) DO UPDATE SET email = excluded.email, name = excluded.name
-                RETURNING id, google_sub, email, name, criteria, telegram_chat_id
+                RETURNING id, google_sub, email, name, criteria
                 """,
                 (google_sub, email, name),
             ).fetchone()
@@ -104,7 +102,7 @@ class Database:
     def get_user(self, user_id: int) -> Optional[Dict[str, Any]]:
         with self._lock:
             return self.conn.execute(
-                "SELECT id, google_sub, email, name, criteria, telegram_chat_id "
+                "SELECT id, google_sub, email, name, criteria "
                 "FROM app_user WHERE id=%s",
                 (user_id,),
             ).fetchone()
@@ -116,11 +114,44 @@ class Database:
                 "UPDATE app_user SET criteria=%s WHERE id=%s", (criteria or None, user_id)
             )
 
+    # ----- push_subscription --------------------------------------------
+
     @_with_reconnect
-    def set_user_telegram_chat_id(self, user_id: int, chat_id: Optional[str]) -> None:
+    def add_push_subscription(
+        self, user_id: int, endpoint: str, p256dh: str, auth: str
+    ) -> None:
+        """Register (or refresh) a device's Web Push subscription. Upsert on
+        endpoint: a re-subscribe from the same device updates its keys and
+        rebinds it to the current user rather than duplicating."""
         with self._lock:
             self.conn.execute(
-                "UPDATE app_user SET telegram_chat_id=%s WHERE id=%s", (chat_id, user_id)
+                """
+                INSERT INTO push_subscription (user_id, endpoint, p256dh, auth)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (endpoint) DO UPDATE SET
+                    user_id = excluded.user_id,
+                    p256dh  = excluded.p256dh,
+                    auth    = excluded.auth
+                """,
+                (user_id, endpoint, p256dh, auth),
+            )
+
+    @_with_reconnect
+    def get_push_subscriptions(self, user_id: int) -> List[Dict[str, Any]]:
+        with self._lock:
+            return self.conn.execute(
+                "SELECT endpoint, p256dh, auth FROM push_subscription "
+                "WHERE user_id=%s ORDER BY created_at",
+                (user_id,),
+            ).fetchall()
+
+    @_with_reconnect
+    def delete_push_subscription(self, endpoint: str) -> None:
+        """Drop a subscription — used both on user unsubscribe and when the push
+        service reports the endpoint is gone (404/410)."""
+        with self._lock:
+            self.conn.execute(
+                "DELETE FROM push_subscription WHERE endpoint=%s", (endpoint,)
             )
 
     # ----- inbox --------------------------------------------------------
@@ -251,38 +282,6 @@ class Database:
             )
         return True
 
-    # ----- telegram_link_token ------------------------------------------
-
-    @_with_reconnect
-    def create_telegram_link_token(self, token: str, expires_at: datetime, user_id: int) -> None:
-        with self._lock:
-            self.conn.execute(
-                "INSERT INTO telegram_link_token (token, expires_at, user_id) VALUES (%s, %s, %s)",
-                (token, expires_at, user_id),
-            )
-
-    @_with_reconnect
-    def consume_telegram_link_token(self, token: str) -> Optional[int]:
-        """Validate + delete a link token; return the user_id that created it, or None."""
-        with self._lock:
-            row = self.conn.execute(
-                "SELECT expires_at, user_id FROM telegram_link_token WHERE token=%s", (token,)
-            ).fetchone()
-            if row is None:
-                return None
-            self.conn.execute("DELETE FROM telegram_link_token WHERE token=%s", (token,))
-        if _parse_datetime(row["expires_at"]) < utc_now():
-            return None
-        return row["user_id"]
-
-    @_with_reconnect
-    def purge_expired_telegram_link_tokens(self) -> int:
-        with self._lock:
-            cur = self.conn.execute(
-                "DELETE FROM telegram_link_token WHERE expires_at < NOW()"
-            )
-            return cur.rowcount
-
     # ----- lifecycle ----------------------------------------------------
 
     def close(self) -> None:
@@ -299,9 +298,3 @@ class Database:
         exc_tb: Optional[TracebackType],
     ) -> None:
         self.close()
-
-
-def _parse_datetime(value: Any) -> datetime:
-    if isinstance(value, datetime):
-        return value
-    return parse_iso_datetime(str(value))

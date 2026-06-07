@@ -17,13 +17,12 @@ from openai import (
 
 from sentinel.logging_config import get_logger
 from sentinel.classifier import ClassificationResult, OpenAIMessageClassifier
-from sentinel.notify import NotifyResult, NotifyStatus, TelegramMessageNotifier
+from sentinel.notify import NotifyResult, NotifyStatus, WebPushNotifier
 from sentinel.message import Message
 from sentinel.email.mail_config import MailAccountConfig
 from sentinel.email.stream import EmailStream
 from sentinel.config import settings
 from sentinel.database import Database
-from sentinel.telegram_bot import start_in_thread as start_telegram_listener
 
 logger = get_logger("sentinel.monitor")
 
@@ -34,7 +33,7 @@ _STREAM_REFRESH_SECONDS = 30
 # per minute, so a small cap is plenty to overlap the LLM round-trips.
 _PER_STREAM_CONCURRENCY = 8
 
-# Bounded inline retry for transient Telegram delivery failures.
+# Bounded inline retry for transient Web Push delivery failures.
 _NOTIFY_RETRY_ATTEMPTS = 3
 _NOTIFY_RETRY_BASE_DELAY = 1.0
 
@@ -72,10 +71,6 @@ class Monitor:
         logger.info("Starting Sentinel supervisor")
         self._install_signal_handlers()
 
-        listener = None
-        if settings.TELEGRAM_BOT_TOKEN:
-            listener = start_telegram_listener(settings.require_database_url())
-
         await self._refresh_streams(initial=True)
 
         refresh_task = asyncio.create_task(self._refresh_loop(), name="stream-refresh")
@@ -84,8 +79,6 @@ class Monitor:
         finally:
             await _drain(refresh_task)
             await self._cancel_all()
-            if listener is not None:
-                listener.stop()
 
     async def _refresh_loop(self) -> None:
         """Periodically diff DB-configured streams against running tasks."""
@@ -177,8 +170,8 @@ class Monitor:
     async def _run_stream(self, stream: EmailStream, user_id: Optional[int]) -> None:
         while not self._shutdown.is_set():
             try:
-                # Each inbox is processed with its owner's criteria + Telegram
-                # target, both read live from the DB at point of use.
+                # Each inbox is processed with its owner's criteria + push
+                # subscriptions, both read live from the DB at point of use.
                 pipeline = MessagePipeline(
                     db=self.db,
                     classifier=self.classifier,
@@ -261,9 +254,9 @@ class MessagePipeline:
     transient classifier error therefore leaves no row, so the message is retried
     on the next poll instead of being silently swallowed.
 
-    User state — classification criteria and Telegram chat_id — is read live
-    from the DB at point of use, so linking Telegram or editing criteria takes
-    effect on the owner's next message without restarting the worker.
+    User state — classification criteria and push subscriptions — is read live
+    from the DB at point of use, so enabling notifications or editing criteria
+    takes effect on the owner's next message without restarting the worker.
     """
 
     def __init__(
@@ -276,21 +269,25 @@ class MessagePipeline:
         self.db = db
         self.user_id = user_id
         self.classifier = classifier
-        # Per-user delivery: one shared Sentinel bot, the user's own chat_id,
-        # resolved at send time (see _current_chat_id).
-        self.notifier: Optional[TelegramMessageNotifier] = None
-        if settings.TELEGRAM_BOT_TOKEN and user_id is not None:
-            self.notifier = TelegramMessageNotifier(
-                bot_token=settings.TELEGRAM_BOT_TOKEN,
-                chat_id_provider=self._current_chat_id,
+        # Per-user delivery: Web Push to every device the user registered, the
+        # subscription list resolved at send time (see _current_subscriptions).
+        self.notifier: Optional[WebPushNotifier] = None
+        if settings.vapid_configured() and user_id is not None:
+            assert settings.VAPID_PUBLIC_KEY and settings.VAPID_PRIVATE_KEY
+            self.notifier = WebPushNotifier(
+                public_key_b64=settings.VAPID_PUBLIC_KEY,
+                private_key_b64_pem=settings.VAPID_PRIVATE_KEY,
+                subject=settings.VAPID_SUBJECT,
+                subscriptions_provider=self._current_subscriptions,
+                on_dead=self.db.delete_push_subscription,
             )
 
-    def _current_chat_id(self) -> Optional[str]:
-        """Resolve the owner's Telegram chat_id now. Called at send time from a
-        worker thread (sync DB read is fine there). None ⇒ not linked ⇒ skip."""
+    def _current_subscriptions(self) -> list[dict]:
+        """Resolve the owner's push subscriptions now. Called at send time from a
+        worker thread (sync DB read is fine there). Empty ⇒ no devices ⇒ skip."""
         if self.user_id is None:
-            return None
-        return (self.db.get_user(self.user_id) or {}).get("telegram_chat_id")
+            return []
+        return self.db.get_push_subscriptions(self.user_id)
 
     async def _notify_with_retry(
         self, message: Message, classification: ClassificationResult
@@ -353,7 +350,7 @@ class MessagePipeline:
         # Important: a missing alert here is the failure that started all this,
         # so every branch states whether we delivered and, if not, why.
         if self.notifier is None:
-            reason = "telegram_not_configured" if not settings.TELEGRAM_BOT_TOKEN else "stream_has_no_owner"
+            reason = "webpush_not_configured" if not settings.vapid_configured() else "stream_has_no_owner"
             logger.warning(
                 "%s outcome=classified priority=important notify=skipped reason=%s", ctx, reason
             )

@@ -26,26 +26,22 @@
   </p>
 </section>
 
-<section>
+<section id="push-setup" data-vapid-key="{{ vapid_public_key }}" data-csrf="{{ csrf_token }}">
   <h2>Alerts</h2>
-  <p class="hint">Required: without an alert channel connected, Sentinel has no way to reach you, so nothing happens.</p>
-  {% if telegram_linked %}
-    <p>
-      Telegram connected ✓
-      <form method="post" action="{{ url_for('telegram_unlink') }}" style="display:inline">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <button type="submit">Unlink</button>
-      </form>
-    </p>
-  {% elif telegram_bot_username %}
-    <p class="hint">Important emails are sent to you on Telegram.</p>
-    <form method="post" action="{{ url_for('telegram_link') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-      <button type="submit">Connect Telegram</button>
-    </form>
-  {% else %}
-    <p class="hint">Set <code>TELEGRAM_BOT_TOKEN</code> and <code>TELEGRAM_BOT_USERNAME</code> in the environment to enable Telegram alerts.</p>
-  {% endif %}
+  <p class="hint">Required: without notifications enabled, Sentinel has no way to reach you, so nothing happens. Enable them on every device you want pinged.</p>
+
+  <p id="push-status" role="status">{% if push_enabled %}Notifications on ✓{% endif %}</p>
+
+  <button id="push-enable" type="button"{% if push_enabled %} style="display:none"{% endif %}>Enable notifications</button>
+  <button id="push-disable" type="button"{% if not push_enabled %} style="display:none"{% endif %}>Turn off on this device</button>
+
+  <p id="push-ios-hint" class="hint" style="display:none">
+    On iPhone/iPad, tap the <strong>Share</strong> button in Safari, choose
+    <strong>Add to Home Screen</strong>, then open Sentinel from the new icon and
+    enable notifications there. (iOS only delivers notifications to the installed app.)
+  </p>
+
+  <script src="{{ url_for('static', filename='push.js') }}" defer></script>
 </section>
 
 <section>
