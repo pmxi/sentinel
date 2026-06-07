@@ -243,30 +243,73 @@ class Database:
         self,
         *,
         priority: str,
-        summary: Optional[str],
         reasoning: Optional[str],
         model: str,
         **message_fields: Any,
-    ) -> bool:
+    ) -> Optional[int]:
         """Insert the message and its classification in one transaction.
 
-        Returns True if newly recorded, False if the message already existed
+        Returns the new message id, or None if the message already existed
         (another worker won the race) — in which case nothing is written and
-        the caller just moves on. The two writes can no longer half-apply:
-        either both land or neither does, so a message is never left with a
-        row but no classification (which would dedup-skip it forever)."""
+        the caller just moves on. The id lets the caller attach a notification
+        to this message. The two writes can no longer half-apply: either both
+        land or neither does, so a message is never left with a row but no
+        classification (which would dedup-skip it forever)."""
         with self._lock, self.conn.transaction():
             message_id = self._insert_message(**message_fields)
             if message_id is None:
-                return False
+                return None
             self.conn.execute(
                 """
-                INSERT INTO classification (message_id, priority, summary, reasoning, model)
-                VALUES (%s, %s, %s, %s, %s)
+                INSERT INTO classification (message_id, priority, reasoning, model)
+                VALUES (%s, %s, %s, %s)
                 """,
-                (message_id, priority, summary, reasoning, model),
+                (message_id, priority, reasoning, model),
             )
-        return True
+        return message_id
+
+    @_with_reconnect
+    def record_notification(
+        self,
+        *,
+        message_id: int,
+        user_id: int,
+        summary: Optional[str],
+        status: str,
+        detail: Optional[str],
+    ) -> None:
+        """Record the intent to alert `user_id` about `message_id` and how it went.
+
+        Idempotent per (message, user): a re-send attempt won't duplicate the
+        row. `summary` is the user-facing alert text; `status` is one of
+        sent/failed/skipped with `detail` carrying the reason/outcome."""
+        with self._lock:
+            self.conn.execute(
+                """
+                INSERT INTO notification (message_id, user_id, summary, status, detail)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (message_id, user_id) DO NOTHING
+                """,
+                (message_id, user_id, summary, status, detail),
+            )
+
+    @_with_reconnect
+    def list_notifications(self, user_id: int, limit: int = 100) -> List[Dict[str, Any]]:
+        """A user's notifications, newest first, with the message title for display.
+        Reads only notification + message — classification is not involved."""
+        with self._lock:
+            rows = self.conn.execute(
+                """
+                SELECT n.summary, n.status, n.detail, n.created_at, m.title
+                FROM notification n
+                JOIN message m ON m.id = n.message_id
+                WHERE n.user_id = %s
+                ORDER BY n.created_at DESC
+                LIMIT %s
+                """,
+                (user_id, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
 
     @_with_reconnect
     def record_failed_message(self, *, error: str, **message_fields: Any) -> bool:

@@ -335,8 +335,8 @@ class MessagePipeline:
             logger.error("%s outcome=classify_failed error=%s", ctx, exc)
             return False
 
-        recorded = await asyncio.to_thread(self._record_classification, message, classification)
-        if not recorded:
+        message_id = await asyncio.to_thread(self._record_classification, message, classification)
+        if message_id is None:
             # Another worker recorded this message between the dedup check and the
             # write; it's already accounted for, so don't notify twice.
             logger.info("%s outcome=dedup_skip race=write", ctx)
@@ -348,12 +348,15 @@ class MessagePipeline:
             return True
 
         # Important: a missing alert here is the failure that started all this,
-        # so every branch states whether we delivered and, if not, why.
+        # so every branch states whether we delivered and, if not, why — and
+        # records a notification row so the miss is visible in the console, not
+        # just the logs.
         if self.notifier is None:
             reason = "webpush_not_configured" if not settings.vapid_configured() else "stream_has_no_owner"
             logger.warning(
                 "%s outcome=classified priority=important notify=skipped reason=%s", ctx, reason
             )
+            await self._record_notification(message_id, classification, NotifyStatus.SKIPPED, reason)
             return True
 
         result = await self._notify_with_retry(message, classification)
@@ -369,7 +372,28 @@ class MessagePipeline:
             logger.error(
                 "%s outcome=classified priority=important notify=failed detail=%s", ctx, result.detail
             )
+        await self._record_notification(message_id, classification, result.status, result.detail)
         return True
+
+    async def _record_notification(
+        self,
+        message_id: int,
+        classification: ClassificationResult,
+        status: NotifyStatus,
+        detail: str,
+    ) -> None:
+        """Persist the alert decision + outcome. No-op for an ownerless stream
+        (notification.user_id is NOT NULL — there's nobody to attribute it to)."""
+        if self.user_id is None:
+            return
+        await asyncio.to_thread(
+            self.db.record_notification,
+            message_id=message_id,
+            user_id=self.user_id,
+            summary=classification.summary,
+            status=status.value,
+            detail=detail or None,
+        )
 
     def _message_fields(self, message: Message) -> Dict[str, Any]:
         """The message-table columns, shared by every write."""
@@ -385,12 +409,12 @@ class MessagePipeline:
 
     def _record_classification(
         self, message: Message, classification: ClassificationResult
-    ) -> bool:
-        """Atomically record the message + its classification. False ⇒ dedup race."""
+    ) -> Optional[int]:
+        """Atomically record the message + its classification. Returns the new
+        message id, or None on a dedup race."""
         return self.db.record_classified_message(
             **self._message_fields(message),
             priority=classification.priority.value,
-            summary=classification.summary,
             reasoning=classification.reasoning,
             model=settings.LLM_MODEL or "unknown",
         )

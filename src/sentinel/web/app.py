@@ -240,6 +240,7 @@ def create_app(database_url: Optional[str] = None, debug: bool = False) -> Flask
         return render_template(
             "console.html",
             inboxes=inboxes,
+            notifications=db.list_notifications(uid),
             criteria=(user.get("criteria") or _default_criteria()),
             push_enabled=bool(db.get_push_subscriptions(uid)),
             vapid_public_key=settings.VAPID_PUBLIC_KEY,

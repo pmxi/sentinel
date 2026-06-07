@@ -143,6 +143,27 @@ code { font-family: var(--mono); font-size: 0.9em; }
 .ok { color: var(--ok); }
 .warn { color: var(--warn); }
 
+/* Reverse-chron notification list on the console. */
+.alert-list { list-style: none; margin: 0; padding: 0; }
+.alert {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: 3px;
+  padding: 0.6rem 0.8rem;
+  margin-bottom: 0.6rem;
+}
+.alert-sent { border-left-color: var(--ok); }
+.alert-failed { border-left-color: #a22; }
+.alert-skipped { border-left-color: var(--warn); }
+.alert-head { display: flex; justify-content: space-between; gap: 1rem; align-items: baseline; }
+.alert-title { font-weight: 600; }
+.alert-status { font-size: 0.8rem; white-space: nowrap; }
+.status-sent { color: var(--ok); }
+.status-failed { color: #a22; }
+.status-skipped { color: var(--warn); }
+.alert-summary { margin: 0.35rem 0 0.25rem; }
+.alert-time { color: var(--muted); font-size: 0.8rem; }
+
 .sr-only {
   position: absolute;
   width: 1px; height: 1px;

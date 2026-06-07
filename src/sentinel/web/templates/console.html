@@ -45,6 +45,31 @@
 </section>
 
 <section>
+  <h2>Recent alerts</h2>
+  {% if notifications %}
+    <ul class="alert-list">
+      {% for n in notifications %}
+        <li class="alert alert-{{ n.status }}">
+          <div class="alert-head">
+            <span class="alert-title">{{ n.title }}</span>
+            <span class="alert-status status-{{ n.status }}">
+              {% if n.status == 'sent' %}Delivered ✓
+              {% elif n.status == 'failed' %}Failed ✗
+              {% else %}Not delivered{% if n.detail %} ({{ n.detail }}){% endif %}
+              {% endif %}
+            </span>
+          </div>
+          {% if n.summary %}<p class="alert-summary">{{ n.summary }}</p>{% endif %}
+          <time class="alert-time">{{ n.created_at.strftime('%Y-%m-%d %H:%M UTC') }}</time>
+        </li>
+      {% endfor %}
+    </ul>
+  {% else %}
+    <p class="hint">No alerts yet. Important emails will appear here once they arrive.</p>
+  {% endif %}
+</section>
+
+<section>
   <h2>What matters to you</h2>
   {% if saved %}<p role="status" class="flash">Saved.</p>{% endif %}
   <p class="hint">Plain-English criteria for which emails are important. Sent to the classifier as-is — edit it however you like.</p>
