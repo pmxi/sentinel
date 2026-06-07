@@ -2,6 +2,9 @@
    sizes; one font stack, one accent color, sensible spacing, no framework. */
 
 :root {
+  /* The palette below is hand-tuned for a light background; opt out of OS dark
+     mode so native controls (inputs, selects, scrollbars) stay legible. */
+  color-scheme: light;
   --fg: #111;
   --muted: #666;
   --bg: #fafafa;
