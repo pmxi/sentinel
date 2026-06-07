@@ -18,14 +18,14 @@ Two long-running processes, each a systemd unit, both behind the existing Nginx:
                           │                                   (gunicorn, N workers)
                           │
                           │   sentinel-worker  ── polls inboxes, classifies,
-                          │   (one process)        sends Telegram alerts
+                          │   (one process)        sends Web Push alerts
                           │        │
                           └────────┴──▶ PostgreSQL 18 (native, localhost:5432)
 ```
 
 Why web and worker are separate processes:
 - A single supervisor owns classification. More than one supervisor against the
-  same database = **duplicate Telegram alerts**, so the web tier (which runs
+  same database = **duplicate push alerts**, so the web tier (which runs
   multiple gunicorn workers) never runs one — only the lone `sentinel-worker`.
 - Independent failure domains, restarts, and logs. A wedged poll can't take
   down the console; a web deploy doesn't interrupt classification.
@@ -41,8 +41,10 @@ concurrent asyncio task and the work is I/O-bound, which is ample for 100 users.
   certbot needs it resolving before it can issue a cert.
 - A **Google OAuth Web client** (the same one used in dev, or a new one) with
   the Gmail API enabled. You'll register the prod redirect URI in step 7.
-- A **Telegram bot** token (from @BotFather) if you want alerts — outbound
-  long-poll only, so no inbound webhook/route is needed.
+- A **VAPID keypair** for Web Push alerts — generated after install (step 2)
+  with `python -m sentinel.scripts.gen_vapid_keys` and set in `.env` (step 4).
+  Web Push also requires the console to be served over **HTTPS**, which the
+  certbot step (7) provides; there is no inbound webhook to expose.
 - An **OpenAI API key**.
 
 ---
@@ -132,9 +134,15 @@ GOOGLE_REDIRECT_URI=https://sentinel.parasmittal.com/oauth/google/callback
 #   python -c "import secrets; print(secrets.token_hex(32))"
 SESSION_SECRET=...
 
-# Telegram (optional).
-TELEGRAM_BOT_TOKEN=...
-TELEGRAM_BOT_USERNAME=YourSentinelBot
+# Web Push (VAPID) — REQUIRED. Alerts have no other channel, so the web app and
+# worker both refuse to start without these. Generate the keypair once, on the
+# server, and paste the three printed lines here:
+#   sudo -u sentinel /opt/sentinel/app/.venv/bin/python -m sentinel.scripts.gen_vapid_keys
+# VAPID_SUBJECT is a contact the push services can reach — a real mailto: or
+# https: you own.
+VAPID_PUBLIC_KEY=...
+VAPID_PRIVATE_KEY=...
+VAPID_SUBJECT=mailto:you@example.com
 
 # Log to stdout so journald captures it (no app-managed log files).
 DISABLE_FILE_LOGGING=true
@@ -296,7 +304,15 @@ journalctl -u sentinel-worker -n 20 --no-pager
 ```
 
 Then open https://sentinel.parasmittal.com, sign in with Google, connect an
-inbox, and link Telegram.
+inbox, and click **Enable notifications** to register this browser for Web Push.
+
+> **End-user onboarding (esp. iOS):** Web Push is delivered to the browser, and
+> on iPhone/iPad it only works from an *installed* PWA — a Safari tab won't
+> receive anything. Users open the site in Safari, tap **Share → Add to Home
+> Screen**, open Sentinel from the new icon, then tap **Enable notifications**
+> there. Desktop Chrome/Edge/Firefox and Android can enable directly from the
+> tab. A user with no registered subscription classifies mail normally but
+> receives nothing (logged as `notify=skipped reason=no_subscriptions`).
 
 ---
 
@@ -309,9 +325,30 @@ sudo -u sentinel /opt/sentinel/.local/bin/uv sync --no-dev --group prod
 sudo systemctl restart sentinel-web sentinel-worker
 ```
 
-Schema changes apply automatically on the next connect. Restarting the worker
-is safe — classification is resumable (the `message` table's UNIQUE
-`source_id` is the cross-restart dedup ledger).
+Restarting the worker is safe — classification is resumable (the `message`
+table's UNIQUE `source_id` is the cross-restart dedup ledger).
+
+**Two things `git pull` alone won't do — check them when deploying across a
+release that changes config or schema:**
+
+- **New required env vars.** The app fails fast if a required key is missing
+  (e.g. `VAPID_*` for Web Push). After pulling a release that adds one, add it
+  to `.env` *before* the restart, or both units crash-loop. Generate VAPID keys
+  with `sentinel.scripts.gen_vapid_keys` (see step 4).
+- **Non-additive schema changes.** The app applies `schema.sql` with
+  `CREATE TABLE IF NOT EXISTS`, so it only ever *adds* tables/columns — it never
+  drops or alters an existing one. A release that removes a column leaves the
+  old (possibly `NOT NULL`) column in place, and inserts that no longer supply
+  it will fail. Apply such drops by hand, after a backup:
+
+  ```bash
+  sudo -u postgres pg_dump -Fc email_sentinel > /var/backups/email_sentinel-$(date +%F).dump
+  sudo -u postgres psql -d email_sentinel -c 'ALTER TABLE inbox DROP COLUMN <stale_column>;'
+  ```
+
+> The live database is **`email_sentinel`** (role `email_sentinel`), which
+> predates this guide's `sentinel`/`sentinel_user` naming in steps 3–4. Use the
+> actual name from `DATABASE_URL` in `.env` when running `psql`/`pg_dump`.
 
 ---
 
