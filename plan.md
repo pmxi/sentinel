@@ -115,7 +115,7 @@ Use a one-off script to classify the 500 most recent imported messages. The live
 5. Instruct the model to choose the more important tier when a message is ambiguous. A failed call remains visible in L1 or an explicit Unclassified queue.
 6. Store a manual tier change as a nullable override while retaining the original model tier and reasoning.
 
-The initial prompt implements the L1/L2/L3 policy above. Historical classification is a manually invoked batch job, not a general server workflow. Prompt editing and later reclassification can begin as a small settings/admin capability rather than a generalized rules product.
+The initial prompt implements the L1/L2/L3 policy above and lives as a version-controlled file in the repository. Changing it requires editing the file and restarting or redeploying the worker. Historical classification and later reclassification are manually invoked scripts; there is no prompt editor or bulk-reclassification UI in the MVP.
 
 ### Search pipeline
 
