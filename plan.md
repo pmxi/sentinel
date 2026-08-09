@@ -109,12 +109,11 @@ Provider commands should expose a common interface such as `markRead`, `setFlagg
 Use a one-off script to classify the 500 most recent imported messages. The live worker classifies each new message or materially updated thread after that:
 
 1. Parse headers and produce clean plain text from the message body.
-2. Remove boilerplate and quoted history when possible, while retaining enough thread context to understand a reply.
-3. Call the OpenAI API with the current personal classification prompt.
-4. Require strict structured output containing only `{ "reasoning": string, "tier": 1 | 2 | 3 }`.
-5. Store the result with its model and prompt version so mail can be reclassified later.
-6. Instruct the model to choose the more important tier when a message is ambiguous. A failed call remains visible in L1 or an explicit Unclassified queue.
-7. Store a manual tier change as a nullable override while retaining the original model tier and reasoning.
+2. Send the complete normalized message body and relevant headers to OpenAI without attempting to remove quoted replies, signatures, or newsletter boilerplate.
+3. Require strict structured output containing only `{ "reasoning": string, "tier": 1 | 2 | 3 }`.
+4. Store the result with its model and prompt version so mail can be reclassified later.
+5. Instruct the model to choose the more important tier when a message is ambiguous. A failed call remains visible in L1 or an explicit Unclassified queue.
+6. Store a manual tier change as a nullable override while retaining the original model tier and reasoning.
 
 The initial prompt implements the L1/L2/L3 policy above. Historical classification is a manually invoked batch job, not a general server workflow. Prompt editing and later reclassification can begin as a small settings/admin capability rather than a generalized rules product.
 
