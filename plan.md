@@ -54,7 +54,7 @@ Paras can connect personal Gmail and Purdue mail, use Sent as the complete clien
 
 ### Architecture
 
-Use a responsive web/PWA frontend backed by a single private application service, a background worker, and PostgreSQL with full-text search plus `pgvector`. Provider adapters connect directly to the Gmail API and Microsoft Graph. The application database is Sent's normalized replica and intelligence store; mutations are synchronized back to the originating provider.
+Use an online-only responsive web frontend backed by one codebase with separate web and worker entrypoints, plus PostgreSQL with full-text search and `pgvector`. Run both entrypoints from the same container image. Provider adapters connect directly to the Gmail API and Microsoft Graph. The application database is Sent's normalized replica and intelligence store; mutations are synchronized back to the originating provider through a durable outbox.
 
 ```text
 Gmail API ---------\
@@ -80,32 +80,33 @@ Avoid adding Redis or a separate vector database until PostgreSQL proves insuffi
 ### Core data model
 
 - `accounts`: provider, address, encrypted OAuth tokens, status
-- `sync_cursors`: Gmail history IDs, Microsoft delta links, webhook state, last successful sync
-- `threads`: Sent identity plus provider-specific thread references
+- `sync_cursors`: Gmail history IDs, Microsoft delta links, and last successful sync
+- `threads`: account-scoped Gmail thread IDs or Microsoft conversation IDs; no cross-account thread merging
 - `messages`: account/provider IDs, headers, participants, timestamps, normalized plain text and sanitized HTML, snippet, attachment metadata
 - `provider_containers`: account-scoped native labels, folders, categories, and message membership
-- `message_state`: read, starred/flagged, draft, deleted, and synchronization version
+- `message_state`: read, starred/flagged, deleted, and synchronization version
+- `drafts`: Sent-owned draft content and sending account; drafts are not synchronized to provider Drafts folders
 - `classifications`: model tier, reasoning, optional manual tier override, model, prompt version, and timestamp
 - `embeddings`: message or thread vector and embedding-model version
 - `mutation_outbox`: idempotent provider actions with retry and reconciliation state
 
-Never flatten Gmail labels and Microsoft folders into one lossy field. Preserve them as account-scoped provider state, then implement L1, L2, L3, All Mail, and search as Sent-owned virtual views.
+Never flatten Gmail labels and Microsoft folders into one lossy field. Preserve only the provider state needed for correct synchronization; the MVP will not expose custom native label or folder management. Implement L1, L2, L3, All Mail, Sent, Drafts, Trash, and search as Sent-owned views.
 
 ### Provider integration and synchronization
 
 1. Implement Gmail OAuth and Gmail API adapter.
 2. Implement Microsoft OAuth and Graph adapter for the Purdue account.
-3. Run an initial mailbox backfill, storing normalized messages and native organization.
+3. Run an initial full-archive backfill, storing normalized messages and the native state required for synchronization.
 4. Continue with Gmail history synchronization and Microsoft delta synchronization.
-5. Use provider push/change notifications where available, with periodic polling as a recovery path.
+5. Poll both providers incrementally every 30–60 seconds. Do not implement provider webhooks or Google Pub/Sub for the MVP.
 6. Reconcile remote edits and retain tombstones so deletions do not resurrect messages.
 7. Fetch attachment bytes lazily. Record filenames, types, sizes, and provider references during sync.
 
-Provider commands should expose a common interface such as `markRead`, `setFlagged`, `archive`, `move`, `delete`, `createDraft`, `send`, and `fetchAttachment`, while allowing provider-specific implementations underneath.
+Provider commands should expose a common interface such as `markRead`, `setFlagged`, `archive`, `delete`, `send`, and `fetchAttachment`, while allowing provider-specific implementations underneath. Drafts remain inside Sent until they are sent.
 
 ### Classification pipeline
 
-For every historical message during backfill and every new or materially updated thread:
+Use a one-off script to classify the 500 most recent imported messages. The live worker classifies each new message or materially updated thread after that:
 
 1. Parse headers and produce clean plain text from the message body.
 2. Remove boilerplate and quoted history when possible, while retaining enough thread context to understand a reply.
@@ -115,56 +116,60 @@ For every historical message during backfill and every new or materially updated
 6. Instruct the model to choose the more important tier when a message is ambiguous. A failed call remains visible in L1 or an explicit Unclassified queue.
 7. Store a manual tier change as a nullable override while retaining the original model tier and reasoning.
 
-The initial prompt implements the L1/L2/L3 policy above. Prompt editing and bulk reclassification can begin as an admin/settings screen rather than a generalized rules product.
+The initial prompt implements the L1/L2/L3 policy above. Historical classification is a manually invoked batch job, not a general server workflow. Prompt editing and later reclassification can begin as a small settings/admin capability rather than a generalized rules product.
 
 ### Search pipeline
 
 Semantic search should be hybrid rather than vector-only:
 
 1. Build PostgreSQL full-text indexes for exact terms, names, addresses, subjects, and body text.
-2. Generate embeddings for the historical archive and all new messages or threads.
+2. Generate embeddings for the entire historical archive with a one-off batch script; the live worker embeds new messages.
 3. At query time, retrieve lexical and vector candidates in parallel.
-4. Merge candidate ranks, then optionally rerank the small combined set with an LLM.
-5. Support structured filters for account, correspondent, date, tier, attachment type, and native label/folder.
-6. Return the matched passage and a short explanation of why each result matched.
+4. Merge lexical and vector ranks directly without an LLM reranking call.
+5. Support basic structured filters for account, correspondent, date, tier, and attachment presence.
+6. Return ordinary highlighted snippets for matching results.
 
 ### Client experience
 
 - Make L1 the default home view, with an unread/new count that reflects L1 rather than the entire archive.
 - Provide L2, L3, Unclassified, and All Mail as immediately accessible views.
 - Show account identity on every message and allow account filtering without making account boundaries dominate the UI.
-- Implement thread reading, sanitized HTML rendering, attachment access, compose, reply/reply-all, forward, drafts, sending identity selection, archive, delete, flag, and read/unread.
+- Use provider-native conversation grouping within each account; do not merge threads across accounts.
+- Implement thread reading, sanitized HTML rendering, attachment access, compose, reply/reply-all, forward, Sent-owned drafts, sending identity selection, archive, delete, flag, and read/unread.
+- Do not expose custom Gmail label or Outlook folder browsing and management in the MVP.
+- Do not implement recipient autocomplete in the MVP; this is tracked in `roadmap.md`.
 - Use optimistic local updates backed by the durable mutation outbox; surface synchronization failures instead of silently reverting.
 - Make search globally available and accept natural-language queries without requiring special syntax.
 - Record manual tier corrections in one action.
+- Require a network connection; do not implement offline caches, service workers, or installable PWA behavior.
 
 ### Security and operations
 
-- Restrict the service to one authenticated user; prefer passkeys or another phishing-resistant login.
+- Restrict the service to one deployment-configured password stored as a secure password hash. Use secure cookie sessions and basic login rate limiting; do not build signup, user management, or recovery flows.
 - Encrypt provider refresh tokens and other secrets separately from ordinary database fields.
 - Use TLS, encrypted storage, automated database backups, and tested restoration.
 - Never write message bodies, access tokens, sign-in codes, or model request payloads to ordinary application logs.
 - Sanitize HTML email and proxy or block remote images by default to reduce tracking and rendering risk.
 - Add health checks for provider sync lag, classification failures, expired credentials, outbox failures, and backup age.
-- Deploy the app, worker, and PostgreSQL in a private environment with repeatable container-based setup.
+- Expose the web app over public HTTPS and deploy the app, worker, and PostgreSQL in a privately controlled environment with repeatable container-based setup.
 
 ### Delivery sequence
 
-1. **Foundation:** application skeleton, database migrations, single-user authentication, deployment, and secret handling
-2. **Ingestion:** Gmail and Microsoft connections, historical backfill, incremental synchronization, normalized storage, and attachment metadata
-3. **Complete client:** unified views, reader, composer, drafts, sending, message actions, and reliable provider mutation outbox
-4. **Automatic sorting:** versioned L1/L2/L3 prompt, structured LLM calls, backfill classification, incoming classification, overrides, and Unclassified safety path
-5. **Hybrid search:** full-text indexing, embeddings, natural-language search, filters, rank fusion, and matched passages
+1. **Foundation:** application skeleton, database migrations, single-password authentication, deployment, and secret handling
+2. **Ingestion:** Gmail and Microsoft connections, full-archive backfill, 30–60 second incremental polling, normalized storage, and attachment metadata
+3. **Complete client:** unified views, provider-native threads, reader, composer, Sent-owned drafts, sending, message actions, and reliable provider mutation outbox
+4. **Automatic sorting:** versioned L1/L2/L3 prompt, one-off classification of the newest 500 messages, incoming classification, overrides, and Unclassified safety path
+5. **Hybrid search:** full-text indexing, one-off full-archive embedding, live embedding, natural-language search, basic filters, rank fusion, and highlighted snippets
 6. **Hardening:** sync reconciliation, token refresh recovery, backups, monitoring, mobile layout, and performance tuning
-7. **Post-MVP:** installable PWA/mobile notifications for L1, attachment semantic indexing, richer extracted actions/deadlines, and iterative category/prompt refinement
 
 ### MVP acceptance criteria
 
 - Both accounts complete an initial sync and remain incrementally synchronized without duplicates or missing messages.
 - The entire imported archive is searchable from one interface by exact text and semantic meaning.
-- Every successfully processed message has a stored, explainable, versioned L1/L2/L3 classification.
+- The newest 500 imported messages and all new messages have stored, explainable, versioned L1/L2/L3 classifications.
 - Ambiguous mail is conservatively promoted, and failed classifications cannot silently disappear into L2 or L3.
 - L1 is usable as the primary monitored inbox; L2, L3, and All Mail remain browsable.
 - Compose, reply, forward, draft, send, archive, delete, flag, and read/unread work against the correct originating account.
+- Sent drafts synchronize across Sent sessions but are not written to provider Drafts folders.
 - Manual tier overrides persist across devices and provider resynchronization.
 - A database restore and a full provider reconciliation can recover the service without corrupting provider mailboxes.
