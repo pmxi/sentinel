@@ -150,7 +150,7 @@ Semantic search should be hybrid rather than vector-only:
 - Encrypt provider refresh tokens and other secrets separately from ordinary database fields.
 - Use TLS, encrypted storage, automated database backups, and tested restoration.
 - Never write message bodies, access tokens, sign-in codes, or model request payloads to ordinary application logs.
-- Sanitize HTML email and proxy or block remote images by default to reduce tracking and rendering risk.
+- Sanitize HTML email, but load remote images directly in the MVP. A privacy proxy is deferred to `roadmap.md`.
 - Add health checks for provider sync lag, classification failures, expired credentials, outbox failures, and backup age.
 - Expose the web app over public HTTPS and deploy the app, worker, and PostgreSQL in a privately controlled environment with repeatable container-based setup.
 
