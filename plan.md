@@ -135,7 +135,8 @@ Semantic search should be hybrid rather than vector-only:
 - Provide L2, L3, Unclassified, and All Mail as immediately accessible views.
 - Show account identity on every message and allow account filtering without making account boundaries dominate the UI.
 - Use provider-native conversation grouping within each account; do not merge threads across accounts.
-- Implement thread reading, sanitized HTML rendering, attachment access, compose, reply/reply-all, forward, Sent-owned drafts, sending identity selection, archive, delete, flag, and read/unread.
+- Implement thread reading, sanitized HTML rendering, attachment access, plain-text compose, reply/reply-all, forward, ordinary file attachments, Sent-owned drafts, sending identity selection, archive, delete, flag, and read/unread.
+- Do not implement rich-text composition, inline images, or signatures in the MVP.
 - Do not expose custom Gmail label or Outlook folder browsing and management in the MVP.
 - Do not implement recipient autocomplete in the MVP; this is tracked in `roadmap.md`.
 - Use optimistic local updates backed by the durable mutation outbox; surface synchronization failures instead of silently reverting.
