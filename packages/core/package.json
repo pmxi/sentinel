@@ -1,0 +1,37 @@
+{
+  "name": "@sent/core",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "scripts": {
+    "db:migrate": "tsx src/db/migrate.ts",
+    "lint": "biome check src test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@azure/msal-node": "latest",
+    "@sent/shared": "workspace:*",
+    "drizzle-orm": "latest",
+    "googleapis": "latest",
+    "html-to-text": "^10.0.0",
+    "jose": "latest",
+    "mailparser": "latest",
+    "nodemailer": "latest",
+    "openai": "latest",
+    "pg": "latest",
+    "sanitize-html": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/html-to-text": "^9.0.4",
+    "@types/mailparser": "latest",
+    "@types/node": "latest",
+    "@types/nodemailer": "latest",
+    "@types/pg": "latest",
+    "@types/sanitize-html": "latest",
+    "typescript": "latest"
+  }
+}

@@ -1,0 +1,38 @@
+{
+  "name": "@sent/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && tsup src/index.ts src/migrate.ts --format esm --platform node --out-dir dist --sourcemap --clean",
+    "dev": "tsx watch src/index.ts",
+    "lint": "biome check src",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@azure/msal-node": "latest",
+    "@fastify/cookie": "latest",
+    "@fastify/multipart": "latest",
+    "@fastify/rate-limit": "latest",
+    "@fastify/static": "latest",
+    "@sent/core": "workspace:*",
+    "@sent/shared": "workspace:*",
+    "argon2": "latest",
+    "drizzle-orm": "latest",
+    "dotenv": "^17.4.2",
+    "fastify": "latest",
+    "googleapis": "latest",
+    "html-to-text": "latest",
+    "jose": "^6.2.8",
+    "nodemailer": "latest",
+    "openai": "latest",
+    "pg": "latest",
+    "sanitize-html": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsup": "latest",
+    "typescript": "latest"
+  }
+}

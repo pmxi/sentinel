@@ -1,0 +1,31 @@
+{
+  "name": "@sent/worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc --noEmit && tsup src/index.ts --format esm --platform node --out-dir dist --sourcemap --clean",
+    "dev": "tsx watch src/index.ts",
+    "lint": "biome check src",
+    "start": "node dist/index.js",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@azure/msal-node": "latest",
+    "@sent/core": "workspace:*",
+    "dotenv": "^17.4.2",
+    "drizzle-orm": "latest",
+    "googleapis": "latest",
+    "html-to-text": "latest",
+    "nodemailer": "latest",
+    "openai": "latest",
+    "pg": "latest",
+    "pg-boss": "latest",
+    "sanitize-html": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsup": "latest",
+    "typescript": "latest"
+  }
+}
