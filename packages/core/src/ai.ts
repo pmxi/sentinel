@@ -50,7 +50,7 @@ export class OpenAIIntelligenceService implements IntelligenceService {
       model,
       instructions: prompt.text,
       input: message,
-      reasoning: { effort: "low" },
+      reasoning: { effort: "xhigh" },
       store: false,
       text: { format: zodTextFormat(ClassificationOutputSchema, "email_classification") },
     });

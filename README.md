@@ -67,7 +67,7 @@ Sent starts without provider or OpenAI credentials, but connecting accounts and 
 ### OpenAI
 
 - `OPENAI_API_KEY`
-- The defaults are `gpt-5.6-sol` with low reasoning for classification and `text-embedding-3-large` for search.
+- The defaults are `gpt-5.6-luna` with xhigh reasoning for classification and `text-embedding-3-large` for search.
 - Email headers and the complete normalized body are sent for classification. Very large bodies are trimmed only for the smaller embedding context.
 
 ### Google

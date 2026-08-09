@@ -11,7 +11,7 @@ const EnvSchema = z.object({
   SESSION_SECRET: optionalCredential,
   TOKEN_ENCRYPTION_KEY: optionalCredential,
   OPENAI_API_KEY: optionalCredential,
-  OPENAI_CLASSIFICATION_MODEL: z.string().default("gpt-5.6-sol"),
+  OPENAI_CLASSIFICATION_MODEL: z.string().default("gpt-5.6-luna"),
   OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-large"),
   GOOGLE_CLIENT_ID: optionalCredential,
   GOOGLE_CLIENT_SECRET: optionalCredential,
