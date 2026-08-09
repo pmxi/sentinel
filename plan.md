@@ -17,11 +17,11 @@ Sent is a bespoke, privately hosted web email client for Paras. It should feel u
 
 - Sent is a complete client: read, compose, reply, forward, archive, delete, and read/unread state must work without opening Gmail or Outlook.
 - Gmail and Microsoft remain the delivery authorities. Sent maintains a synchronized private replica and preserves each provider's native labels, folders, flags, and IDs.
-- Sent owns a provider-independent intelligence layer: classifications, summaries, embeddings, feedback, and virtual views.
+- Sent owns a provider-independent intelligence layer: classifications, embeddings, manual overrides, and virtual views.
 - Receiving a message is separate from demanding attention. Lower-ranked mail remains searchable and browsable.
-- Classification is personal and prompt-driven. It is expected to evolve through prompt versions and feedback.
-- False negatives cost more than false positives. Failed or uncertain classifications must remain visible or be promoted, never silently hidden.
-- Full message bodies may be sent to hosted LLM and embedding APIs. Attachment contents may also be processed when useful.
+- Classification is personal and prompt-driven. It is expected to evolve through prompt versions and manual overrides.
+- False negatives cost more than false positives. The prompt should place ambiguous mail in the more important tier, and failed classifications must never be silently hidden.
+- Full message bodies may be sent to the OpenAI API for classification and embeddings. Attachment contents may also be processed when useful.
 - The service is single-user and privately hosted so the same state is available on laptops and phones.
 
 ### Initial classification policy
@@ -62,7 +62,7 @@ Gmail API ---------\
 Microsoft Graph ---/                              |          | full-text index
                                                    |          | vector index
                                                    v          | classifications
-                                             LLM/embedding APIs
+                                                OpenAI API
 
 Responsive web client <-> Sent API <-> mutation outbox <-> originating provider
 ```
@@ -72,7 +72,7 @@ Keep the deployable system small:
 - **Web app:** responsive inboxes, search, reader, composer, settings, and provider OAuth callbacks
 - **Application API:** authentication, queries, message rendering, compose/send, and provider-neutral commands
 - **Worker:** mailbox synchronization, backfills, parsing, embeddings, LLM classification, retries, and later notifications
-- **PostgreSQL:** normalized messages, native provider state, full-text index, vectors, analysis, feedback, sync cursors, and durable job/outbox records
+- **PostgreSQL:** normalized messages, native provider state, full-text index, vectors, analysis, manual overrides, sync cursors, and durable job/outbox records
 - **Optional object storage:** attachment cache only when caching becomes necessary; initially fetch attachment bytes lazily from the provider
 
 Avoid adding Redis or a separate vector database until PostgreSQL proves insufficient. Durable jobs can initially use PostgreSQL.
@@ -85,9 +85,8 @@ Avoid adding Redis or a separate vector database until PostgreSQL proves insuffi
 - `messages`: account/provider IDs, headers, participants, timestamps, normalized plain text and sanitized HTML, snippet, attachment metadata
 - `provider_containers`: account-scoped native labels, folders, categories, and message membership
 - `message_state`: read, starred/flagged, draft, deleted, and synchronization version
-- `classifications`: L1/L2/L3, explanation, confidence, model, prompt version, timestamp, and override state
+- `classifications`: model tier, reasoning, optional manual tier override, model, prompt version, and timestamp
 - `embeddings`: message or thread vector and embedding-model version
-- `feedback`: manual tier changes and optional user explanation for future prompt refinement
 - `mutation_outbox`: idempotent provider actions with retry and reconciliation state
 
 Never flatten Gmail labels and Microsoft folders into one lossy field. Preserve them as account-scoped provider state, then implement L1, L2, L3, All Mail, and search as Sent-owned virtual views.
@@ -110,11 +109,11 @@ For every historical message during backfill and every new or materially updated
 
 1. Parse headers and produce clean plain text from the message body.
 2. Remove boilerplate and quoted history when possible, while retaining enough thread context to understand a reply.
-3. Call an LLM through a provider-independent interface with the current personal classification prompt.
-4. Require structured output containing `tier`, `reason`, `confidence`, `human_authored`, `reply_likely`, and optional extracted action/deadline fields.
+3. Call the OpenAI API with the current personal classification prompt.
+4. Require strict structured output containing only `{ "reasoning": string, "tier": 1 | 2 | 3 }`.
 5. Store the result with its model and prompt version so mail can be reclassified later.
-6. Promote uncertain results rather than burying them. A failed call remains visible in L1 or an explicit Unclassified queue.
-7. Treat a manual tier change as an override and feedback example, not merely a transient UI action.
+6. Instruct the model to choose the more important tier when a message is ambiguous. A failed call remains visible in L1 or an explicit Unclassified queue.
+7. Store a manual tier change as a nullable override while retaining the original model tier and reasoning.
 
 The initial prompt implements the L1/L2/L3 policy above. Prompt editing and bulk reclassification can begin as an admin/settings screen rather than a generalized rules product.
 
@@ -164,7 +163,7 @@ Semantic search should be hybrid rather than vector-only:
 - Both accounts complete an initial sync and remain incrementally synchronized without duplicates or missing messages.
 - The entire imported archive is searchable from one interface by exact text and semantic meaning.
 - Every successfully processed message has a stored, explainable, versioned L1/L2/L3 classification.
-- Uncertain and failed classifications cannot silently disappear into L2 or L3.
+- Ambiguous mail is conservatively promoted, and failed classifications cannot silently disappear into L2 or L3.
 - L1 is usable as the primary monitored inbox; L2, L3, and All Mail remain browsable.
 - Compose, reply, forward, draft, send, archive, delete, flag, and read/unread work against the correct originating account.
 - Manual tier overrides persist across devices and provider resynchronization.
