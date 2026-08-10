@@ -7,7 +7,7 @@
     "./*": "./src/*.ts"
   },
   "scripts": {
-    "db:migrate": "tsx src/db/migrate.ts",
+    "db:migrate": "tsx --env-file=../../.env src/db/migrate.ts",
     "lint": "biome check src test",
     "typecheck": "tsc --noEmit"
   },

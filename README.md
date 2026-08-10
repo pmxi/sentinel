@@ -40,7 +40,7 @@ Requirements: Node.js 24+, pnpm through Corepack, and Docker.
    ```sh
    SENT_PUBLIC_URL=http://localhost:3000
    DATABASE_URL=postgres://sent:sent-local-only@localhost:5432/sent
-   SENT_PASSWORD_HASH=<output of the next command>
+   SENT_PASSWORD_HASH='<output of the next command>'
    SESSION_SECRET=<openssl rand -base64 32>
    TOKEN_ENCRYPTION_KEY=<openssl rand -base64 32>
    ```

@@ -1,6 +1,9 @@
 import { z } from "zod";
 
-const optionalCredential = z.string().min(1).optional();
+const optionalCredential = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  z.string().min(1).optional(),
+);
 
 const EnvSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
