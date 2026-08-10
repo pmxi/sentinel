@@ -23,6 +23,9 @@ export function parseAddresses(value: string | null | undefined): MailAddress[] 
 
 export function sanitizeEmailHtml(html: string): string {
   return sanitizeHtml(html, {
+    // Email is rendered in an iframe without scripts or same-origin access. Retaining style tags
+    // preserves newsletter layouts; remote URLs are already allowed by the MVP privacy decision.
+    allowVulnerableTags: true,
     allowedTags: sanitizeHtml.defaults.allowedTags.concat([
       "img",
       "table",

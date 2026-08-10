@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import type { Tier } from "@sent/shared";
@@ -23,7 +24,12 @@ let promptCache: { text: string; version: string } | undefined;
 
 export async function classificationPrompt(): Promise<{ text: string; version: string }> {
   if (!promptCache) {
-    const path = resolve(process.cwd(), "prompts/classify-v1.md");
+    const candidates = [
+      resolve(process.cwd(), "prompts/classify-v1.md"),
+      resolve(process.cwd(), "../../prompts/classify-v1.md"),
+    ];
+    const path = candidates.find(existsSync) ?? candidates[0];
+    if (!path) throw new Error("Classification prompt path could not be resolved");
     const text = await readFile(path, "utf8");
     const version = createHash("sha256").update(text).digest("hex").slice(0, 12);
     promptCache = { text, version };

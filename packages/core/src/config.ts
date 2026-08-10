@@ -10,6 +10,10 @@ const EnvSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
   DATABASE_URL: z.string().url().default("postgres://sent:sent@localhost:5432/sent"),
   SENT_PUBLIC_URL: z.string().url().default("http://localhost:3000"),
+  SENT_WEB_URL: z.preprocess(
+    (value) => (value === "" ? undefined : value),
+    z.string().url().optional(),
+  ),
   SENT_PASSWORD_HASH: optionalCredential,
   SESSION_SECRET: optionalCredential,
   TOKEN_ENCRYPTION_KEY: optionalCredential,

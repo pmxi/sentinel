@@ -39,6 +39,7 @@ Requirements: Node.js 24+, pnpm through Corepack, and Docker.
 
    ```sh
    SENT_PUBLIC_URL=http://localhost:3000
+   SENT_WEB_URL=http://localhost:5173
    DATABASE_URL=postgres://sent:sent-local-only@localhost:5432/sent
    SENT_PASSWORD_HASH='<output of the next command>'
    SESSION_SECRET=<openssl rand -base64 32>
@@ -111,6 +112,7 @@ The first classifies at most the newest 500 messages that do not already have a 
 
 1. Point a DNS record for the desired hostname at the server.
 2. Set `SENT_DOMAIN=mail.example.com` and `SENT_PUBLIC_URL=https://mail.example.com` in `.env`.
+   Leave `SENT_WEB_URL` blank in production so OAuth returns to `SENT_PUBLIC_URL`.
 3. Use long random values for `POSTGRES_PASSWORD`, `SESSION_SECRET`, and `TOKEN_ENCRYPTION_KEY`; keep the encryption key stable or existing OAuth tokens cannot be decrypted.
 4. Register the production callback URLs with Google and Microsoft.
 5. Start the stack:

@@ -32,6 +32,7 @@ type ServerOptions = {
   passwordHash?: string;
   sessionSecret?: string;
   publicUrl?: string;
+  webUrl?: string;
   serveWeb?: boolean;
 };
 
@@ -51,6 +52,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   const passwordHash = options.passwordHash ?? requireConfig("SENT_PASSWORD_HASH");
   const sessionSecret = options.sessionSecret ?? requireConfig("SESSION_SECRET");
   const publicUrl = options.publicUrl ?? env().SENT_PUBLIC_URL;
+  const webUrl = options.webUrl ?? env().SENT_WEB_URL ?? publicUrl;
   const secureCookies = new URL(publicUrl).protocol === "https:";
 
   await app.register(cookie);
@@ -242,7 +244,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       displayName: connected.displayName,
       encryptedCredentials: connected.credentials,
     });
-    return reply.redirect("/settings?connected=1");
+    return reply.redirect(new URL("/settings?connected=1", webUrl).toString());
   });
 
   app.setErrorHandler((error, _request, reply) => {

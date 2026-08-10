@@ -25,6 +25,7 @@ services:
     environment: &sent_environment
       DATABASE_URL: postgres://sent:${POSTGRES_PASSWORD:-sent-local-only}@postgres:5432/sent
       SENT_PUBLIC_URL: ${SENT_PUBLIC_URL}
+      SENT_WEB_URL: ${SENT_WEB_URL:-}
       SENT_PASSWORD_HASH: ${SENT_PASSWORD_HASH}
       SESSION_SECRET: ${SESSION_SECRET}
       TOKEN_ENCRYPTION_KEY: ${TOKEN_ENCRYPTION_KEY}

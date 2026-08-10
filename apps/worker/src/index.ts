@@ -42,9 +42,12 @@ await boss.work("poll-accounts", async (_jobs: Job[]) => {
 await boss.work<{ accountId: string }>("sync-account", { localConcurrency: 2 }, async (jobs) => {
   let changed = 0;
   for (const job of jobs) {
+    const beforeSync = await services.repository.getSyncCursor(job.data.accountId);
     const messageIds = await services.syncAccount(job.data.accountId);
     changed += messageIds.length;
-    if (env().OPENAI_API_KEY) {
+    // Initial archives are handled by the explicit historical batch scripts. Only mail arriving
+    // after backfill is complete should create automatic AI jobs.
+    if (beforeSync.backfillComplete && env().OPENAI_API_KEY) {
       for (const messageId of messageIds) {
         await boss.send(
           "classify-message",
