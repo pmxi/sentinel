@@ -1,7 +1,7 @@
 import type { Account, MessageSummary, Tier } from "@sent/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Flag, Mail, MailOpen, Paperclip, Trash2 } from "lucide-react";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { sentApi } from "./api";
 import { replySeed, useCompose } from "./compose";
@@ -328,10 +328,9 @@ function Reader({
                   <time>{formatListDate(item.receivedAt)}</time>
                 </summary>
                 {item.htmlBody ? (
-                  <iframe
+                  <EmailFrame
                     title={`Message from ${item.from[0]?.name || item.from[0]?.address || "sender"}`}
-                    sandbox="allow-popups allow-popups-to-escape-sandbox"
-                    srcDoc={`<!doctype html><meta name="viewport" content="width=device-width"><base target="_blank"><style>body{font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#171717;margin:0;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>${item.htmlBody}`}
+                    html={item.htmlBody}
                   />
                 ) : (
                   <div className="plain-body">{item.textBody}</div>
@@ -342,11 +341,7 @@ function Reader({
         )}
         <div className="email-body">
           {message.htmlBody ? (
-            <iframe
-              title="Email content"
-              sandbox="allow-popups allow-popups-to-escape-sandbox"
-              srcDoc={`<!doctype html><meta name="viewport" content="width=device-width"><base target="_blank"><style>body{font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#171717;margin:0;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>${message.htmlBody}`}
-            />
+            <EmailFrame title="Email content" html={message.htmlBody} />
           ) : (
             <div className="plain-body">{message.textBody}</div>
           )}
@@ -423,6 +418,53 @@ function TierPicker({ tier, onChange }: { tier: Tier | null; onChange(value: Tie
 
 function EmptyReader() {
   return <section className="reader empty-reader-pane" aria-label="No message selected" />;
+}
+
+function EmailFrame({ title, html }: { title: string; html: string }) {
+  const frameRef = useRef<HTMLIFrameElement>(null);
+
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+
+    let observer: ResizeObserver | undefined;
+    let animationFrame = 0;
+    const resize = () => {
+      window.cancelAnimationFrame(animationFrame);
+      animationFrame = window.requestAnimationFrame(() => {
+        const document = frame.contentDocument;
+        if (!document) return;
+        frame.style.height = "1px";
+        frame.style.height = `${Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0)}px`;
+      });
+    };
+    const observe = () => {
+      observer?.disconnect();
+      const document = frame.contentDocument;
+      if (!document) return;
+      observer = new ResizeObserver(resize);
+      observer.observe(document.documentElement);
+      if (document.body) observer.observe(document.body);
+      resize();
+    };
+
+    frame.addEventListener("load", observe);
+    if (frame.contentDocument?.readyState === "complete") observe();
+    return () => {
+      frame.removeEventListener("load", observe);
+      observer?.disconnect();
+      window.cancelAnimationFrame(animationFrame);
+    };
+  }, []);
+
+  return (
+    <iframe
+      ref={frameRef}
+      title={title}
+      sandbox="allow-same-origin allow-popups allow-popups-to-escape-sandbox"
+      srcDoc={`<!doctype html><meta name="viewport" content="width=device-width"><base target="_blank"><style>html,body{overflow:hidden!important}body{font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#171717;margin:0;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>${html}`}
+    />
+  );
 }
 
 function formatAddress(value: MessageSummary["from"][number]) {

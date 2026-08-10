@@ -631,24 +631,30 @@ a {
   color: var(--faint);
   font-size: 11px;
 }
-.thread-message > iframe,
-.thread-message > .plain-body {
+.thread-message > iframe {
   width: 100%;
-  min-height: 220px;
-  padding: 18px;
+  height: 1px;
+  display: block;
   border: 0;
   border-top: 1px solid var(--line);
-  background: white;
+  overflow: hidden;
+  background: #fff;
+}
+.thread-message > .plain-body {
+  min-height: 220px;
+  padding: 18px;
+  border-top: 1px solid var(--line);
 }
 .email-body {
   max-width: 820px;
-  min-height: 150px;
 }
 .email-body iframe {
   width: 100%;
-  min-height: min(62vh, 700px);
+  height: 1px;
+  display: block;
   border: 0;
-  background: white;
+  overflow: hidden;
+  background: #fff;
 }
 .plain-body {
   color: #222;
