@@ -6,14 +6,14 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { sentApi } from "./api";
 import { replySeed, useCompose } from "./compose";
 
-const viewDetails: Record<string, { title: string; description: string }> = {
-  l1: { title: "Important", description: "Mail worth your attention" },
-  l2: { title: "Updates", description: "Useful automated mail" },
-  l3: { title: "Low priority", description: "Everything you can safely ignore" },
-  unclassified: { title: "Sorting", description: "Mail waiting for Sent’s decision" },
-  all: { title: "All mail", description: "Your complete unified archive" },
-  sent: { title: "Sent", description: "Messages sent from every account" },
-  trash: { title: "Trash", description: "Deleted messages" },
+const viewDetails: Record<string, { title: string }> = {
+  l1: { title: "Important" },
+  l2: { title: "Updates" },
+  l3: { title: "Low priority" },
+  unclassified: { title: "Sorting" },
+  all: { title: "All mail" },
+  sent: { title: "Sent" },
+  trash: { title: "Trash" },
 };
 
 export function InboxPage({ accounts }: { accounts: Account[] }) {
@@ -42,7 +42,6 @@ export function InboxPage({ accounts }: { accounts: Account[] }) {
         <header className="pane-heading">
           <div>
             <h1>{detail?.title}</h1>
-            <p>{detail?.description}</p>
           </div>
           {accounts.length > 1 && (
             <select
@@ -103,11 +102,11 @@ export function SearchResults({ accounts }: { accounts: Account[] }) {
       <section className="message-pane">
         <header className="pane-heading">
           <div>
-            <h1>{q ? `“${q}”` : "Find anything"}</h1>
+            <h1>Search</h1>
             <p>
               {result.data
-                ? `${result.data.messages.length} results · ${result.data.mode} search`
-                : "Search across both accounts"}
+                ? `${q}: ${result.data.messages.length} results (${result.data.mode})`
+                : q}
             </p>
           </div>
         </header>
@@ -171,8 +170,7 @@ function MessageList({
   if (messages.length === 0)
     return (
       <div className="empty-list">
-        <strong>You’re clear.</strong>
-        <span>Nothing needs your attention here.</span>
+        <strong>No messages</strong>
       </div>
     );
   return (
@@ -191,7 +189,6 @@ function MessageList({
             <span className="message-subject">{message.subject}</span>
             <span className="message-snippet">{message.snippet}</span>
             <span className="message-meta">
-              <AccountDot provider={message.account.provider} />
               {message.account.email}
               {message.attachmentCount > 0 && (
                 <>
@@ -317,7 +314,7 @@ function Reader({
         </dl>
         {conversation.length > 0 && (
           <div className="thread-history">
-            <span className="eyebrow">
+            <span className="section-label">
               {conversation.length} other {conversation.length === 1 ? "message" : "messages"} in
               this conversation
             </span>
@@ -334,7 +331,7 @@ function Reader({
                   <iframe
                     title={`Message from ${item.from[0]?.name || item.from[0]?.address || "sender"}`}
                     sandbox="allow-popups allow-popups-to-escape-sandbox"
-                    srcDoc={`<!doctype html><meta name="viewport" content="width=device-width"><base target="_blank"><style>body{font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#24221f;margin:0;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}a{color:#315d4b}</style>${item.htmlBody}`}
+                    srcDoc={`<!doctype html><meta name="viewport" content="width=device-width"><base target="_blank"><style>body{font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#171717;margin:0;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>${item.htmlBody}`}
                   />
                 ) : (
                   <div className="plain-body">{item.textBody}</div>
@@ -348,7 +345,7 @@ function Reader({
             <iframe
               title="Email content"
               sandbox="allow-popups allow-popups-to-escape-sandbox"
-              srcDoc={`<!doctype html><meta name="viewport" content="width=device-width"><base target="_blank"><style>body{font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#24221f;margin:0;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}a{color:#315d4b}</style>${message.htmlBody}`}
+              srcDoc={`<!doctype html><meta name="viewport" content="width=device-width"><base target="_blank"><style>body{font:15px/1.55 -apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#171717;margin:0;overflow-wrap:anywhere}img{max-width:100%;height:auto}table{max-width:100%}</style>${message.htmlBody}`}
             />
           ) : (
             <div className="plain-body">{message.textBody}</div>
@@ -356,7 +353,7 @@ function Reader({
         </div>
         {message.attachments.length > 0 && (
           <div className="attachments">
-            <span className="eyebrow">Attachments</span>
+            <span className="section-label">Attachments</span>
             <div>
               {message.attachments.map((item) => (
                 <a
@@ -428,9 +425,6 @@ function EmptyReader() {
   return <section className="reader empty-reader-pane" aria-label="No message selected" />;
 }
 
-function AccountDot({ provider }: { provider: "gmail" | "microsoft" }) {
-  return <span className={`account-dot ${provider}`} />;
-}
 function formatAddress(value: MessageSummary["from"][number]) {
   return value.name && value.name.toLowerCase() !== value.address.toLowerCase()
     ? `${value.name} <${value.address}>`

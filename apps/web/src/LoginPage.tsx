@@ -16,9 +16,7 @@ export function LoginPage() {
   return (
     <main className="login-page">
       <section className="login-card">
-        <span className="eyebrow">Private mail</span>
-        <h1>Welcome to Sent.</h1>
-        <p>Your important mail, without the weight of everything else.</p>
+        <h1>Sent</h1>
         <form onSubmit={submit}>
           <label htmlFor="password">Password</label>
           <div className="password-field">

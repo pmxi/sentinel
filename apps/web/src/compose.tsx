@@ -1,6 +1,6 @@
 import type { Account, DraftInput, MailAddress, MessageDetail } from "@sent/shared";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Paperclip, Send, Trash2, X } from "lucide-react";
+import { Paperclip, Trash2, X } from "lucide-react";
 import {
   createContext,
   type ReactNode,
@@ -146,10 +146,7 @@ function Composer({
   return (
     <div className="composer" role="dialog" aria-label="Compose message">
       <header className="composer-header">
-        <div>
-          <span className="eyebrow">New message</span>
-          <strong>{subject || "Untitled"}</strong>
-        </div>
+        <span>New message</span>
         <button className="icon-button" onClick={close} aria-label="Close composer">
           <X size={19} />
         </button>
@@ -201,14 +198,14 @@ function Composer({
           id="compose-subject"
           value={subject}
           onChange={(event) => setSubject(event.target.value)}
-          placeholder="What’s this about?"
+          placeholder="Subject"
         />
       </div>
       <textarea
         className="compose-body"
         value={body}
         onChange={(event) => setBody(event.target.value)}
-        placeholder="Write a message…"
+        placeholder="Message"
       />
       {files.length > 0 && (
         <div className="file-chips">
@@ -226,7 +223,7 @@ function Composer({
       <footer className="composer-footer">
         <div className="compose-actions">
           <button className="primary-button" onClick={() => void send()}>
-            <Send size={16} /> Send
+            Send
           </button>
           <label className="icon-button file-button" aria-label="Add attachments">
             <Paperclip size={19} />

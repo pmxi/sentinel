@@ -9,10 +9,6 @@
   --faint: #999;
   --line: #e2e2e2;
   --paper: #fff;
-  --canvas: #fff;
-  --sage: #171717;
-  --sage-light: #f1f1f1;
-  --amber: #666;
   --red: #b42318;
 }
 
@@ -63,34 +59,23 @@ a {
 .fatal-error strong {
   color: var(--ink);
 }
-.eyebrow {
+.section-label {
   display: block;
-  color: var(--muted);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.13em;
-  text-transform: uppercase;
+  color: #555;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .login-page {
   background: #fff;
 }
 .login-card {
-  width: min(420px, calc(100vw - 36px));
-  padding: 32px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
+  width: min(320px, calc(100vw - 36px));
 }
 .login-card h1 {
-  margin: 7px 0 8px;
-  font-size: 30px;
-  line-height: 1.15;
-}
-.login-card > p {
-  margin: 0 0 32px;
-  color: var(--muted);
-  line-height: 1.55;
+  margin: 0 0 24px;
+  font-size: 18px;
+  line-height: 1.2;
 }
 .login-card label {
   display: block;
@@ -100,10 +85,10 @@ a {
 }
 .password-field {
   display: flex;
-  height: 48px;
+  height: 36px;
   border: 1px solid var(--line);
-  border-radius: 6px;
-  background: white;
+  border-radius: 2px;
+  background: #fff;
   overflow: hidden;
   transition:
     border-color 0.15s,
@@ -125,8 +110,9 @@ a {
   width: auto;
   padding: 0 16px;
   border: 0;
-  background: #171717;
-  color: white;
+  border-left: 1px solid var(--line);
+  background: #fff;
+  color: #111;
   font-size: 12px;
   cursor: pointer;
 }
@@ -162,8 +148,8 @@ a {
   justify-content: space-between;
 }
 .sidebar-brand a {
-  font-size: 20px;
-  font-weight: 700;
+  font-size: 16px;
+  font-weight: 600;
 }
 .mobile-close {
   display: none;
@@ -171,17 +157,18 @@ a {
   background: none;
 }
 .compose-button {
-  height: 38px;
+  height: 32px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  margin: 20px 3px 18px;
-  border: 1px solid #171717;
-  border-radius: 6px;
-  background: #171717;
-  color: white;
+  justify-content: flex-start;
+  margin: 14px 3px 18px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: #fff;
+  color: #111;
   font-size: 13px;
-  font-weight: 600;
+  font-weight: 400;
   cursor: pointer;
 }
 .sidebar nav,
@@ -193,24 +180,22 @@ a {
 .nav-label {
   padding: 4px 11px 7px;
   color: #777;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
+  font-size: 11px;
+  font-weight: 400;
 }
 .nav-label.secondary {
   margin-top: 14px;
 }
 .sidebar nav a,
 .sidebar-bottom > a {
-  height: 34px;
+  height: 32px;
   display: flex;
   align-items: center;
   padding: 0 11px;
-  border-radius: 5px;
+  border-radius: 2px;
   color: #555;
   font-size: 13px;
-  font-weight: 500;
+  font-weight: 400;
 }
 .sidebar nav a:hover,
 .sidebar-bottom > a:hover {
@@ -224,8 +209,8 @@ a {
 .sidebar nav a small {
   margin-left: auto;
   color: var(--faint);
-  font-size: 9px;
-  font-weight: 700;
+  font-size: 11px;
+  font-weight: 400;
 }
 .sidebar-bottom {
   margin-top: auto;
@@ -238,31 +223,16 @@ a {
 .account-stack > div {
   display: flex;
   align-items: center;
-  gap: 7px;
   min-width: 0;
   padding: 4px;
   color: #666;
-  font-size: 10px;
+  font-size: 11px;
 }
 .account-stack > div span:last-child {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.account-dot {
-  flex: 0 0 auto;
-  width: 7px;
-  height: 7px;
-  display: inline-block;
-  border-radius: 50%;
-}
-.account-dot.gmail {
-  background: #d25547;
-}
-.account-dot.microsoft {
-  background: #3976b9;
-}
-
 .app-main {
   min-width: 0;
   min-height: 0;
@@ -273,7 +243,7 @@ a {
   overflow: hidden;
 }
 .topbar {
-  flex: 0 0 56px;
+  flex: 0 0 48px;
   display: flex;
   align-items: center;
   gap: 14px;
@@ -286,14 +256,14 @@ a {
   background: none;
 }
 .global-search {
-  width: min(590px, 62vw);
-  height: 36px;
+  width: min(480px, 62vw);
+  height: 30px;
   display: flex;
   align-items: center;
   padding: 0 12px;
   border: 1px solid #ddd;
-  border-radius: 6px;
-  background: #f5f5f5;
+  border-radius: 2px;
+  background: #fff;
 }
 .global-search input {
   flex: 1;
@@ -318,7 +288,7 @@ a {
   display: flex;
   align-items: center;
   gap: 3px;
-  font-weight: 600;
+  font-weight: 400;
 }
 
 .mail-layout {
@@ -336,25 +306,24 @@ a {
   background: #fff;
 }
 .pane-heading {
-  flex: 0 0 86px;
+  flex: 0 0 50px;
   display: flex;
-  align-items: flex-end;
+  align-items: center;
   justify-content: space-between;
-  padding: 20px 20px 16px;
+  padding: 0 16px;
 }
 .pane-heading h1,
 .page-title h1 {
-  margin: 0 0 3px;
-  font-size: 25px;
-  line-height: 1.1;
-  font-weight: 650;
-  letter-spacing: -0.015em;
+  margin: 0;
+  font-size: 18px;
+  line-height: 1.2;
+  font-weight: 600;
 }
 .pane-heading p,
 .page-title p {
-  margin: 0;
+  margin: 3px 0 0;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
 }
 .pane-heading select {
   max-width: 130px;
@@ -363,7 +332,7 @@ a {
   outline: 0;
   background: transparent;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 12px;
   text-align: right;
 }
 .message-list {
@@ -376,13 +345,12 @@ a {
   position: relative;
   width: 100%;
   display: block;
-  padding: 14px 18px;
+  padding: 10px 14px;
   border: 0;
   border-bottom: 1px solid var(--line);
   background: transparent;
   text-align: left;
   cursor: pointer;
-  transition: background 0.12s;
 }
 .message-row:hover {
   background: #f6f6f6;
@@ -413,7 +381,7 @@ a {
 }
 .message-row.unread .message-line strong,
 .message-row.unread .message-subject {
-  font-weight: 700;
+  font-weight: 600;
   color: #111;
 }
 .message-copy {
@@ -437,7 +405,7 @@ a {
 .message-line time {
   flex: 0 0 auto;
   color: #888;
-  font-size: 9px;
+  font-size: 11px;
 }
 .message-subject {
   display: block;
@@ -454,7 +422,7 @@ a {
   margin-top: 2px;
   overflow: hidden;
   color: #777;
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -463,19 +431,16 @@ a {
   display: flex;
   align-items: center;
   gap: 5px;
-  margin-top: 7px;
+  margin-top: 5px;
   overflow: hidden;
   color: #999;
-  font-size: 8px;
+  font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .sorting-label {
-  padding: 1px 5px;
-  border-radius: 3px;
-  background: #e5e5e5;
   color: #666;
-  font-weight: 700;
+  font-weight: 400;
 }
 .row-flag {
   position: absolute;
@@ -491,7 +456,7 @@ a {
 .reader-skeleton {
   margin: 10px 16px;
   height: 74px;
-  border-radius: 5px;
+  border-radius: 2px;
   background: linear-gradient(90deg, #eee 20%, #f7f7f7 50%, #eee 80%);
   background-size: 300% 100%;
   animation: shimmer 1.4s infinite;
@@ -514,10 +479,10 @@ a {
   text-align: center;
 }
 .empty-list strong {
-  margin-top: 7px;
+  margin: 0;
   color: #555;
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 400;
 }
 .empty-reader-pane {
   background: #fff;
@@ -531,7 +496,7 @@ a {
   overflow: hidden;
 }
 .reader-toolbar {
-  flex: 0 0 48px;
+  flex: 0 0 40px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -545,7 +510,7 @@ a {
   border: 0;
   background: none;
   color: var(--muted);
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
 }
 .toolbar-actions {
@@ -553,12 +518,12 @@ a {
   gap: 3px;
 }
 .icon-button {
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
   display: inline-grid;
   place-items: center;
   border: 0;
-  border-radius: 4px;
+  border-radius: 2px;
   background: transparent;
   color: #666;
   cursor: pointer;
@@ -622,16 +587,16 @@ a {
 .thread-history {
   display: grid;
   gap: 8px;
-  margin-top: 25px;
+  margin: 0 0 20px;
 }
-.thread-history > .eyebrow {
+.thread-history > .section-label {
   margin-bottom: 2px;
 }
 .thread-message {
   max-width: 820px;
   border: 1px solid var(--line);
-  border-radius: 5px;
-  background: #f7f7f7;
+  border-radius: 2px;
+  background: #fff;
   overflow: hidden;
 }
 .thread-message summary {
@@ -659,12 +624,12 @@ a {
 }
 .thread-message summary strong {
   color: #444;
-  font-size: 11px;
+  font-size: 12px;
 }
 .thread-message summary small,
 .thread-message summary time {
   color: var(--faint);
-  font-size: 9px;
+  font-size: 11px;
 }
 .thread-message > iframe,
 .thread-message > .plain-body {
@@ -715,9 +680,9 @@ a {
   min-width: 180px;
   padding: 10px 12px;
   border: 1px solid var(--line);
-  border-radius: 9px;
+  border-radius: 2px;
   color: #555;
-  font-size: 11px;
+  font-size: 12px;
 }
 .attachments a span {
   display: flex;
@@ -725,16 +690,16 @@ a {
 }
 .attachments a small {
   color: var(--faint);
-  font-size: 8px;
+  font-size: 10px;
 }
 .reasoning {
   max-width: 660px;
   margin-top: 26px;
   border: 1px solid var(--line);
-  border-radius: 5px;
-  background: #f7f7f7;
+  border-radius: 2px;
+  background: #fff;
   color: #555;
-  font-size: 10px;
+  font-size: 12px;
 }
 .reasoning summary {
   display: flex;
@@ -762,10 +727,10 @@ a {
   height: 35px;
   padding: 0 13px;
   border: 1px solid var(--line);
-  border-radius: 5px;
+  border-radius: 2px;
   background: white;
   color: #555;
-  font-size: 10px;
+  font-size: 12px;
   cursor: pointer;
 }
 .reply-actions button:hover {
@@ -783,31 +748,21 @@ a {
   display: flex;
   flex-direction: column;
   border: 1px solid #ccc;
-  border-radius: 7px;
+  border-radius: 0;
   background: var(--paper);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.18);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
   overflow: hidden;
 }
 .composer-header {
-  min-height: 58px;
+  min-height: 40px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 0 15px 0 18px;
-  background: #f3f3f3;
-}
-.composer-header > div {
-  min-width: 0;
-}
-.composer-header strong {
-  display: block;
-  max-width: 430px;
-  margin-top: 2px;
-  overflow: hidden;
-  font-size: 15px;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+  font-size: 13px;
   font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .compose-row {
   min-height: 43px;
@@ -820,7 +775,7 @@ a {
 .compose-row label {
   flex: 0 0 50px;
   color: #777;
-  font-size: 10px;
+  font-size: 12px;
 }
 .compose-row input,
 .compose-row select {
@@ -831,7 +786,7 @@ a {
   outline: 0;
   background: transparent;
   color: var(--ink);
-  font-size: 12px;
+  font-size: 13px;
 }
 .compose-row select {
   cursor: pointer;
@@ -840,11 +795,8 @@ a {
   border: 0;
   background: none;
   color: #777;
-  font-size: 9px;
+  font-size: 11px;
   cursor: pointer;
-}
-.subject-row input {
-  font-weight: 600;
 }
 .compose-body {
   flex: 1;
@@ -855,7 +807,7 @@ a {
   outline: 0;
   background: transparent;
   color: #222;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1.6;
 }
 .file-chips {
@@ -869,9 +821,10 @@ a {
   align-items: center;
   gap: 6px;
   padding: 6px 8px;
-  border-radius: 7px;
-  background: #eee;
-  font-size: 9px;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: #fff;
+  font-size: 11px;
 }
 .file-chips button {
   border: 0;
@@ -895,17 +848,17 @@ a {
   gap: 7px;
 }
 .primary-button {
-  height: 35px;
+  height: 30px;
   display: flex;
   align-items: center;
   gap: 7px;
   padding: 0 15px;
-  border: 0;
-  border-radius: 5px;
-  background: #171717;
-  color: white;
-  font-size: 11px;
-  font-weight: 600;
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: #fff;
+  color: #111;
+  font-size: 12px;
+  font-weight: 400;
   cursor: pointer;
 }
 .file-button {
@@ -920,22 +873,22 @@ a {
 }
 .save-state {
   color: #999;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .single-page {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  padding: 34px clamp(22px, 5vw, 70px) 60px;
+  padding: 24px 32px 48px;
   background: #fff;
 }
 .page-title {
   max-width: 760px;
-  margin-bottom: 32px;
+  margin-bottom: 20px;
 }
 .page-title h1 {
-  font-size: 36px;
+  font-size: 18px;
 }
 .page-title p {
   margin-top: 6px;
@@ -943,17 +896,15 @@ a {
 }
 .draft-list {
   max-width: 880px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
+  border-top: 1px solid var(--line);
   background: var(--paper);
-  overflow: hidden;
 }
 .draft-list > button {
   width: 100%;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
-  padding: 15px;
+  padding: 10px 0;
   border: 0;
   border-bottom: 1px solid var(--line);
   background: transparent;
@@ -979,17 +930,18 @@ a {
 }
 .draft-list strong {
   font-size: 12px;
+  font-weight: 600;
 }
 .draft-list small,
 .draft-list time {
   margin-top: 3px;
   color: #888;
-  font-size: 9px;
+  font-size: 11px;
 }
 .draft-list p {
   margin: 6px 0 0;
   color: #666;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .settings-page {
@@ -1001,7 +953,7 @@ a {
   margin-bottom: 28px;
 }
 .settings-page .page-title h1 {
-  font-size: 20px;
+  font-size: 18px;
 }
 .settings-section {
   max-width: 620px;
@@ -1028,7 +980,6 @@ a {
 .connected-account span:last-child {
   color: #666;
   font-size: 11px;
-  text-transform: capitalize;
 }
 .connect-actions {
   display: flex;
@@ -1126,14 +1077,13 @@ a {
     display: none;
   }
   .pane-heading {
-    flex-basis: 92px;
-    padding-top: 15px;
+    flex-basis: 50px;
   }
   .pane-heading h1 {
-    font-size: 26px;
+    font-size: 18px;
   }
   .message-row {
-    padding: 14px 15px;
+    padding: 10px 14px;
   }
   .reader-toolbar {
     padding: 0 10px;

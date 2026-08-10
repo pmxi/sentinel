@@ -113,7 +113,6 @@ function Shell({ accounts }: { accounts: Account[] }) {
           <div className="account-stack">
             {accounts.map((account) => (
               <div key={account.id} title={account.email}>
-                <span className={`account-dot ${account.provider}`} />
                 <span>{account.email}</span>
               </div>
             ))}
@@ -136,15 +135,13 @@ function Shell({ accounts }: { accounts: Account[] }) {
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="Search by person, topic, or meaning…"
+              placeholder="Search"
             />
           </form>
         </header>
         {accounts.length === 0 && location.pathname !== "/settings" && (
           <div className="connect-banner">
-            <span>
-              <strong>Connect your first inbox</strong> to begin importing mail.
-            </span>
+            <span>Connect an account to import mail.</span>
             <Link to="/settings">Open settings →</Link>
           </div>
         )}
@@ -170,7 +167,6 @@ function DraftsPage() {
     <section className="single-page">
       <header className="page-title">
         <h1>Drafts</h1>
-        <p>Saved inside Sent and available on every device.</p>
       </header>
       <div className="draft-list">
         {drafts.data?.drafts.map((draft: Draft) => (
@@ -196,7 +192,6 @@ function DraftsPage() {
       {!drafts.isLoading && !drafts.data?.drafts.length && (
         <div className="empty-list">
           <strong>No drafts</strong>
-          <span>Messages you’re writing will be saved here.</span>
         </div>
       )}
     </section>
