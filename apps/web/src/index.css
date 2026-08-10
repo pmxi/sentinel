@@ -313,10 +313,12 @@ a {
 
 .app-main {
   min-width: 0;
+  min-height: 0;
   height: 100%;
   display: flex;
   flex-direction: column;
   background: var(--paper);
+  overflow: hidden;
 }
 .topbar {
   flex: 0 0 62px;
@@ -396,6 +398,7 @@ a {
 }
 .message-pane {
   min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   border-right: 1px solid var(--line);
@@ -432,7 +435,41 @@ a {
   font-size: 10px;
   text-align: right;
 }
+.sorting-notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin: 0 12px 12px;
+  padding: 9px 10px;
+  border: 1px solid #ded8c9;
+  border-radius: 9px;
+  background: #f3efe5;
+  color: #716a5e;
+  font-size: 9px;
+  line-height: 1.35;
+}
+.sorting-notice a {
+  color: var(--sage);
+  font-weight: 700;
+  white-space: nowrap;
+}
+.sorting-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ba8243;
+  box-shadow: 0 0 0 4px rgba(186, 130, 67, 0.12);
+  animation: sorting-pulse 1.8s ease-in-out infinite;
+}
+@keyframes sorting-pulse {
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+}
 .message-list {
+  flex: 1;
   min-height: 0;
   overflow-y: auto;
   border-top: 1px solid var(--line);
@@ -543,6 +580,13 @@ a {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.sorting-label {
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: #eee8da;
+  color: #8a693d;
+  font-weight: 700;
+}
 .row-flag {
   position: absolute;
   top: 16px;
@@ -587,6 +631,69 @@ a {
   font:
     600 18px "Newsreader",
     serif;
+}
+.empty-reader-pane {
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 50% 43%, rgba(231, 238, 233, 0.62), transparent 31%), var(--paper);
+}
+.empty-reader-pane .empty-reader {
+  width: min(410px, calc(100% - 48px));
+  min-height: 0;
+  padding: 34px;
+}
+.empty-reader-pane .empty-reader > p {
+  max-width: 370px;
+  margin: 4px 0 16px;
+  color: #858077;
+  line-height: 1.55;
+}
+.empty-reader-pane .empty-reader > .eyebrow {
+  margin-top: 12px;
+}
+.tier-guide {
+  width: 100%;
+  display: grid;
+  gap: 2px;
+  padding: 5px;
+  border: 1px solid rgba(49, 93, 75, 0.1);
+  border-radius: 12px;
+  background: rgba(255, 254, 250, 0.72);
+  box-shadow: 0 12px 30px rgba(55, 48, 38, 0.04);
+}
+.tier-guide > div {
+  display: grid;
+  grid-template-columns: 31px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 8px;
+  text-align: left;
+}
+.tier-guide > div:first-child {
+  background: var(--sage-light);
+}
+.tier-guide b {
+  color: var(--sage);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+}
+.tier-guide span {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.tier-guide span strong {
+  margin: 0;
+  color: #4f4c46;
+  font:
+    600 11px "DM Sans",
+    sans-serif;
+}
+.tier-guide small {
+  color: #9a968e;
+  font-size: 8px;
 }
 .done-mark,
 .empty-reader-mark {

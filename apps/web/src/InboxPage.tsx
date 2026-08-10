@@ -17,7 +17,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useEffect } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { sentApi } from "./api";
 import { replySeed, useCompose } from "./compose";
 
@@ -25,7 +25,7 @@ const viewDetails: Record<string, { title: string; description: string }> = {
   l1: { title: "Important", description: "Mail worth your attention" },
   l2: { title: "Updates", description: "Useful automated mail" },
   l3: { title: "Low priority", description: "Everything you can safely ignore" },
-  unclassified: { title: "Unclassified", description: "Visible until Sent has decided" },
+  unclassified: { title: "Sorting", description: "Mail waiting for Sent’s decision" },
   all: { title: "All mail", description: "Your complete unified archive" },
   sent: { title: "Sent", description: "Messages sent from every account" },
   trash: { title: "Trash", description: "Deleted messages" },
@@ -41,8 +41,10 @@ export function InboxPage({ accounts }: { accounts: Account[] }) {
   const messages = useQuery({
     queryKey: ["messages", view, accountId],
     queryFn: () => sentApi.messages(query),
+    refetchInterval: view === "l1" || view === "unclassified" ? 4_000 : false,
   });
   const detail = viewDetails[view] ?? viewDetails.all;
+  const hasUnclassified = messages.data?.messages.some((message) => message.tier === null) ?? false;
   const select = (message: MessageSummary) => {
     setParams((current) => {
       const next = new URLSearchParams(current);
@@ -79,6 +81,15 @@ export function InboxPage({ accounts }: { accounts: Account[] }) {
             </select>
           )}
         </header>
+        {view === "l1" && hasUnclassified && (
+          <div className="sorting-notice">
+            <span className="sorting-pulse" />
+            <span>
+              Sent is sorting imported mail. Until it decides, every message stays in Important.
+            </span>
+            <Link to="/inbox/unclassified">View sorting</Link>
+          </div>
+        )}
         <MessageList
           messages={messages.data?.messages ?? []}
           loading={messages.isLoading}
@@ -221,6 +232,7 @@ function MessageList({
                   {message.attachmentCount}
                 </>
               )}
+              {message.tier === null && <span className="sorting-label">Sorting…</span>}
               {message.syncPending && <span>Syncing…</span>}
             </span>
           </span>
@@ -470,8 +482,35 @@ function EmptyReader() {
         <span className="empty-reader-mark">
           <CornerUpLeft size={24} />
         </span>
-        <strong>Open a message</strong>
-        <span>Choose something from the list to read it here.</span>
+        <span className="eyebrow">One inbox, three levels</span>
+        <strong>Your inbox, distilled.</strong>
+        <p>
+          Choose a message to read it here. Sent keeps everything, but only asks for your attention
+          when it matters.
+        </p>
+        <div className="tier-guide">
+          <div>
+            <b>L1</b>
+            <span>
+              <strong>Important</strong>
+              <small>Human and reply-worthy</small>
+            </span>
+          </div>
+          <div>
+            <b>L2</b>
+            <span>
+              <strong>Updates</strong>
+              <small>Useful alerts and automation</small>
+            </span>
+          </div>
+          <div>
+            <b>L3</b>
+            <span>
+              <strong>Low priority</strong>
+              <small>Marketing, surveys, and noise</small>
+            </span>
+          </div>
+        </div>
       </div>
     </section>
   );

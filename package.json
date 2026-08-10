@@ -23,6 +23,7 @@
     "@types/node": "^26.2.0",
     "argon2": "^0.45.1",
     "concurrently": "latest",
+    "dotenv": "^17.4.2",
     "tsx": "latest",
     "typescript": "latest",
     "vitest": "latest"

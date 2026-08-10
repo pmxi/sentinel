@@ -348,7 +348,8 @@ export class MailRepository {
     };
     if (input.accountId) conditions.push(`m.account_id=${push(input.accountId)}`);
     const effectiveTier = "coalesce(c.manual_tier,c.model_tier)";
-    if (["l1", "l2", "l3", "unclassified"].includes(input.view)) conditions.push("not m.archived");
+    if (["l1", "l2", "l3", "unclassified"].includes(input.view))
+      conditions.push("not m.archived", "m.direction='inbound'");
     if (input.view === "l1") conditions.push(`(${effectiveTier}=1 or c.message_id is null)`);
     else if (input.view === "l2") conditions.push(`${effectiveTier}=2`);
     else if (input.view === "l3") conditions.push(`${effectiveTier}=3`);
@@ -653,7 +654,8 @@ export class MailRepository {
     return (
       await getPool().query<{ id: string }>(
         `select m.id from messages m left join classifications c on c.message_id=m.id
-      where c.message_id is null and not m.tombstone order by m.received_at desc limit $1`,
+      where c.message_id is null and not m.tombstone and m.direction='inbound'
+      order by m.received_at desc limit $1`,
         [limit],
       )
     ).rows.map((row) => row.id);

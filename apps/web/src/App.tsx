@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Archive,
   ChevronRight,
+  CircleDashed,
   CircleHelp,
   Inbox,
   LogOut,
@@ -118,6 +119,7 @@ function Shell({ accounts }: { accounts: Account[] }) {
           <NavItem to="/inbox/l2" icon={<Inbox size={17} />} label="Updates" badge="L2" />
           <NavItem to="/inbox/l3" icon={<Archive size={17} />} label="Low priority" badge="L3" />
           <span className="nav-label secondary">Mail</span>
+          <NavItem to="/inbox/unclassified" icon={<CircleDashed size={17} />} label="Sorting" />
           <NavItem to="/inbox/all" icon={<Mail size={17} />} label="All mail" />
           <NavItem to="/inbox/sent" icon={<Send size={17} />} label="Sent" />
           <NavItem to="/drafts" icon={<PenLine size={17} />} label="Drafts" />
