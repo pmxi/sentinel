@@ -433,17 +433,19 @@ function EmailFrame({ title, html }: { title: string; html: string }) {
       window.cancelAnimationFrame(animationFrame);
       animationFrame = window.requestAnimationFrame(() => {
         const document = frame.contentDocument;
-        if (!document) return;
+        const root = document?.documentElement;
+        if (!root) return;
         frame.style.height = "1px";
-        frame.style.height = `${Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0)}px`;
+        frame.style.height = `${Math.max(root.scrollHeight, document.body?.scrollHeight ?? 0)}px`;
       });
     };
     const observe = () => {
       observer?.disconnect();
       const document = frame.contentDocument;
-      if (!document) return;
+      const root = document?.documentElement;
+      if (!root) return;
       observer = new ResizeObserver(resize);
-      observer.observe(document.documentElement);
+      observer.observe(root);
       if (document.body) observer.observe(document.body);
       resize();
     };
