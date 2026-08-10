@@ -1,23 +1,8 @@
 import type { Account, MessageSummary, Tier } from "@sent/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Archive,
-  ArrowLeft,
-  Check,
-  ChevronDown,
-  CornerUpLeft,
-  CornerUpRight,
-  Flag,
-  Mail,
-  MailOpen,
-  MoreHorizontal,
-  Paperclip,
-  Reply,
-  ReplyAll,
-  Trash2,
-} from "lucide-react";
+import { Archive, Flag, Mail, MailOpen, Paperclip, Trash2 } from "lucide-react";
 import { useEffect } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import { sentApi } from "./api";
 import { replySeed, useCompose } from "./compose";
 
@@ -44,7 +29,6 @@ export function InboxPage({ accounts }: { accounts: Account[] }) {
     refetchInterval: view === "l1" || view === "unclassified" ? 4_000 : false,
   });
   const detail = viewDetails[view] ?? viewDetails.all;
-  const hasUnclassified = messages.data?.messages.some((message) => message.tier === null) ?? false;
   const select = (message: MessageSummary) => {
     setParams((current) => {
       const next = new URLSearchParams(current);
@@ -57,7 +41,6 @@ export function InboxPage({ accounts }: { accounts: Account[] }) {
       <section className="message-pane">
         <header className="pane-heading">
           <div>
-            <span className="eyebrow">Inbox</span>
             <h1>{detail?.title}</h1>
             <p>{detail?.description}</p>
           </div>
@@ -81,15 +64,6 @@ export function InboxPage({ accounts }: { accounts: Account[] }) {
             </select>
           )}
         </header>
-        {view === "l1" && hasUnclassified && (
-          <div className="sorting-notice">
-            <span className="sorting-pulse" />
-            <span>
-              Sent is sorting imported mail. Until it decides, every message stays in Important.
-            </span>
-            <Link to="/inbox/unclassified">View sorting</Link>
-          </div>
-        )}
         <MessageList
           messages={messages.data?.messages ?? []}
           loading={messages.isLoading}
@@ -129,7 +103,6 @@ export function SearchResults({ accounts }: { accounts: Account[] }) {
       <section className="message-pane">
         <header className="pane-heading">
           <div>
-            <span className="eyebrow">Search</span>
             <h1>{q ? `“${q}”` : "Find anything"}</h1>
             <p>
               {result.data
@@ -198,9 +171,6 @@ function MessageList({
   if (messages.length === 0)
     return (
       <div className="empty-list">
-        <span className="done-mark">
-          <Check size={25} />
-        </span>
         <strong>You’re clear.</strong>
         <span>Nothing needs your attention here.</span>
       </div>
@@ -210,12 +180,9 @@ function MessageList({
       {messages.map((message) => (
         <button
           key={message.id}
-          className={`message-row ${!message.read ? "unread" : ""} ${selectedId === message.id ? "selected" : ""}`}
+          className={`message-row ${!message.read ? "unread" : ""} ${message.tier === null ? "unclassified" : ""} ${selectedId === message.id ? "selected" : ""}`}
           onClick={() => onSelect(message)}
         >
-          <span className={`avatar provider-${message.account.provider}`}>
-            {initials(message.from[0]?.name || message.from[0]?.address || "?")}
-          </span>
           <span className="message-copy">
             <span className="message-line">
               <strong>{message.from[0]?.name || message.from[0]?.address || "Unknown"}</strong>
@@ -293,9 +260,9 @@ function Reader({
     return (
       <section className="reader">
         <button className="back-button" onClick={close}>
-          <ArrowLeft size={18} /> Back
+          Back
         </button>
-        <div className="empty-reader">Message unavailable.</div>
+        <div className="empty-list">Message unavailable.</div>
       </section>
     );
   const account = accounts.find((item) => item.id === message.account.id);
@@ -307,7 +274,6 @@ function Reader({
     <section className="reader">
       <header className="reader-toolbar">
         <button className="back-button" onClick={close}>
-          <ArrowLeft size={18} />
           <span>Back</span>
         </button>
         <div className="toolbar-actions">
@@ -331,9 +297,6 @@ function Reader({
           >
             <Flag size={18} fill={message.flagged ? "currentColor" : "none"} />
           </button>
-          <button className="icon-button">
-            <MoreHorizontal size={19} />
-          </button>
         </div>
       </header>
       <article className="message-reader">
@@ -353,9 +316,6 @@ function Reader({
             {conversation.map((item) => (
               <details className="thread-message" key={item.id}>
                 <summary>
-                  <span className={`avatar provider-${item.account.provider}`}>
-                    {initials(item.from[0]?.name || item.from[0]?.address || "?")}
-                  </span>
                   <span>
                     <strong>{item.from[0]?.name || item.from[0]?.address || "Unknown"}</strong>
                     <small>{item.snippet}</small>
@@ -376,9 +336,6 @@ function Reader({
           </div>
         )}
         <div className="sender-block">
-          <span className={`avatar large provider-${message.account.provider}`}>
-            {initials(message.from[0]?.name || message.from[0]?.address || "?")}
-          </span>
           <div>
             <strong>{message.from[0]?.name || message.from[0]?.address || "Unknown sender"}</strong>
             <span>{message.from[0]?.address}</span>
@@ -425,19 +382,16 @@ function Reader({
         )}
         {message.reasoning && (
           <details className="reasoning">
-            <summary>
-              Why Sent chose L{message.tier}
-              <ChevronDown size={14} />
-            </summary>
+            <summary>Why Sent chose L{message.tier}</summary>
             <p>{message.reasoning}</p>
           </details>
         )}
         <div className="reply-actions">
           <button onClick={() => account && compose.openCompose(replySeed(message, account))}>
-            <Reply size={16} /> Reply
+            Reply
           </button>
           <button onClick={() => account && compose.openCompose(replySeed(message, account, true))}>
-            <ReplyAll size={16} /> Reply all
+            Reply all
           </button>
           <button
             onClick={() =>
@@ -451,7 +405,7 @@ function Reader({
               })
             }
           >
-            <CornerUpRight size={16} /> Forward
+            Forward
           </button>
         </div>
       </article>
@@ -476,56 +430,11 @@ function TierPicker({ tier, onChange }: { tier: Tier | null; onChange(value: Tie
 }
 
 function EmptyReader() {
-  return (
-    <section className="reader empty-reader-pane">
-      <div className="empty-reader">
-        <span className="empty-reader-mark">
-          <CornerUpLeft size={24} />
-        </span>
-        <span className="eyebrow">One inbox, three levels</span>
-        <strong>Your inbox, distilled.</strong>
-        <p>
-          Choose a message to read it here. Sent keeps everything, but only asks for your attention
-          when it matters.
-        </p>
-        <div className="tier-guide">
-          <div>
-            <b>L1</b>
-            <span>
-              <strong>Important</strong>
-              <small>Human and reply-worthy</small>
-            </span>
-          </div>
-          <div>
-            <b>L2</b>
-            <span>
-              <strong>Updates</strong>
-              <small>Useful alerts and automation</small>
-            </span>
-          </div>
-          <div>
-            <b>L3</b>
-            <span>
-              <strong>Low priority</strong>
-              <small>Marketing, surveys, and noise</small>
-            </span>
-          </div>
-        </div>
-      </div>
-    </section>
-  );
+  return <section className="reader empty-reader-pane" aria-label="No message selected" />;
 }
 
 function AccountDot({ provider }: { provider: "gmail" | "microsoft" }) {
   return <span className={`account-dot ${provider}`} />;
-}
-function initials(value: string) {
-  return value
-    .split(/\s+/)
-    .map((part) => part[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
 }
 function formatListDate(value: string) {
   const date = new Date(value);

@@ -1,22 +1,6 @@
 import type { Account, Draft } from "@sent/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Archive,
-  ChevronRight,
-  CircleDashed,
-  CircleHelp,
-  Inbox,
-  LogOut,
-  Mail,
-  Menu,
-  PenLine,
-  Search,
-  Send,
-  Settings,
-  Sparkles,
-  Trash2,
-  X,
-} from "lucide-react";
+import { Menu, X } from "lucide-react";
 import { type FormEvent, useEffect, useState } from "react";
 import {
   Link,
@@ -38,7 +22,7 @@ export default function App() {
   if (session.isLoading)
     return (
       <div className="app-loading">
-        <span className="brand-mark">S</span>
+        <strong>Sent</strong>
       </div>
     );
   if (session.error instanceof ApiError && session.error.status === 401) return <LoginPage />;
@@ -97,7 +81,6 @@ function Shell({ accounts }: { accounts: Account[] }) {
       <aside className={`sidebar ${menuOpen ? "open" : ""}`}>
         <div className="sidebar-brand">
           <Link to="/">
-            <span className="brand-mark">S</span>
             <strong>Sent</strong>
           </Link>
           <button className="mobile-close" onClick={() => setMenuOpen(false)}>
@@ -111,22 +94,22 @@ function Shell({ accounts }: { accounts: Account[] }) {
             setMenuOpen(false);
           }}
         >
-          <PenLine size={17} /> Compose
+          Compose
         </button>
         <nav>
           <span className="nav-label">Attention</span>
-          <NavItem to="/inbox/l1" icon={<Sparkles size={17} />} label="Important" badge="L1" />
-          <NavItem to="/inbox/l2" icon={<Inbox size={17} />} label="Updates" badge="L2" />
-          <NavItem to="/inbox/l3" icon={<Archive size={17} />} label="Low priority" badge="L3" />
+          <NavItem to="/inbox/l1" label="Important" badge="L1" />
+          <NavItem to="/inbox/l2" label="Updates" badge="L2" />
+          <NavItem to="/inbox/l3" label="Low priority" badge="L3" />
           <span className="nav-label secondary">Mail</span>
-          <NavItem to="/inbox/unclassified" icon={<CircleDashed size={17} />} label="Sorting" />
-          <NavItem to="/inbox/all" icon={<Mail size={17} />} label="All mail" />
-          <NavItem to="/inbox/sent" icon={<Send size={17} />} label="Sent" />
-          <NavItem to="/drafts" icon={<PenLine size={17} />} label="Drafts" />
-          <NavItem to="/inbox/trash" icon={<Trash2 size={17} />} label="Trash" />
+          <NavItem to="/inbox/unclassified" label="Sorting" />
+          <NavItem to="/inbox/all" label="All mail" />
+          <NavItem to="/inbox/sent" label="Sent" />
+          <NavItem to="/drafts" label="Drafts" />
+          <NavItem to="/inbox/trash" label="Trash" />
         </nav>
         <div className="sidebar-bottom">
-          <NavItem to="/settings" icon={<Settings size={17} />} label="Settings" />
+          <NavItem to="/settings" label="Settings" />
           <div className="account-stack">
             {accounts.map((account) => (
               <div key={account.id} title={account.email}>
@@ -150,26 +133,19 @@ function Shell({ accounts }: { accounts: Account[] }) {
             <Menu size={21} />
           </button>
           <form className="global-search" onSubmit={submitSearch}>
-            <Search size={18} />
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search by person, topic, or meaning…"
             />
-            <kbd>⌘ K</kbd>
           </form>
-          <Link to="/settings" className="topbar-avatar">
-            PM
-          </Link>
         </header>
         {accounts.length === 0 && location.pathname !== "/settings" && (
           <div className="connect-banner">
             <span>
               <strong>Connect your first inbox</strong> to begin importing mail.
             </span>
-            <Link to="/settings">
-              Open settings <ChevronRight size={15} />
-            </Link>
+            <Link to="/settings">Open settings →</Link>
           </div>
         )}
         <Outlet />
@@ -178,20 +154,9 @@ function Shell({ accounts }: { accounts: Account[] }) {
   );
 }
 
-function NavItem({
-  to,
-  icon,
-  label,
-  badge,
-}: {
-  to: string;
-  icon: React.ReactNode;
-  label: string;
-  badge?: string;
-}) {
+function NavItem({ to, label, badge }: { to: string; label: string; badge?: string }) {
   return (
     <NavLink to={to} className={({ isActive }) => (isActive ? "active" : "")}>
-      {icon}
       <span>{label}</span>
       {badge && <small>{badge}</small>}
     </NavLink>
@@ -204,16 +169,12 @@ function DraftsPage() {
   return (
     <section className="single-page">
       <header className="page-title">
-        <span className="eyebrow">Mail</span>
         <h1>Drafts</h1>
         <p>Saved inside Sent and available on every device.</p>
       </header>
       <div className="draft-list">
         {drafts.data?.drafts.map((draft: Draft) => (
           <button key={draft.id} onClick={() => compose.openCompose(draft)}>
-            <span className="draft-icon">
-              <PenLine size={17} />
-            </span>
             <span>
               <strong>{draft.subject || "Untitled message"}</strong>
               <small>
@@ -260,7 +221,6 @@ function SettingsPage({ accounts }: { accounts: Account[] }) {
   return (
     <section className="single-page settings-page">
       <header className="page-title">
-        <span className="eyebrow">Sent</span>
         <h1>Settings</h1>
         <p>Connect the inboxes that should feel like one.</p>
       </header>
@@ -305,7 +265,6 @@ function SettingsPage({ accounts }: { accounts: Account[] }) {
         </div>
         <div className="settings-card compact">
           <div className="setting-row">
-            <Sparkles size={18} />
             <span>
               <strong>L1 / L2 / L3 sorting</strong>
               <small>Every new message is classified by OpenAI.</small>
@@ -313,7 +272,6 @@ function SettingsPage({ accounts }: { accounts: Account[] }) {
             <span className="status-pill active">Configured on server</span>
           </div>
           <div className="setting-row">
-            <Search size={18} />
             <span>
               <strong>Hybrid search</strong>
               <small>Postgres full text plus semantic embeddings.</small>
@@ -328,13 +286,11 @@ function SettingsPage({ accounts }: { accounts: Account[] }) {
         </div>
         <div className="settings-card compact">
           <button className="logout-button" onClick={() => logout.mutate()}>
-            <LogOut size={17} /> Sign out
+            Sign out
           </button>
         </div>
       </div>
-      <footer className="settings-footer">
-        <CircleHelp size={16} /> Sent is private, single-user software.
-      </footer>
+      <footer className="settings-footer">Sent is private, single-user software.</footer>
     </section>
   );
 }

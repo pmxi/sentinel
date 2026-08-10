@@ -1,5 +1,4 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ArrowRight, Inbox } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { sentApi } from "./api";
 
@@ -17,9 +16,6 @@ export function LoginPage() {
   return (
     <main className="login-page">
       <section className="login-card">
-        <div className="login-mark">
-          <Inbox size={23} strokeWidth={1.7} />
-        </div>
         <span className="eyebrow">Private mail</span>
         <h1>Welcome to Sent.</h1>
         <p>Your important mail, without the weight of everything else.</p>
@@ -34,8 +30,8 @@ export function LoginPage() {
               autoFocus
               autoComplete="current-password"
             />
-            <button type="submit" disabled={!password || login.isPending} aria-label="Sign in">
-              <ArrowRight size={19} />
+            <button type="submit" disabled={!password || login.isPending}>
+              Sign in
             </button>
           </div>
           {login.isError && <p className="form-error">{login.error.message}</p>}
