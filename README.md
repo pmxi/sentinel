@@ -118,6 +118,7 @@ automatically classifies and embeds newly synchronized messages after `OPENAI_AP
 1. Point a DNS record for the desired hostname at the server.
 2. Set `SENT_DOMAIN=mail.example.com` and `SENT_PUBLIC_URL=https://mail.example.com` in `.env`.
    Leave `SENT_WEB_URL` blank in production so OAuth returns to `SENT_PUBLIC_URL`.
+   Set `HOST=127.0.0.1` when nginx runs on the same host.
 3. Use long random values for `POSTGRES_PASSWORD`, `SESSION_SECRET`, and `TOKEN_ENCRYPTION_KEY`; keep the encryption key stable or existing OAuth tokens cannot be decrypted.
 4. Register the production callback URLs with Google and Microsoft.
 5. Start the stack:
