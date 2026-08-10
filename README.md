@@ -105,10 +105,13 @@ Once the archive has arrived, run the two deliberately manual historical jobs:
 
 ```sh
 pnpm sent:classify-latest
+pnpm sent:classify-latest --account user@example.com
 pnpm sent:embed-archive
 ```
 
-The first classifies at most the newest 500 messages that do not already have a model result. The second embeds every unembedded message. The live worker automatically classifies and embeds newly synchronized messages after `OPENAI_API_KEY` is configured.
+The first classifies at most the newest 500 messages that do not already have a model result,
+optionally restricted to one account. The second embeds every unembedded message. The live worker
+automatically classifies and embeds newly synchronized messages after `OPENAI_API_KEY` is configured.
 
 ## Production deployment
 

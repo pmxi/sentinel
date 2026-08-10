@@ -650,13 +650,15 @@ export class MailRepository {
     );
   }
 
-  async newestUnclassified(limit: number): Promise<string[]> {
+  async newestUnclassified(limit: number, accountEmail?: string): Promise<string[]> {
     return (
       await getPool().query<{ id: string }>(
-        `select m.id from messages m left join classifications c on c.message_id=m.id
+        `select m.id from messages m join accounts a on a.id=m.account_id
+        left join classifications c on c.message_id=m.id
       where c.message_id is null and not m.tombstone and m.direction='inbound'
+      and ($2::text is null or lower(a.email)=lower($2))
       order by m.received_at desc limit $1`,
-        [limit],
+        [limit, accountEmail ?? null],
       )
     ).rows.map((row) => row.id);
   }
