@@ -277,6 +277,7 @@ function Reader({
           <span>Back</span>
         </button>
         <div className="toolbar-actions">
+          <TierPicker tier={message.tier} onChange={(value) => tier.mutate(value)} />
           <button className="icon-button" title="Archive" onClick={() => doAction("archive", true)}>
             <Archive size={18} />
           </button>
@@ -300,13 +301,20 @@ function Reader({
         </div>
       </header>
       <article className="message-reader">
-        <div className="reader-title-row">
+        <dl className="message-headers">
           <div>
-            <span className="eyebrow">{message.account.email}</span>
-            <h1>{message.subject}</h1>
+            <dt>From:</dt>
+            <dd>{message.from[0] ? formatAddress(message.from[0]) : "Unknown sender"}</dd>
           </div>
-          <TierPicker tier={message.tier} onChange={(value) => tier.mutate(value)} />
-        </div>
+          <div>
+            <dt>To:</dt>
+            <dd>{message.to.map(formatAddress).join(", ") || "me"}</dd>
+          </div>
+          <div>
+            <dt>Subject:</dt>
+            <dd>{message.subject}</dd>
+          </div>
+        </dl>
         {conversation.length > 0 && (
           <div className="thread-history">
             <span className="eyebrow">
@@ -335,21 +343,6 @@ function Reader({
             ))}
           </div>
         )}
-        <div className="sender-block">
-          <div>
-            <strong>{message.from[0]?.name || message.from[0]?.address || "Unknown sender"}</strong>
-            <span>{message.from[0]?.address}</span>
-            <small>
-              to {message.to.map((item) => item.name || item.address).join(", ") || "me"}
-            </small>
-          </div>
-          <time>
-            {new Date(message.receivedAt).toLocaleString([], {
-              dateStyle: "medium",
-              timeStyle: "short",
-            })}
-          </time>
-        </div>
         <div className="email-body">
           {message.htmlBody ? (
             <iframe
@@ -415,17 +408,19 @@ function Reader({
 
 function TierPicker({ tier, onChange }: { tier: Tier | null; onChange(value: Tier): void }) {
   return (
-    <fieldset className="tier-picker" aria-label="Email tier">
-      {([1, 2, 3] as Tier[]).map((value) => (
-        <button
-          key={value}
-          className={tier === value ? "active" : ""}
-          onClick={() => onChange(value)}
-        >
-          L{value}
-        </button>
-      ))}
-    </fieldset>
+    <label className="tier-picker">
+      <span>Tier:</span>
+      <select
+        aria-label="Email tier"
+        value={tier ?? ""}
+        onChange={(event) => onChange(Number(event.target.value) as Tier)}
+      >
+        {tier === null && <option value="">Unsorted</option>}
+        <option value="1">L1</option>
+        <option value="2">L2</option>
+        <option value="3">L3</option>
+      </select>
+    </label>
   );
 }
 
@@ -435,6 +430,11 @@ function EmptyReader() {
 
 function AccountDot({ provider }: { provider: "gmail" | "microsoft" }) {
   return <span className={`account-dot ${provider}`} />;
+}
+function formatAddress(value: MessageSummary["from"][number]) {
+  return value.name && value.name.toLowerCase() !== value.address.toLowerCase()
+    ? `${value.name} <${value.address}>`
+    : value.address;
 }
 function formatListDate(value: string) {
   const date = new Date(value);
