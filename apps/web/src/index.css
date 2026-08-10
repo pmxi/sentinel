@@ -993,148 +993,64 @@ a {
 }
 
 .settings-page {
+  max-width: 720px;
+  padding: 28px 32px 48px;
   background: #fff;
 }
+.settings-page .page-title {
+  margin-bottom: 28px;
+}
+.settings-page .page-title h1 {
+  font-size: 20px;
+}
 .settings-section {
-  max-width: 920px;
-  display: grid;
-  grid-template-columns: 230px minmax(0, 1fr);
-  gap: 34px;
-  margin-bottom: 38px;
+  max-width: 620px;
+  margin-bottom: 30px;
 }
 .settings-section h2 {
-  margin: 4px 0 7px;
-  font-size: 18px;
+  margin: 0 0 8px;
+  font-size: 13px;
   font-weight: 600;
-}
-.settings-section > div:first-child p {
-  margin: 0;
-  color: var(--muted);
-  font-size: 10px;
-  line-height: 1.55;
 }
 .settings-card {
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--paper);
-  overflow: hidden;
+  border-top: 1px solid var(--line);
 }
 .connected-account {
-  min-height: 68px;
-  display: grid;
-  grid-template-columns: 38px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 11px;
-  padding: 12px 15px;
-  border-bottom: 1px solid var(--line);
-}
-.provider-logo {
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
-  border-radius: 4px;
-  background: #eee;
-  color: #444;
-  font-size: 12px;
-  font-weight: 700;
-}
-.provider-logo.microsoft {
-  background: #e8e8e8;
-  color: #333;
-}
-.connected-account > span:nth-child(2),
-.setting-row > span {
+  min-height: 38px;
   display: flex;
-  flex-direction: column;
-  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+  font-size: 12px;
 }
-.connected-account strong,
-.setting-row strong {
-  font-size: 11px;
-}
-.connected-account small,
-.setting-row small {
-  margin-top: 3px;
-  color: #888;
-  font-size: 9px;
-}
-.status-pill {
-  padding: 4px 7px;
-  border-radius: 999px;
-  background: #eee;
+.connected-account span:last-child {
   color: #666;
-  font-size: 8px;
-  font-weight: 600;
+  font-size: 11px;
   text-transform: capitalize;
-}
-.status-pill.active {
-  background: #e8e8e8;
-  color: #333;
-}
-.status-pill.error,
-.status-pill.needs_reauth {
-  background: #f5e7e4;
-  color: var(--red);
 }
 .connect-actions {
   display: flex;
   gap: 8px;
-  padding: 13px;
+  padding: 12px 0 0;
 }
 .connect-actions button {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 7px 10px 7px 7px;
+  padding: 6px 10px;
   border: 1px solid var(--line);
-  border-radius: 5px;
-  background: white;
-  font-size: 10px;
+  border-radius: 3px;
+  background: #fff;
+  font-size: 12px;
   cursor: pointer;
-}
-.connect-actions .provider-logo {
-  width: 26px;
-  height: 26px;
-  border-radius: 6px;
-  font-size: 9px;
-}
-.settings-card.compact {
-  padding: 5px 15px;
-}
-.setting-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 8px;
-  min-height: 58px;
-  border-bottom: 1px solid var(--line);
-}
-.setting-row:last-child {
-  border: 0;
-}
-.setting-row > span {
-  color: var(--ink);
 }
 .logout-button {
-  display: flex;
-  align-items: center;
-  min-height: 46px;
-  border: 0;
-  background: transparent;
-  color: var(--red);
-  font-size: 11px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 12px;
   cursor: pointer;
-}
-.settings-footer {
-  max-width: 920px;
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding-top: 12px;
-  border-top: 1px solid var(--line);
-  color: #888;
-  font-size: 9px;
 }
 
 .sidebar-scrim {
@@ -1235,15 +1151,8 @@ a {
     border: 0;
     border-radius: 0;
   }
-  .settings-section {
-    grid-template-columns: 1fr;
-    gap: 12px;
-  }
   .single-page {
     padding: 25px 17px 50px;
-  }
-  .connect-actions {
-    flex-direction: column;
   }
   .draft-list > button {
     grid-template-columns: minmax(0, 1fr);

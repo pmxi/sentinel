@@ -222,75 +222,28 @@ function SettingsPage({ accounts }: { accounts: Account[] }) {
     <section className="single-page settings-page">
       <header className="page-title">
         <h1>Settings</h1>
-        <p>Connect the inboxes that should feel like one.</p>
       </header>
       <div className="settings-section">
-        <div>
-          <h2>Mail accounts</h2>
-          <p>
-            Sent keeps a private synchronized copy. Gmail and Microsoft remain the source of truth.
-          </p>
-        </div>
+        <h2>Accounts</h2>
         <div className="settings-card">
           {accounts.map((account) => (
             <div className="connected-account" key={account.id}>
-              <span className={`provider-logo ${account.provider}`}>
-                {account.provider === "gmail" ? "G" : "M"}
-              </span>
-              <span>
-                <strong>{account.displayName || account.email}</strong>
-                <small>{account.email}</small>
-              </span>
-              <span className={`status-pill ${account.status}`}>
-                {account.status.replace("_", " ")}
-              </span>
+              <span>{account.email}</span>
+              <span>{account.status.replace("_", " ")}</span>
             </div>
           ))}
           <div className="connect-actions">
-            <button onClick={() => void connect("gmail")}>
-              <span className="provider-logo gmail">G</span>Connect Gmail
-            </button>
-            <button onClick={() => void connect("microsoft")}>
-              <span className="provider-logo microsoft">M</span>Connect Microsoft
-            </button>
+            <button onClick={() => void connect("gmail")}>Connect Gmail</button>
+            <button onClick={() => void connect("microsoft")}>Connect Microsoft</button>
           </div>
         </div>
       </div>
       <div className="settings-section">
-        <div>
-          <h2>Intelligence</h2>
-          <p>
-            Classification follows the versioned policy in <code>prompts/classify-v1.md</code>.
-          </p>
-        </div>
-        <div className="settings-card compact">
-          <div className="setting-row">
-            <span>
-              <strong>L1 / L2 / L3 sorting</strong>
-              <small>Every new message is classified by OpenAI.</small>
-            </span>
-            <span className="status-pill active">Configured on server</span>
-          </div>
-          <div className="setting-row">
-            <span>
-              <strong>Hybrid search</strong>
-              <small>Postgres full text plus semantic embeddings.</small>
-            </span>
-          </div>
-        </div>
+        <h2>Session</h2>
+        <button className="logout-button" onClick={() => logout.mutate()}>
+          Sign out
+        </button>
       </div>
-      <div className="settings-section">
-        <div>
-          <h2>Session</h2>
-          <p>This deployment has one owner and no recovery flow.</p>
-        </div>
-        <div className="settings-card compact">
-          <button className="logout-button" onClick={() => logout.mutate()}>
-            Sign out
-          </button>
-        </div>
-      </div>
-      <footer className="settings-footer">Sent is private, single-user software.</footer>
     </section>
   );
 }
