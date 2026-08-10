@@ -43,15 +43,7 @@ type MicrosoftCursor = {
   backfill: boolean;
   folderRefreshAt: string;
 };
-const GRAPH_SCOPES = [
-  "openid",
-  "profile",
-  "email",
-  "offline_access",
-  "User.Read",
-  "Mail.ReadWrite",
-  "Mail.Send",
-];
+const BASE_GRAPH_SCOPES = ["openid", "profile", "offline_access", "Mail.ReadWrite"];
 const SELECT =
   "id,conversationId,internetMessageId,subject,from,toRecipients,ccRecipients,bccRecipients,sentDateTime,receivedDateTime,bodyPreview,body,isRead,flag,parentFolderId,isDraft,hasAttachments";
 
@@ -89,6 +81,10 @@ export class MicrosoftProvider implements MailProvider {
     return new ConfidentialClientApplication(this.configuration());
   }
 
+  private scopes(): string[] {
+    return [...BASE_GRAPH_SCOPES, ...(env().MICROSOFT_MAIL_SEND_ENABLED ? ["Mail.Send"] : [])];
+  }
+
   private async token(account: StoredAccount): Promise<string> {
     const credentials = JSON.parse(
       decryptSecret(account.encryptedCredentials, requireConfig("TOKEN_ENCRYPTION_KEY")),
@@ -100,7 +96,7 @@ export class MicrosoftProvider implements MailProvider {
     );
     if (!cachedAccount)
       throw new Error("Microsoft account is missing from the encrypted token cache");
-    const result = await app.acquireTokenSilent({ account: cachedAccount, scopes: GRAPH_SCOPES });
+    const result = await app.acquireTokenSilent({ account: cachedAccount, scopes: this.scopes() });
     const cache = app.getTokenCache().serialize();
     if (cache !== credentials.cache) {
       await this.persistCredentials(
@@ -136,7 +132,7 @@ export class MicrosoftProvider implements MailProvider {
 
   async getAuthorizationUrl(state: string): Promise<string> {
     return this.app().getAuthCodeUrl({
-      scopes: GRAPH_SCOPES,
+      scopes: this.scopes(),
       redirectUri: `${env().SENT_PUBLIC_URL}/api/oauth/microsoft/callback`,
       state,
       prompt: "select_account",
@@ -147,24 +143,18 @@ export class MicrosoftProvider implements MailProvider {
     const app = this.app();
     const result = await app.acquireTokenByCode({
       code,
-      scopes: GRAPH_SCOPES,
+      scopes: this.scopes(),
       redirectUri: `${env().SENT_PUBLIC_URL}/api/oauth/microsoft/callback`,
     });
     if (!result?.account) throw new Error("Microsoft authorization did not return an account");
-    const profile = await this.graph<{
-      mail?: string;
-      userPrincipalName?: string;
-      displayName?: string;
-    }>(result.accessToken, "/me?$select=mail,userPrincipalName,displayName");
-    const email = profile.mail ?? profile.userPrincipalName;
-    if (!email) throw new Error("Microsoft profile did not contain an email address");
+    const email = result.account.username.toLowerCase();
     const credentials: MicrosoftCredentials = {
       cache: app.getTokenCache().serialize(),
       homeAccountId: result.account.homeAccountId,
     };
     return {
       email,
-      displayName: profile.displayName ?? email,
+      displayName: result.account.name ?? email,
       credentials: encryptSecret(
         JSON.stringify(credentials),
         requireConfig("TOKEN_ENCRYPTION_KEY"),
@@ -196,7 +186,7 @@ export class MicrosoftProvider implements MailProvider {
             }>;
           }>(
             token,
-            `/me/messages/${encodeURIComponent(source.id)}/attachments?$select=id,name,contentType,size,isInline,contentId`,
+            `/me/messages/${encodeURIComponent(source.id)}/attachments?$select=id,name,contentType,size,isInline`,
           )
         ).value.map((item) => ({
           id: item.id,
@@ -374,6 +364,9 @@ export class MicrosoftProvider implements MailProvider {
   }
 
   async send(account: StoredAccount, message: OutgoingMessage): Promise<string> {
+    if (!env().MICROSOFT_MAIL_SEND_ENABLED) {
+      throw new Error("Sending from Purdue requires Microsoft Mail.Send approval");
+    }
     const token = await this.token(account);
     const recipient = (item: MailAddress) => ({
       emailAddress: { name: item.name, address: item.address },

@@ -85,10 +85,12 @@ Create a Web application OAuth client in a Google Cloud project with the Gmail A
 Register a confidential web application in Microsoft Entra ID.
 
 - Redirect URI: `${SENT_PUBLIC_URL}/api/oauth/microsoft/callback`
-- Delegated Microsoft Graph permissions: `User.Read`, `Mail.ReadWrite`, and `Mail.Send`
-- Enable `openid`, `profile`, `email`, and `offline_access` through the authorization request.
+- Delegated Microsoft Graph permission: `Mail.ReadWrite`
+- Enable `openid`, `profile`, and `offline_access` through the authorization request.
 - Set `MICROSOFT_CLIENT_ID` and `MICROSOFT_CLIENT_SECRET`.
 - Keep `MICROSOFT_TENANT_ID=common`, or use Purdue's tenant ID if its policy requires a single-tenant app.
+- Sending from Microsoft additionally requires delegated `Mail.Send`; set
+  `MICROSOFT_MAIL_SEND_ENABLED=true` only after Purdue approves it.
 - Purdue may require an administrator to approve the app or its delegated mail permissions.
 
 Sent discovers the Microsoft folder tree and keeps one delta cursor per folder; Gmail uses mailbox history IDs. Native folders and labels are retained internally but are not exposed as organization controls in the MVP.

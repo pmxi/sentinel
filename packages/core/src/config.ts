@@ -25,6 +25,10 @@ const EnvSchema = z.object({
   MICROSOFT_CLIENT_ID: optionalCredential,
   MICROSOFT_CLIENT_SECRET: optionalCredential,
   MICROSOFT_TENANT_ID: z.string().default("common"),
+  MICROSOFT_MAIL_SEND_ENABLED: z
+    .enum(["true", "false"])
+    .default("false")
+    .transform((value) => value === "true"),
   WEB_DIST_PATH: z.string().default("apps/web/dist"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
 });
