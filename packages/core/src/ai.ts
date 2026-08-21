@@ -20,6 +20,46 @@ export type ClassificationResult = ClassificationOutput & {
   promptVersion: string;
 };
 
+const EMBEDDING_FALLBACK_BYTES = 7_500;
+const EMBEDDING_OMISSION = "\n\n[... middle omitted for embedding ...]\n\n";
+
+function utf8Prefix(text: string, byteLimit: number): string {
+  let bytes = 0;
+  let result = "";
+  for (const character of text) {
+    const characterBytes = Buffer.byteLength(character);
+    if (bytes + characterBytes > byteLimit) break;
+    result += character;
+    bytes += characterBytes;
+  }
+  return result;
+}
+
+function utf8Suffix(text: string, byteLimit: number): string {
+  let bytes = 0;
+  const result: string[] = [];
+  const characters = Array.from(text);
+  for (let index = characters.length - 1; index >= 0; index -= 1) {
+    const character = characters[index];
+    if (character === undefined) continue;
+    const characterBytes = Buffer.byteLength(character);
+    if (bytes + characterBytes > byteLimit) break;
+    result.push(character);
+    bytes += characterBytes;
+  }
+  return result.reverse().join("");
+}
+
+export function embeddingFallbackInput(text: string): string {
+  if (Buffer.byteLength(text) <= EMBEDDING_FALLBACK_BYTES) return text;
+  const contentBytes = EMBEDDING_FALLBACK_BYTES - Buffer.byteLength(EMBEDDING_OMISSION);
+  const prefixBytes = Math.floor(contentBytes * 0.72);
+  return `${utf8Prefix(text, prefixBytes)}${EMBEDDING_OMISSION}${utf8Suffix(
+    text,
+    contentBytes - prefixBytes,
+  )}`;
+}
+
 let promptCache: { text: string; version: string } | undefined;
 
 export async function classificationPrompt(): Promise<{ text: string; version: string }> {
@@ -72,11 +112,26 @@ export class OpenAIIntelligenceService implements IntelligenceService {
       text.length <= 28_000
         ? text
         : `${text.slice(0, 20_000)}\n\n[... middle omitted for embedding ...]\n\n${text.slice(-8_000)}`;
-    const response = await this.client.embeddings.create({
-      model,
-      input,
-      encoding_format: "float",
-    });
+    let response: Awaited<ReturnType<typeof this.client.embeddings.create>>;
+    try {
+      response = await this.client.embeddings.create({
+        model,
+        input,
+        encoding_format: "float",
+      });
+    } catch (error) {
+      if (
+        !(error instanceof Error) ||
+        !/maximum context length|too many tokens/i.test(error.message)
+      ) {
+        throw error;
+      }
+      response = await this.client.embeddings.create({
+        model,
+        input: embeddingFallbackInput(text),
+        encoding_format: "float",
+      });
+    }
     const embedding = response.data[0]?.embedding;
     if (!embedding) throw new Error("OpenAI returned no embedding");
     return { embedding, model };
