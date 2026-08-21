@@ -8,5 +8,5 @@
 - [ ] Add installable PWA behavior and L1 notifications.
 - [ ] Add semantic indexing for attachment contents.
 - [ ] Add Microsoft Graph upload sessions for attachments larger than 3 MB.
-- [ ] Enable sending from Purdue after its tenant approves delegated `Mail.Send`.
+- [x] Enable sending from Purdue after its tenant approves delegated `Mail.Send`.
 - [ ] Extract richer actions and deadlines if the simpler tier classification proves insufficient.

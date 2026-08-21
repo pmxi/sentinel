@@ -15,20 +15,21 @@ import type {
 type GraphRecipient = { emailAddress?: { name?: string; address?: string } };
 type GraphMessage = {
   id?: string;
-  conversationId?: string;
-  internetMessageId?: string;
-  subject?: string;
-  from?: GraphRecipient;
-  toRecipients?: GraphRecipient[];
-  ccRecipients?: GraphRecipient[];
-  bccRecipients?: GraphRecipient[];
-  sentDateTime?: string;
-  receivedDateTime?: string;
-  bodyPreview?: string;
-  body?: { contentType?: "html" | "text"; content?: string };
+  conversationId?: string | null;
+  internetMessageId?: string | null;
+  subject?: string | null;
+  from?: GraphRecipient | null;
+  toRecipients?: GraphRecipient[] | null;
+  ccRecipients?: GraphRecipient[] | null;
+  bccRecipients?: GraphRecipient[] | null;
+  sentDateTime?: string | null;
+  receivedDateTime?: string | null;
+  lastModifiedDateTime?: string | null;
+  bodyPreview?: string | null;
+  body?: { contentType?: "html" | "text"; content?: string } | null;
   isRead?: boolean;
-  flag?: { flagStatus?: string };
-  parentFolderId?: string;
+  flag?: { flagStatus?: string } | null;
+  parentFolderId?: string | null;
   isDraft?: boolean;
   hasAttachments?: boolean;
   "@removed"?: { reason?: string };
@@ -45,9 +46,33 @@ type MicrosoftCursor = {
 };
 const BASE_GRAPH_SCOPES = ["openid", "profile", "offline_access", "Mail.ReadWrite"];
 const SELECT =
-  "id,conversationId,internetMessageId,subject,from,toRecipients,ccRecipients,bccRecipients,sentDateTime,receivedDateTime,bodyPreview,body,isRead,flag,parentFolderId,isDraft,hasAttachments";
+  "id,conversationId,internetMessageId,subject,from,toRecipients,ccRecipients,bccRecipients,sentDateTime,receivedDateTime,lastModifiedDateTime,bodyPreview,body,isRead,flag,parentFolderId,isDraft,hasAttachments";
 
-function addresses(recipients: GraphRecipient[] | undefined): MailAddress[] {
+const COMPLETE_MESSAGE_FIELDS = [
+  "conversationId",
+  "subject",
+  "from",
+  "toRecipients",
+  "ccRecipients",
+  "bccRecipients",
+  "sentDateTime",
+  "receivedDateTime",
+  "bodyPreview",
+  "body",
+  "isRead",
+  "flag",
+  "parentFolderId",
+  "isDraft",
+  "hasAttachments",
+] as const satisfies ReadonlyArray<keyof GraphMessage>;
+
+export type MicrosoftMessageReference = {
+  providerMessageId: string;
+  folderId: string;
+  folderName: string;
+};
+
+function addresses(recipients: GraphRecipient[] | null | undefined): MailAddress[] {
   return (recipients ?? []).flatMap((recipient) =>
     recipient.emailAddress?.address
       ? [
@@ -130,6 +155,27 @@ export class MicrosoftProvider implements MailProvider {
     return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
   }
 
+  private messageNeedsHydration(source: GraphMessage): boolean {
+    return COMPLETE_MESSAGE_FIELDS.some((field) => !Object.hasOwn(source, field));
+  }
+
+  private async fetchFullMessage(token: string, providerMessageId: string) {
+    try {
+      return await this.graph<GraphMessage>(
+        token,
+        `/me/messages/${encodeURIComponent(providerMessageId)}?$select=${SELECT}`,
+      );
+    } catch (error) {
+      if (error instanceof Error && /^Microsoft Graph 404:/.test(error.message)) return null;
+      throw error;
+    }
+  }
+
+  private async hydrateDeltaMessage(token: string, source: GraphMessage) {
+    if (!source.id || source["@removed"] || !this.messageNeedsHydration(source)) return source;
+    return this.fetchFullMessage(token, source.id);
+  }
+
   async getAuthorizationUrl(state: string): Promise<string> {
     return this.app().getAuthCodeUrl({
       scopes: this.scopes(),
@@ -169,6 +215,11 @@ export class MicrosoftProvider implements MailProvider {
     folder: FolderCursor,
   ): Promise<NormalizedMessage | null> {
     if (source["@removed"] || !source.id) return null;
+    if (source.isDraft) return null;
+    const timestamp = source.receivedDateTime ?? source.sentDateTime;
+    if (!timestamp) {
+      throw new Error(`Microsoft message ${source.id} is missing its received and sent timestamps`);
+    }
     const rawBody = source.body?.content ?? "";
     const htmlBody =
       source.body?.contentType?.toLowerCase() === "html" ? sanitizeEmailHtml(rawBody) : null;
@@ -198,7 +249,7 @@ export class MicrosoftProvider implements MailProvider {
         }))
       : [];
     const from = addresses(source.from ? [source.from] : []);
-    const receivedAt = new Date(source.receivedDateTime ?? source.sentDateTime ?? Date.now());
+    const receivedAt = new Date(timestamp);
     const deleted = /^(deleted items|trash)$/i.test(folder.name);
     const archived = /^archive$/i.test(folder.name);
     return {
@@ -224,11 +275,43 @@ export class MicrosoftProvider implements MailProvider {
       flagged: source.flag?.flagStatus === "flagged",
       archived,
       deleted,
-      tombstone: source.isDraft ?? false,
+      tombstone: false,
       containers: [{ id: source.parentFolderId ?? folder.id, name: folder.name, kind: "folder" }],
       nativeState: { parentFolderId: source.parentFolderId, isDraft: source.isDraft },
-      providerUpdatedAt: receivedAt,
+      providerUpdatedAt: source.lastModifiedDateTime
+        ? new Date(source.lastModifiedDateTime)
+        : receivedAt,
     };
+  }
+
+  async refetchMessages(account: StoredAccount, references: MicrosoftMessageReference[]) {
+    const token = await this.token(account);
+    const folders = new Map((await this.listFolders(token)).map((folder) => [folder.id, folder]));
+    const results: Array<{
+      providerMessageId: string;
+      message: NormalizedMessage | null;
+    }> = [];
+    for (const reference of references) {
+      const source = await this.fetchFullMessage(token, reference.providerMessageId);
+      const currentFolder = source?.parentFolderId ? folders.get(source.parentFolderId) : undefined;
+      results.push({
+        providerMessageId: reference.providerMessageId,
+        message: source
+          ? await this.normalize(
+              token,
+              source,
+              account.email,
+              currentFolder ?? {
+                id: reference.folderId,
+                name: reference.folderName,
+                delta: null,
+                next: null,
+              },
+            )
+          : null,
+      });
+    }
+    return results;
   }
 
   private async listFolders(token: string): Promise<FolderCursor[]> {
@@ -316,7 +399,12 @@ export class MicrosoftProvider implements MailProvider {
     for (const source of page.value) {
       if (source["@removed"] && source.id) deletedProviderMessageIds.push(source.id);
       else {
-        const normalized = await this.normalize(token, source, account.email, folder);
+        const hydrated = await this.hydrateDeltaMessage(token, source);
+        if (!hydrated) {
+          if (source.id) deletedProviderMessageIds.push(source.id);
+          continue;
+        }
+        const normalized = await this.normalize(token, hydrated, account.email, folder);
         if (normalized) messages.push(normalized);
       }
     }
