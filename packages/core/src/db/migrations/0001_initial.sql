@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS message_containers (
 CREATE TABLE IF NOT EXISTS classifications (
   message_id uuid PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
   model_tier integer NOT NULL CHECK (model_tier BETWEEN 1 AND 3), reasoning text NOT NULL,
+  plain_text text,
   manual_tier integer CHECK (manual_tier BETWEEN 1 AND 3), model text NOT NULL, prompt_version text NOT NULL,
   classified_at timestamptz NOT NULL DEFAULT now(), updated_at timestamptz NOT NULL DEFAULT now()
 );

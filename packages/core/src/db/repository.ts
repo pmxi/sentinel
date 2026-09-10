@@ -40,6 +40,7 @@ type MessageRow = QueryResultRow & {
   snippet: string;
   text_body?: string;
   html_body?: string | null;
+  plain_text?: string | null;
   sent_at?: Date | null;
   received_at: Date;
   read: boolean;
@@ -56,7 +57,7 @@ type MessageRow = QueryResultRow & {
 const MESSAGE_SELECT = `
   m.id, m.thread_id, m.account_id, a.provider, a.email account_email, a.display_name account_display_name,
   m.subject, m.from_addresses, m.snippet, m.received_at, m.read, m.flagged, m.direction, m.attachments,
-  c.model_tier, c.manual_tier, c.reasoning,
+  c.model_tier, c.manual_tier, c.reasoning, c.plain_text,
   exists(select 1 from mutation_outbox o where o.message_id=m.id and o.status in ('pending','processing')) sync_pending`;
 
 function mapAccount(row: AccountRow): Account {
@@ -104,6 +105,7 @@ function mapDetail(row: MessageRow): MessageDetail {
     sentAt: row.sent_at?.toISOString() ?? null,
     textBody: row.text_body ?? "",
     htmlBody: row.html_body ?? null,
+    plainText: row.plain_text ?? null,
     attachments: row.attachments,
     internetMessageId: row.internet_message_id ?? null,
   };
@@ -616,14 +618,28 @@ export class MailRepository {
 
   async saveClassification(
     messageId: string,
-    input: { tier: Tier; reasoning: string; model: string; promptVersion: string },
+    input: {
+      tier: Tier;
+      reasoning: string;
+      plainText: string;
+      model: string;
+      promptVersion: string;
+    },
   ): Promise<void> {
     await transaction(async (client) => {
       await client.query(
-        `insert into classifications(message_id,model_tier,reasoning,model,prompt_version,classified_at,updated_at)
-        values($1,$2,$3,$4,$5,now(),now()) on conflict(message_id) do update set model_tier=excluded.model_tier,
-        reasoning=excluded.reasoning,model=excluded.model,prompt_version=excluded.prompt_version,classified_at=now(),updated_at=now()`,
-        [messageId, input.tier, input.reasoning, input.model, input.promptVersion],
+        `insert into classifications(message_id,model_tier,reasoning,plain_text,model,prompt_version,classified_at,updated_at)
+        values($1,$2,$3,$4,$5,$6,now(),now()) on conflict(message_id) do update set model_tier=excluded.model_tier,
+        reasoning=excluded.reasoning,plain_text=excluded.plain_text,model=excluded.model,
+        prompt_version=excluded.prompt_version,classified_at=now(),updated_at=now()`,
+        [
+          messageId,
+          input.tier,
+          input.reasoning,
+          input.plainText.trim(),
+          input.model,
+          input.promptVersion,
+        ],
       );
       await client.query("delete from classification_failures where message_id=$1", [messageId]);
     });
@@ -658,6 +674,18 @@ export class MailRepository {
       where c.message_id is null and not m.tombstone and m.direction='inbound'
       and ($2::text is null or lower(a.email)=lower($2))
       order by m.received_at desc limit $1`,
+        [limit, accountEmail ?? null],
+      )
+    ).rows.map((row) => row.id);
+  }
+
+  async newestInbound(limit: number, accountEmail?: string): Promise<string[]> {
+    return (
+      await getPool().query<{ id: string }>(
+        `select m.id from messages m join accounts a on a.id=m.account_id
+        where not m.tombstone and m.direction='inbound'
+        and ($2::text is null or lower(a.email)=lower($2))
+        order by m.received_at desc,m.id desc limit $1`,
         [limit, accountEmail ?? null],
       )
     ).rows.map((row) => row.id);

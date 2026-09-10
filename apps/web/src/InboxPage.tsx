@@ -1,7 +1,7 @@
-import type { Account, MessageSummary, Tier } from "@sent/shared";
+import type { Account, MessageDetail, MessageSummary, Tier } from "@sent/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Flag, Mail, MailOpen, Paperclip, Trash2 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { sentApi } from "./api";
 import { replySeed, useCompose } from "./compose";
@@ -73,6 +73,7 @@ export function InboxPage({ accounts }: { accounts: Account[] }) {
       </section>
       {selectedId ? (
         <Reader
+          key={selectedId}
           messageId={selectedId}
           accounts={accounts}
           close={() => {
@@ -124,6 +125,7 @@ export function SearchResults({ accounts }: { accounts: Account[] }) {
       </section>
       {selectedId ? (
         <Reader
+          key={selectedId}
           messageId={selectedId}
           accounts={accounts}
           close={() => {
@@ -218,6 +220,7 @@ function Reader({
 }) {
   const queryClient = useQueryClient();
   const compose = useCompose();
+  const [bodyView, setBodyView] = useState<"plain" | "original">("plain");
   const detail = useQuery({
     queryKey: ["message", messageId],
     queryFn: () => sentApi.message(messageId),
@@ -263,6 +266,7 @@ function Reader({
       </section>
     );
   const account = accounts.find((item) => item.id === message.account.id);
+  const hasPlainText = [message, ...conversation].some((item) => Boolean(item.plainText?.trim()));
   const doAction = (value: string, shouldClose = false) => {
     performAction(value);
     if (shouldClose) close();
@@ -312,6 +316,22 @@ function Reader({
             <dd>{message.subject}</dd>
           </div>
         </dl>
+        {hasPlainText && (
+          <nav className="body-view-picker" aria-label="Message body view">
+            <button
+              className={bodyView === "plain" ? "active" : ""}
+              onClick={() => setBodyView("plain")}
+            >
+              Plain text
+            </button>
+            <button
+              className={bodyView === "original" ? "active" : ""}
+              onClick={() => setBodyView("original")}
+            >
+              Original
+            </button>
+          </nav>
+        )}
         {conversation.length > 0 && (
           <div className="thread-history">
             <span className="section-label">
@@ -327,24 +347,17 @@ function Reader({
                   </span>
                   <time>{formatListDate(item.receivedAt)}</time>
                 </summary>
-                {item.htmlBody ? (
-                  <EmailFrame
-                    title={`Message from ${item.from[0]?.name || item.from[0]?.address || "sender"}`}
-                    html={item.htmlBody}
-                  />
-                ) : (
-                  <div className="plain-body">{item.textBody}</div>
-                )}
+                <MessageBody
+                  message={item}
+                  view={bodyView}
+                  title={`Message from ${item.from[0]?.name || item.from[0]?.address || "sender"}`}
+                />
               </details>
             ))}
           </div>
         )}
         <div className="email-body">
-          {message.htmlBody ? (
-            <EmailFrame title="Email content" html={message.htmlBody} />
-          ) : (
-            <div className="plain-body">{message.textBody}</div>
-          )}
+          <MessageBody message={message} view={bodyView} title="Email content" />
         </div>
         {message.attachments.length > 0 && (
           <div className="attachments">
@@ -396,6 +409,21 @@ function Reader({
       </article>
     </section>
   );
+}
+
+function MessageBody({
+  message,
+  view,
+  title,
+}: {
+  message: MessageDetail;
+  view: "plain" | "original";
+  title: string;
+}) {
+  if (view === "plain" && message.plainText?.trim())
+    return <div className="plain-body">{message.plainText}</div>;
+  if (message.htmlBody) return <EmailFrame title={title} html={message.htmlBody} />;
+  return <div className="plain-body">{message.textBody}</div>;
 }
 
 function TierPicker({ tier, onChange }: { tier: Tier | null; onChange(value: Tier): void }) {

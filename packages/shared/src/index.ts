@@ -58,6 +58,7 @@ export const MessageDetailSchema = MessageSummarySchema.extend({
   sentAt: z.string().nullable(),
   textBody: z.string(),
   htmlBody: z.string().nullable(),
+  plainText: z.string().nullable(),
   attachments: z.array(AttachmentSchema),
   internetMessageId: z.string().nullable(),
 });

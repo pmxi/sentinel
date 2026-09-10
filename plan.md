@@ -17,7 +17,7 @@ Sent is a bespoke, privately hosted web email client for Paras. It should feel u
 
 - Sent is a complete client: read, compose, reply, forward, archive, delete, and read/unread state must work without opening Gmail or Outlook.
 - Gmail and Microsoft remain the delivery authorities. Sent maintains a synchronized private replica and preserves each provider's native labels, folders, flags, and IDs.
-- Sent owns a provider-independent intelligence layer: classifications, embeddings, manual overrides, and virtual views.
+- Sent owns a provider-independent intelligence layer: classifications, clean reader text, embeddings, manual overrides, and virtual views.
 - Receiving a message is separate from demanding attention. Lower-ranked mail remains searchable and browsable.
 - Classification is personal and prompt-driven. It is expected to evolve through prompt versions and manual overrides.
 - False negatives cost more than false positives. The prompt should place ambiguous mail in the more important tier, and failed classifications must never be silently hidden.
@@ -86,7 +86,7 @@ Avoid adding Redis or a separate vector database until PostgreSQL proves insuffi
 - `provider_containers`: account-scoped native labels, folders, categories, and message membership
 - `message_state`: read, starred/flagged, deleted, and synchronization version
 - `drafts`: Sent-owned draft content and sending account; drafts are not synchronized to provider Drafts folders
-- `classifications`: model tier, reasoning, optional manual tier override, model, prompt version, and timestamp
+- `classifications`: model tier, reasoning, clean plaintext rendition, optional manual tier override, model, prompt version, and timestamp
 - `embeddings`: message or thread vector and embedding-model version
 - `mutation_outbox`: idempotent provider actions with retry and reconciliation state
 
@@ -109,11 +109,12 @@ Provider commands should expose a common interface such as `markRead`, `setFlagg
 Use a one-off script to classify the 500 most recent imported messages. The live worker classifies each new message or materially updated thread after that:
 
 1. Parse headers and produce clean plain text from the message body.
-2. Send the complete normalized message body and relevant headers to OpenAI without attempting to remove quoted replies, signatures, or newsletter boilerplate.
-3. Require strict structured output containing only `{ "reasoning": string, "tier": 1 | 2 | 3 }`.
-4. Store the result with its model and prompt version so mail can be reclassified later.
-5. Instruct the model to choose the more important tier when a message is ambiguous. A failed call remains visible in L1 or an explicit Unclassified queue.
-6. Store a manual tier change as a nullable override while retaining the original model tier and reasoning.
+2. Send the complete normalized message body and relevant headers to OpenAI.
+3. Require strict structured output containing `{ "reasoning": string, "tier": 1 | 2 | 3, "plainText": string }`.
+4. Make `plainText` a faithful, concise reader rendition that preserves substantive content while removing layout debris, duplicated quoted history, navigation, tracking text, and generic footer boilerplate.
+5. Store the result with its model and prompt version so mail can be reclassified or re-rendered later.
+6. Instruct the model to choose the more important tier when a message is ambiguous. A failed call remains visible in L1 or an explicit Unclassified queue.
+7. Store a manual tier change as a nullable override while retaining the original model tier and reasoning.
 
 The initial prompt implements the L1/L2/L3 policy above and lives as a version-controlled file in the repository. Changing it requires editing the file and restarting or redeploying the worker. Historical classification and later reclassification are manually invoked scripts; there is no prompt editor or bulk-reclassification UI in the MVP.
 
@@ -134,7 +135,7 @@ Semantic search should be hybrid rather than vector-only:
 - Provide L2, L3, Unclassified, and All Mail as immediately accessible views.
 - Show account identity on every message and allow account filtering without making account boundaries dominate the UI.
 - Use provider-native conversation grouping within each account; do not merge threads across accounts.
-- Implement thread reading, sanitized HTML rendering, attachment access, plain-text compose, reply/reply-all, forward, ordinary file attachments, Sent-owned drafts, sending identity selection, archive, delete, flag, and read/unread.
+- Implement thread reading with the generated plaintext view by default and the sanitized original on demand, attachment access, plain-text compose, reply/reply-all, forward, ordinary file attachments, Sent-owned drafts, sending identity selection, archive, delete, flag, and read/unread.
 - Do not implement rich-text composition, inline images, or signatures in the MVP.
 - Do not expose custom Gmail label or Outlook folder browsing and management in the MVP.
 - Do not implement recipient autocomplete in the MVP; this is tracked in `roadmap.md`.
@@ -167,6 +168,7 @@ Semantic search should be hybrid rather than vector-only:
 - Both accounts complete an initial sync and remain incrementally synchronized without duplicates or missing messages.
 - The entire imported archive is searchable from one interface by exact text and semantic meaning.
 - The newest 500 imported messages and all new messages have stored, explainable, versioned L1/L2/L3 classifications.
+- Processed messages have a clean plaintext reader rendition, with the original message always available.
 - Ambiguous mail is conservatively promoted, and failed classifications cannot silently disappear into L2 or L3.
 - L1 is usable as the primary monitored inbox; L2, L3, and All Mail remain browsable.
 - Compose, reply, forward, draft, send, archive, delete, flag, and read/unread work against the correct originating account.

@@ -4,10 +4,15 @@ import { ClassificationOutputSchema, embeddingFallbackInput } from "../src/ai.ts
 describe("classification output", () => {
   it("accepts the intentionally small contract", () => {
     expect(
-      ClassificationOutputSchema.parse({ reasoning: "A professor requested a reply.", tier: 1 }),
+      ClassificationOutputSchema.parse({
+        reasoning: "A professor requested a reply.",
+        tier: 1,
+        plainText: "Please send me the revised lab by Friday.",
+      }),
     ).toEqual({
       reasoning: "A professor requested a reply.",
       tier: 1,
+      plainText: "Please send me the revised lab by Friday.",
     });
   });
 

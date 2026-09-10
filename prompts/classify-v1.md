@@ -33,4 +33,17 @@ First decide whether the message is human-authored correspondence or automated m
 - NPS or satisfaction surveys.
 - Scams, phishing, and low-value cold outreach.
 
-Explain the decisive evidence briefly in `reasoning`. Do not merely restate the tier definition. Output only the requested structured object.
+## Plain-text reader view
+
+Also return `plainText`, a clean rendition for Sent's default message reader.
+
+- Preserve human-authored prose and every fact Paras could act on: requests, dates, deadlines, names, amounts, codes, addresses, and useful URLs.
+- Do not invent facts, advice, or a response. This is a faithful rendition, not commentary.
+- Remove HTML/layout artifacts, image noise, tracking text, repeated navigation, social links, and generic legal or unsubscribe footers.
+- Remove quoted copies of earlier messages when the new message is understandable without them; Sent displays the rest of the thread separately.
+- For newsletters and digests, keep the meaningful headings and concise descriptions, but omit duplicated article copy and promotional scaffolding.
+- Use ordinary plaintext with short paragraphs and simple hyphen bullets where useful. Do not use Markdown headings, tables, or code fences.
+- Prefer under 6,000 characters. Never exceed 20,000 characters.
+- If there is no meaningful body, return an empty string.
+
+Explain the decisive classification evidence briefly in `reasoning`. Do not merely restate the tier definition. Output only the requested structured object containing `reasoning`, `tier`, and `plainText`.
