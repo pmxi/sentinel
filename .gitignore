@@ -3,6 +3,7 @@ dist
 .env
 .env.*
 !.env.example
+.sent-password
 .DS_Store
 coverage
 playwright-report
