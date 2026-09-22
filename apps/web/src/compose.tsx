@@ -1,4 +1,11 @@
-import type { Account, DraftInput, MailAddress, MessageDetail } from "@sent/shared";
+import {
+  type Account,
+  type DraftInput,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENT_COUNT,
+  type MailAddress,
+  type MessageDetail,
+} from "@sent/shared";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Paperclip, Trash2, X } from "lucide-react";
 import {
@@ -85,6 +92,7 @@ function Composer({
   const [files, setFiles] = useState<File[]>([]);
   const [showCopies, setShowCopies] = useState(Boolean(seed.cc?.length || seed.bcc?.length));
   const [error, setError] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
   const hydrated = useRef(false);
 
   const draft = useMemo<DraftInput>(
@@ -122,11 +130,21 @@ function Composer({
   }, [accountId, to, subject, body, draftId, draft, saveDraft]);
 
   const send = async () => {
+    if (sending) return;
     setError(null);
     if (!accountId || parseAddresses(to).length === 0) {
       setError("Choose an account and add at least one recipient.");
       return;
     }
+    if (files.length > MAX_ATTACHMENT_COUNT) {
+      setError(`Attach at most ${MAX_ATTACHMENT_COUNT} files.`);
+      return;
+    }
+    if (files.reduce((total, file) => total + file.size, 0) > MAX_ATTACHMENT_BYTES) {
+      setError("Attachments exceed the 20 MB Sent limit.");
+      return;
+    }
+    setSending(true);
     try {
       const saved = await sentApi.saveDraft(draft);
       await sentApi.sendDraft(saved.id, files);
@@ -134,6 +152,8 @@ function Composer({
       close();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSending(false);
     }
   };
 
@@ -222,14 +242,15 @@ function Composer({
       {error && <p className="compose-error">{error}</p>}
       <footer className="composer-footer">
         <div className="compose-actions">
-          <button className="primary-button" onClick={() => void send()}>
-            Send
+          <button className="primary-button" onClick={() => void send()} disabled={sending}>
+            {sending ? "Sending…" : "Send"}
           </button>
           <label className="icon-button file-button" aria-label="Add attachments">
             <Paperclip size={19} />
             <input
               type="file"
               multiple
+              disabled={sending}
               onChange={(event) => setFiles([...files, ...Array.from(event.target.files ?? [])])}
             />
           </label>
@@ -237,6 +258,7 @@ function Composer({
         </div>
         <button
           className="icon-button danger"
+          disabled={sending}
           onClick={() => void discard()}
           aria-label="Discard draft"
         >

@@ -6,6 +6,7 @@ import { sanitizeEmailHtml, snippetFromText, textFromHtml } from "./normalize.ts
 import type {
   MailProvider,
   NormalizedMessage,
+  OutgoingAttachment,
   OutgoingMessage,
   ProviderAction,
   StoredAccount,
@@ -45,6 +46,8 @@ type MicrosoftCursor = {
   folderRefreshAt: string;
 };
 const BASE_GRAPH_SCOPES = ["openid", "profile", "offline_access", "Mail.ReadWrite"];
+const SIMPLE_ATTACHMENT_LIMIT = 3 * 1024 * 1024;
+const UPLOAD_CHUNK_SIZE = 10 * 320 * 1024;
 const SELECT =
   "id,conversationId,internetMessageId,subject,from,toRecipients,ccRecipients,bccRecipients,sentDateTime,receivedDateTime,lastModifiedDateTime,bodyPreview,body,isRead,flag,parentFolderId,isDraft,hasAttachments";
 
@@ -152,7 +155,9 @@ export class MicrosoftProvider implements MailProvider {
       throw new Error(
         `Microsoft Graph ${response.status}: ${(await response.text()).slice(0, 500)}`,
       );
-    return response.status === 204 ? (undefined as T) : ((await response.json()) as T);
+    // Graph sends 202 with no body after accepting a message for delivery.
+    const body = await response.text();
+    return body ? (JSON.parse(body) as T) : (undefined as T);
   }
 
   private messageNeedsHydration(source: GraphMessage): boolean {
@@ -451,6 +456,66 @@ export class MicrosoftProvider implements MailProvider {
     await this.graph(token, `/me/messages/${id}`, { method: "PATCH", body: JSON.stringify(body) });
   }
 
+  private async addAttachment(token: string, draftId: string, attachment: OutgoingAttachment) {
+    const url = `/me/messages/${encodeURIComponent(draftId)}/attachments`;
+    const bytes = Buffer.from(attachment.contentBase64, "base64");
+    if (bytes.length < SIMPLE_ATTACHMENT_LIMIT) {
+      await this.graph(token, url, {
+        method: "POST",
+        body: JSON.stringify({
+          "@odata.type": "#microsoft.graph.fileAttachment",
+          name: attachment.filename,
+          contentType: attachment.contentType,
+          contentBytes: attachment.contentBase64,
+        }),
+      });
+      return;
+    }
+
+    const session = await this.graph<{ uploadUrl: string }>(token, `${url}/createUploadSession`, {
+      method: "POST",
+      body: JSON.stringify({
+        AttachmentItem: {
+          attachmentType: "file",
+          name: attachment.filename,
+          contentType: attachment.contentType,
+          size: bytes.length,
+        },
+      }),
+    });
+    let offset = 0;
+    while (offset < bytes.length) {
+      const end = Math.min(offset + UPLOAD_CHUNK_SIZE, bytes.length);
+      // This URL is already signed; never attach the Graph bearer token or log the URL.
+      const response = await fetch(session.uploadUrl, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/octet-stream",
+          "Content-Length": String(end - offset),
+          "Content-Range": `bytes ${offset}-${end - 1}/${bytes.length}`,
+        },
+        body: bytes.subarray(offset, end),
+        signal: AbortSignal.timeout(60_000),
+      });
+      if (!response.ok) {
+        await response.body?.cancel();
+        throw new Error(`Microsoft attachment upload failed (HTTP ${response.status})`);
+      }
+      if (response.status === 201) {
+        await response.body?.cancel();
+        if (end !== bytes.length) throw new Error("Microsoft attachment upload finished early");
+        return;
+      }
+      const progress = (await response.json()) as { nextExpectedRanges?: string[] };
+      const range = progress.nextExpectedRanges?.[0];
+      const next = range && /^\d+(?:-\d*)?$/.test(range) ? Number(range.split("-")[0]) : NaN;
+      if (!Number.isSafeInteger(next) || next <= offset || next > end || next >= bytes.length) {
+        throw new Error("Microsoft attachment upload did not confirm progress");
+      }
+      offset = next;
+    }
+  }
+
   async send(account: StoredAccount, message: OutgoingMessage): Promise<string> {
     if (!env().MICROSOFT_MAIL_SEND_ENABLED) {
       throw new Error("Sending from Purdue requires Microsoft Mail.Send approval");
@@ -467,52 +532,34 @@ export class MicrosoftProvider implements MailProvider {
       bccRecipients: message.bcc.map(recipient),
     };
     const sourceId = message.replyToProviderMessageId ?? message.forwardOfProviderMessageId;
-    if (sourceId) {
-      const operation = message.replyToProviderMessageId ? "createReply" : "createForward";
-      const draft = await this.graph<{ id: string }>(
-        token,
-        `/me/messages/${encodeURIComponent(sourceId)}/${operation}`,
-        { method: "POST", body: "{}" },
-      );
-      await this.graph(token, `/me/messages/${encodeURIComponent(draft.id)}`, {
-        method: "PATCH",
-        body: JSON.stringify(messageBody),
-      });
-      for (const attachment of message.attachments) {
-        await this.graph(token, `/me/messages/${encodeURIComponent(draft.id)}/attachments`, {
+    const operation = message.replyToProviderMessageId ? "createReply" : "createForward";
+    const draft = sourceId
+      ? await this.graph<{ id: string }>(
+          token,
+          `/me/messages/${encodeURIComponent(sourceId)}/${operation}`,
+          { method: "POST", body: "{}" },
+        )
+      : await this.graph<{ id: string }>(token, "/me/messages", {
           method: "POST",
-          body: JSON.stringify({
-            "@odata.type": "#microsoft.graph.fileAttachment",
-            name: attachment.filename,
-            contentType: attachment.contentType,
-            contentBytes: attachment.contentBase64,
-          }),
+          body: JSON.stringify(messageBody),
         });
+    const draftUrl = `/me/messages/${encodeURIComponent(draft.id)}`;
+    try {
+      if (sourceId) {
+        await this.graph(token, draftUrl, { method: "PATCH", body: JSON.stringify(messageBody) });
       }
-      await this.graph<void>(token, `/me/messages/${encodeURIComponent(draft.id)}/send`, {
-        method: "POST",
-      });
-      return draft.id;
+      for (const attachment of message.attachments) {
+        await this.addAttachment(token, draft.id, attachment);
+      }
+    } catch (error) {
+      // Only discard the unsent draft created by this attempt. The outbox can retry from scratch.
+      await this.graph(token, draftUrl, { method: "DELETE" }).catch(() => undefined);
+      throw error;
     }
-    const response = await this.graph<{ id: string }>(token, "/me/messages", {
-      method: "POST",
-      body: JSON.stringify({
-        ...messageBody,
-        internetMessageHeaders: message.inReplyTo
-          ? [{ name: "In-Reply-To", value: message.inReplyTo }]
-          : [],
-        attachments: message.attachments.map((attachment) => ({
-          "@odata.type": "#microsoft.graph.fileAttachment",
-          name: attachment.filename,
-          contentType: attachment.contentType,
-          contentBytes: attachment.contentBase64,
-        })),
-      }),
-    });
-    await this.graph<void>(token, `/me/messages/${encodeURIComponent(response.id)}/send`, {
+    await this.graph<void>(token, `${draftUrl}/send`, {
       method: "POST",
     });
-    return response.id;
+    return draft.id;
   }
 
   async fetchAttachment(account: StoredAccount, providerMessageId: string, attachmentId: string) {

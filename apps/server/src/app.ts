@@ -8,6 +8,8 @@ import { databaseIsReady, env, requireConfig, SentServices } from "@sent/core";
 import {
   DraftInputSchema,
   LoginSchema,
+  MAX_ATTACHMENT_BYTES,
+  MAX_ATTACHMENT_COUNT,
   MessageActionSchema,
   MessageListQuerySchema,
   ProviderSchema,
@@ -58,7 +60,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   await app.register(cookie);
   await app.register(rateLimit, { global: false });
   await app.register(multipart, {
-    limits: { fileSize: 20 * 1024 * 1024, files: 10, parts: 10 },
+    limits: {
+      fileSize: MAX_ATTACHMENT_BYTES,
+      files: MAX_ATTACHMENT_COUNT,
+      parts: MAX_ATTACHMENT_COUNT,
+    },
   });
 
   app.addHook("onRequest", async (request, reply) => {
@@ -175,26 +181,21 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     const account = await repository.getStoredAccount(draft.accountId);
     if (!account) return reply.code(404).send({ error: "Account not found" });
     const attachments: Array<{ filename: string; contentType: string; contentBase64: string }> = [];
+    let attachmentBytes = 0;
     if (request.isMultipart()) {
       for await (const part of request.parts()) {
         if (part.type !== "file") continue;
+        const bytes = await part.toBuffer();
+        attachmentBytes += bytes.length;
+        if (attachmentBytes > MAX_ATTACHMENT_BYTES)
+          return reply.code(413).send({ error: "Attachments exceed the 20 MB Sent limit" });
         attachments.push({
           filename: part.filename,
           contentType: part.mimetype,
-          contentBase64: (await part.toBuffer()).toString("base64"),
+          contentBase64: bytes.toString("base64"),
         });
       }
     }
-    const attachmentBytes = attachments.reduce(
-      (total, attachment) => total + Buffer.byteLength(attachment.contentBase64, "base64"),
-      0,
-    );
-    if (attachmentBytes > 20 * 1024 * 1024)
-      return reply.code(413).send({ error: "Attachments exceed the 20 MB Sent limit" });
-    if (account.provider === "microsoft" && attachmentBytes > 3 * 1024 * 1024)
-      return reply.code(413).send({
-        error: "Microsoft attachments over 3 MB require upload-session support (on the roadmap)",
-      });
     return reply.code(202).send({ mutationId: await repository.enqueueSend(id, attachments) });
   });
 
@@ -248,6 +249,13 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
   });
 
   app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof app.multipartErrors.RequestFileTooLargeError)
+      return reply.code(413).send({ error: "Attachments exceed the 20 MB Sent limit" });
+    if (
+      error instanceof app.multipartErrors.FilesLimitError ||
+      error instanceof app.multipartErrors.PartsLimitError
+    )
+      return reply.code(413).send({ error: `Attach at most ${MAX_ATTACHMENT_COUNT} files` });
     if (error instanceof z.ZodError)
       return reply.code(400).send({ error: "Invalid request", details: error.issues });
     const safeError = error instanceof Error ? error : new Error(String(error));

@@ -95,7 +95,7 @@ Register a confidential web application in Microsoft Entra ID.
 
 Sent discovers the Microsoft folder tree and keeps one delta cursor per folder; Gmail uses mailbox history IDs. Native folders and labels are retained internally but are not exposed as organization controls in the MVP.
 
-Microsoft attachments are currently limited to 3 MB; larger Graph upload sessions are tracked on the roadmap. Sent caps other outgoing attachment sets at 20 MB.
+Sent supports up to 10 outgoing attachments totaling 20 MB per message. Microsoft files of 3 MB or larger use chunked upload sessions; smaller files are attached individually. This applies to new messages, replies, and forwards and uses the existing `Mail.ReadWrite` and `Mail.Send` permissions. The mailbox provider may impose additional message-size limits.
 
 ## First import
 
