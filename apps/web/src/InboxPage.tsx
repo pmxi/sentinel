@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { sentApi } from "./api";
 import { replySeed, useCompose } from "./compose";
+import { ReaderText } from "./ReaderText";
 
 const viewDetails: Record<string, { title: string }> = {
   l1: { title: "Important" },
@@ -423,8 +424,7 @@ function MessageBody({
   view: "plain" | "original";
   title: string;
 }) {
-  if (view === "plain" && message.plainText?.trim())
-    return <div className="plain-body">{message.plainText}</div>;
+  if (view === "plain" && message.plainText?.trim()) return <ReaderText text={message.plainText} />;
   if (message.htmlBody) return <EmailFrame title={title} html={message.htmlBody} />;
   return <div className="plain-body">{message.textBody}</div>;
 }

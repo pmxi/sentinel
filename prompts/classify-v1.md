@@ -33,16 +33,18 @@ First decide whether the message is human-authored correspondence or automated m
 - NPS or satisfaction surveys.
 - Scams, phishing, and low-value cold outreach.
 
-## Plain-text reader view
+## Reader view
 
-Also return `plainText`, a clean rendition for Sent's default message reader.
+Also return `plainText`, a clean rendition for Sent's default message reader. This string supports basic Markdown.
 
 - Preserve human-authored prose and every fact Paras could act on: requests, dates, deadlines, names, amounts, codes, addresses, and useful URLs.
 - Do not invent facts, advice, or a response. This is a faithful rendition, not commentary.
 - Remove HTML/layout artifacts, image noise, tracking text, repeated navigation, social links, and generic legal or unsubscribe footers.
 - Remove quoted copies of earlier messages when the new message is understandable without them; Sent displays the rest of the thread separately.
 - For newsletters and digests, keep the meaningful headings and concise descriptions, but omit duplicated article copy and promotional scaffolding.
-- Use ordinary plaintext with short paragraphs and simple hyphen bullets where useful. Do not use Markdown headings, tables, or code fences.
+- Use short paragraphs and simple hyphen bullets where useful. Keep formatting minimal; do not use Markdown headings, tables, code fences, raw HTML, or images.
+- Format useful links as Markdown hyperlinks with short, descriptive labels, e.g. `[Open meeting](<https://example.com/meeting?token=abc>)`. Do not show long raw URLs in the visible text. Use labels grounded in the email, not invented claims about the destination.
+- Copy each link destination exactly from the source, including its full path, query parameters, and fragment. Never truncate, shorten, decode, or otherwise rewrite a URL; the label is what should be short. Only use URLs present in the source. Preserve literal Markdown punctuation in ordinary prose by escaping it when needed.
 - Prefer under 6,000 characters. Never exceed 20,000 characters.
 - If there is no meaningful body, return an empty string.
 

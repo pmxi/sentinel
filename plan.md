@@ -111,7 +111,7 @@ Use a one-off script to classify the 500 most recent imported messages. The live
 1. Parse headers and produce clean plain text from the message body.
 2. Send the complete normalized message body and relevant headers to OpenAI.
 3. Require strict structured output containing `{ "reasoning": string, "tier": 1 | 2 | 3, "plainText": string }`.
-4. Make `plainText` a faithful, concise reader rendition that preserves substantive content while removing layout debris, duplicated quoted history, navigation, tracking text, and generic footer boilerplate.
+4. Make `plainText` a faithful, concise reader rendition that preserves substantive content while removing layout debris, duplicated quoted history, navigation, tracking text, and generic footer boilerplate. Support basic Markdown with short descriptive hyperlink labels and exact original URL destinations, while disabling raw HTML, images, and unsafe link schemes in the renderer.
 5. Store the result with its model and prompt version so mail can be reclassified or re-rendered later.
 6. Instruct the model to choose the more important tier when a message is ambiguous. A failed call remains visible in L1 or an explicit Unclassified queue.
 7. Store a manual tier change as a nullable override while retaining the original model tier and reasoning.

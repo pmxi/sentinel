@@ -12,7 +12,7 @@ The repository contains a responsive React client, a Fastify API, a separate Pos
 - L1/L2/L3, Unclassified, All Mail, Sent, Drafts, and Trash views
 - Read/unread, flag, archive, delete, send, reply, reply all, and forward
 - Sent-owned drafts and ordinary file attachments
-- Versioned OpenAI classification and clean reader text with strict `{ reasoning, tier, plainText }` output
+- Versioned OpenAI classification and clean reader text with Markdown hyperlinks and strict `{ reasoning, tier, plainText }` output
 - PostgreSQL full-text plus pgvector hybrid search, with lexical fallback if OpenAI is unavailable
 - Manual tier overrides
 - Password login, encrypted OAuth credentials, durable mutation outbox, retries, health checks, HTTPS, and backups
@@ -116,7 +116,7 @@ pnpm sent:embed-archive
 
 The first classifies at most the newest 500 messages that do not already have a model result,
 optionally restricted to one account. `--force` reprocesses the requested number of newest inbound
-messages, replacing their model classification and clean plaintext rendition while preserving manual
+messages, replacing their model classification and clean Markdown reader rendition while preserving manual
 tier overrides. The embedding command processes every unembedded message. The live worker
 automatically classifies, generates reader text, and embeds newly synchronized messages after
 `OPENAI_API_KEY` is configured.
@@ -174,4 +174,5 @@ pnpm sent:hash-password    # generate an Argon2id login hash
 - OAuth token caches are encrypted with AES-256-GCM before storage.
 - Message bodies, access tokens, model payloads, and sign-in codes are not written to ordinary logs.
 - HTML email is sanitized and rendered in a sandboxed iframe. Remote images load normally for now; proxying them is on the roadmap.
+- Generated reader text supports basic Markdown, including descriptive hyperlinks. Raw HTML, images, and unsafe link schemes are disabled in this view; the original email is always available.
 - The mutation outbox first records an action in PostgreSQL, updates Sent optimistically, and then retries the provider write until it succeeds or surfaces as failed.
