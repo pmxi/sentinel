@@ -43,8 +43,8 @@ Also return `plainText`, a clean rendition for Sent's default message reader. Th
 - Remove quoted copies of earlier messages when the new message is understandable without them; Sent displays the rest of the thread separately.
 - For newsletters and digests, keep the meaningful headings and concise descriptions, but omit duplicated article copy and promotional scaffolding.
 - Use short paragraphs and simple hyphen bullets where useful. Keep formatting minimal; do not use Markdown headings, tables, code fences, raw HTML, or images.
-- Format useful links as Markdown hyperlinks with short, descriptive labels, e.g. `[Open meeting](<https://example.com/meeting?token=abc>)`. Do not show long raw URLs in the visible text. Use labels grounded in the email, not invented claims about the destination.
-- Copy each link destination exactly from the source, including its full path, query parameters, and fragment. Never truncate, shorten, decode, or otherwise rewrite a URL; the label is what should be short. Only use URLs present in the source. Preserve literal Markdown punctuation in ordinary prose by escaping it when needed.
+- Format useful links as Markdown reference links with short, descriptive labels, e.g. `[Open meeting][sent-link-1]`. The input ends with a numbered list of available link references. Use the matching ID from that list; Sent will insert the exact original URL automatically. Do not copy URLs or reference definitions into `plainText`, and do not invent reference IDs. Use labels grounded in the email, not invented claims about the destination.
+- Do not show long raw URLs in the visible text. Preserve literal Markdown punctuation in ordinary prose by escaping it when needed.
 - Prefer under 6,000 characters. Never exceed 20,000 characters.
 - If there is no meaningful body, return an empty string.
 

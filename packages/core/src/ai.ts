@@ -24,6 +24,40 @@ export type ClassificationResult = ClassificationOutput & {
 const EMBEDDING_FALLBACK_BYTES = 7_500;
 const EMBEDDING_OMISSION = "\n\n[... middle omitted for embedding ...]\n\n";
 
+const READER_URL = /https?:\/\/[^\s<>[\]"]+/g;
+
+// The model chooses link labels, not opaque URL bytes. Markdown reference definitions are
+// appended from the source after generation so tracking/sign-in tokens cannot be mistyped.
+export function readerLinkReferences(message: string) {
+  const urls = [...new Set(message.match(READER_URL) ?? [])];
+  const definitions = new Map(urls.map((url, index) => [`sent-link-${index + 1}`, url]));
+  const definition = (id: string, url: string) => `[${id}]: <${url}>`;
+  return {
+    input: urls.length
+      ? `${message}\n\nSent link references (use these IDs for hyperlinks):\n${[...definitions].map(([id, url]) => definition(id, url)).join("\n")}`
+      : message,
+    finish(text: string): string {
+      // Also reject invented or altered inline destinations if the model ignores the reference
+      // instruction. Preserve the original view/previous rewrite on a failed generation.
+      for (const url of text.match(READER_URL) ?? []) {
+        if (!urls.includes(url) && !urls.includes(url.replace(/[).,;]+$/, "")))
+          throw new Error("Reader rewrite contains a URL not present in the source");
+      }
+      if (/^\s*\[sent-link-\d+\]:/im.test(text))
+        throw new Error("Reader rewrite must not supply its own link definitions");
+      const used = new Set(
+        [...text.matchAll(/\]\[(sent-link-\d+)\]/gi)].map((match) => match[1]?.toLowerCase()),
+      );
+      const links = [...used].map((id) => {
+        const url = id && definitions.get(id);
+        if (!id || !url) throw new Error("Reader rewrite contains an unknown link reference");
+        return definition(id, url);
+      });
+      return links.length ? `${text.trim()}\n\n${links.join("\n")}` : text;
+    },
+  };
+}
+
 function utf8Prefix(text: string, byteLimit: number): string {
   let bytes = 0;
   let result = "";
@@ -93,16 +127,22 @@ export class OpenAIIntelligenceService implements IntelligenceService {
   async classify(message: string): Promise<ClassificationResult> {
     const prompt = await classificationPrompt();
     const model = env().OPENAI_CLASSIFICATION_MODEL;
+    const links = readerLinkReferences(message);
     const response = await this.client.responses.parse({
       model,
       instructions: prompt.text,
-      input: message,
+      input: links.input,
       reasoning: { effort: "xhigh" },
       store: false,
       text: { format: zodTextFormat(ClassificationOutputSchema, "email_classification") },
     });
     if (!response.output_parsed) throw new Error("OpenAI returned no classification output");
-    return { ...response.output_parsed, model, promptVersion: prompt.version };
+    return {
+      ...response.output_parsed,
+      plainText: links.finish(response.output_parsed.plainText),
+      model,
+      promptVersion: prompt.version,
+    };
   }
 
   async embed(text: string): Promise<{ embedding: number[]; model: string }> {

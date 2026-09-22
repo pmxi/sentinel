@@ -6,6 +6,13 @@ import { ReaderText } from "./ReaderText";
 const render = (text: string) => renderToStaticMarkup(createElement(ReaderText, { text }));
 
 describe("reader Markdown", () => {
+  it("resolves generated reference links without displaying their definitions", () => {
+    const html = render(
+      "[Open meeting][sent-link-1]\n\n[sent-link-1]: <https://example.com/a?token=abc>",
+    );
+    expect(html).toContain('href="https://example.com/a?token=abc"');
+    expect(html.replace(/<[^>]+>/g, "")).toBe("Open meeting");
+  });
   it("shows a short label while preserving the full signed destination", () => {
     const url = `https://example.com/meeting/${"x".repeat(500)}?token=a%2Fb%3D&part=(1)#notes`;
     const html = render(`[Open meeting](<${url}>)`);

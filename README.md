@@ -175,4 +175,5 @@ pnpm sent:hash-password    # generate an Argon2id login hash
 - Message bodies, access tokens, model payloads, and sign-in codes are not written to ordinary logs.
 - HTML email is sanitized and rendered in a sandboxed iframe. Remote images load normally for now; proxying them is on the roadmap.
 - Generated reader text supports basic Markdown, including descriptive hyperlinks. Raw HTML, images, and unsafe link schemes are disabled in this view; the original email is always available.
+- The model selects short link references; Sent inserts the original URL definitions afterward so long signed links are not recopied by the model.
 - The mutation outbox first records an action in PostgreSQL, updates Sent optimistically, and then retries the provider write until it succeeds or surfaces as failed.
