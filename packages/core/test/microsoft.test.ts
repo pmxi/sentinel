@@ -13,6 +13,7 @@ const account: StoredAccount = {
 
 const cursor = JSON.stringify({
   version: 1,
+  sentFolderId: "sent-folder",
   folders: [
     {
       id: "inbox",
@@ -60,6 +61,49 @@ function testProvider() {
 }
 
 describe("Microsoft delta synchronization", () => {
+  it("recognizes Sent Items despite a sender alias and localized folder name", async () => {
+    const { provider, graph } = testProvider();
+    graph.mockResolvedValue({
+      value: [
+        {
+          ...fullMessage,
+          from: { emailAddress: { address: "other-alias@example.edu" } },
+          parentFolderId: "sent-folder",
+        },
+      ],
+      "@odata.deltaLink": "https://graph.example/next-delta",
+    });
+    const state = JSON.parse(cursor);
+    state.folders[0].id = "sent-folder";
+    state.folders[0].name = "Éléments envoyés";
+    const page = await provider.sync(account, JSON.stringify(state));
+    expect(page.messages[0]?.direction).toBe("outbound");
+    expect(page.messages[0]?.nativeState.isSent).toBe(true);
+  });
+
+  it("does not treat a user folder named Sent Items as the real Sent folder", async () => {
+    const { provider, graph } = testProvider();
+    graph.mockResolvedValue({ value: [fullMessage] });
+    const state = JSON.parse(cursor);
+    state.folders[0].name = "Sent Items";
+    const page = await provider.sync(account, JSON.stringify(state));
+    expect(page.messages[0]?.direction).toBe("inbound");
+  });
+
+  it("upgrades existing cursors without resetting mailbox synchronization", async () => {
+    const { provider, graph } = testProvider();
+    graph.mockImplementation(async (_token, url) =>
+      url === "/me/mailFolders/sentitems?$select=id"
+        ? { id: "sent-folder" }
+        : { value: [fullMessage], "@odata.deltaLink": "https://graph.example/next-delta" },
+    );
+    const state = JSON.parse(cursor);
+    delete state.sentFolderId;
+    const page = await provider.sync(account, JSON.stringify(state));
+    expect(graph.mock.calls[1]?.[1]).toBe("https://graph.example/delta");
+    expect(JSON.parse(page.nextCursor ?? "{}").sentFolderId).toBe("sent-folder");
+    expect(page.messages).toHaveLength(1);
+  });
   it("hydrates patch-like delta updates before normalizing them", async () => {
     const { provider, graph } = testProvider();
     graph.mockImplementation(async (_token, url) => {
@@ -319,5 +363,18 @@ describe("Microsoft sending", () => {
     fetchMock.mockRejectedValueOnce(new Error("Connection reset"));
     await expect(provider.send(account, message)).rejects.toThrow("Connection reset");
     expect(fetchMock.mock.calls.some(([, init]) => init?.method === "DELETE")).toBe(false);
+  });
+
+  it("requires the durable checkpoint immediately before sending", async () => {
+    const { provider, fetchMock } = setup();
+    const checkpoint = vi.fn(async () => {
+      expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/send"))).toBe(false);
+      throw new Error("Checkpoint unavailable");
+    });
+    await expect(provider.send(account, message, checkpoint)).rejects.toThrow(
+      "Checkpoint unavailable",
+    );
+    expect(checkpoint).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith("/send"))).toBe(false);
   });
 });

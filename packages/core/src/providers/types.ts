@@ -78,7 +78,11 @@ export interface MailProvider {
     providerMessageId: string,
     action: ProviderAction,
   ): Promise<void>;
-  send(account: StoredAccount, message: OutgoingMessage): Promise<string>;
+  send(
+    account: StoredAccount,
+    message: OutgoingMessage,
+    beforeSend?: () => Promise<void>,
+  ): Promise<string>;
   fetchAttachment(
     account: StoredAccount,
     providerMessageId: string,

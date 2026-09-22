@@ -44,6 +44,7 @@ type MessageRow = QueryResultRow & {
   sent_at?: Date | null;
   received_at: Date;
   read: boolean;
+  thread_read?: boolean;
   flagged: boolean;
   direction: "inbound" | "outbound";
   model_tier: Tier | null;
@@ -85,7 +86,7 @@ function mapSummary(row: MessageRow): MessageSummary {
     from: row.from_addresses,
     snippet: row.snippet,
     receivedAt: row.received_at.toISOString(),
-    read: row.read,
+    read: row.thread_read ?? row.read,
     flagged: row.flagged,
     direction: row.direction,
     tier: row.manual_tier ?? row.model_tier,
@@ -360,15 +361,21 @@ export class MailRepository {
     else if (input.view === "trash") conditions.push("m.deleted");
     else conditions.push("not m.deleted");
     if (!["trash"].includes(input.view)) conditions.push("not m.deleted");
+    let cursorCondition = "";
     if (input.cursor) {
       const cursor = decodeCursor(input.cursor);
-      conditions.push(`(m.received_at,m.id)<(${push(cursor.receivedAt)},${push(cursor.id)}::uuid)`);
+      cursorCondition = `and (received_at,id)<(${push(cursor.receivedAt)},${push(cursor.id)}::uuid)`;
     }
     const limitParameter = push(input.limit + 1);
     const result = await getPool().query<MessageRow>(
-      `select ${MESSAGE_SELECT}
+      `with conversations as (
+      select ${MESSAGE_SELECT},
+        row_number() over (partition by m.thread_id order by m.received_at desc,m.id desc) as thread_rank,
+        bool_and(m.read) over (partition by m.thread_id) as thread_read
       from messages m join accounts a on a.id=m.account_id left join classifications c on c.message_id=m.id
-      where ${conditions.join(" and ")} order by m.received_at desc,m.id desc limit ${limitParameter}`,
+      where ${conditions.join(" and ")})
+      select * from conversations where thread_rank=1 ${cursorCondition}
+      order by received_at desc,id desc limit ${limitParameter}`,
       params,
     );
     const hasMore = result.rows.length > input.limit;
@@ -566,10 +573,24 @@ export class MailRepository {
     );
   }
 
+  async recordSendAttempt(id: string): Promise<void> {
+    const result = await getPool().query(
+      `update mutation_outbox set payload=payload || jsonb_build_object('sendAttemptedAt',now())
+       where id=$1 and action='send' and status='processing' and not (payload ? 'sendAttemptedAt')
+       returning id`,
+      [id],
+    );
+    if (result.rowCount !== 1)
+      throw new Error("This send has already been attempted; automatic resend blocked");
+  }
+
   async failMutation(id: string, error: string): Promise<void> {
     await getPool().query(
-      `update mutation_outbox set status=case when attempts>=8 then 'failed'::mutation_status else 'pending'::mutation_status end,
-      next_attempt_at=now() + (least(3600,power(2,attempts)::int) * interval '1 second'),last_error=$2 where id=$1`,
+      `update mutation_outbox set status=case when attempts>=8 or payload ? 'sendAttemptedAt' then 'failed'::mutation_status else 'pending'::mutation_status end,
+      next_attempt_at=now() + (least(3600,power(2,attempts)::int) * interval '1 second'),
+      last_error=case when payload ? 'sendAttemptedAt'
+        then 'Delivery may have succeeded. Automatic resend blocked; check Sent before retrying. ' || $2
+        else $2 end where id=$1`,
       [id, error.slice(0, 2000)],
     );
   }

@@ -26,7 +26,7 @@ export function InboxPage({ accounts }: { accounts: Account[] }) {
   const messages = useQuery({
     queryKey: ["messages", view, accountId],
     queryFn: () => sentApi.messages(query),
-    refetchInterval: view === "l1" || view === "unclassified" ? 4_000 : false,
+    refetchInterval: 4_000,
   });
   const detail = viewDetails[view] ?? viewDetails.all;
   const select = (message: MessageSummary) => {
@@ -180,7 +180,7 @@ function MessageList({
       {messages.map((message) => (
         <button
           key={message.id}
-          className={`message-row ${!message.read ? "unread" : ""} ${message.tier === null ? "unclassified" : ""} ${selectedId === message.id ? "selected" : ""}`}
+          className={`message-row ${!message.read ? "unread" : ""} ${message.tier === null && message.direction === "inbound" ? "unclassified" : ""} ${selectedId === message.id ? "selected" : ""}`}
           onClick={() => onSelect(message)}
         >
           <span className="message-copy">
@@ -198,7 +198,9 @@ function MessageList({
                   {message.attachmentCount}
                 </>
               )}
-              {message.tier === null && <span className="sorting-label">Sorting…</span>}
+              {message.tier === null && message.direction === "inbound" && (
+                <span className="sorting-label">Sorting…</span>
+              )}
               {message.syncPending && <span>Syncing…</span>}
             </span>
           </span>
@@ -230,6 +232,7 @@ function Reader({
     queryKey: ["thread", threadId],
     queryFn: () => sentApi.thread(threadId ?? ""),
     enabled: Boolean(threadId),
+    refetchInterval: 4_000,
   });
   const { mutate: performAction } = useMutation({
     mutationFn: (value: string) => sentApi.action(messageId, value),

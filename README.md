@@ -95,6 +95,10 @@ Register a confidential web application in Microsoft Entra ID.
 
 Sent discovers the Microsoft folder tree and keeps one delta cursor per folder; Gmail uses mailbox history IDs. Native folders and labels are retained internally but are not exposed as organization controls in the MVP.
 
+Mailbox views show one row per conversation within each account, using the latest message eligible for that view. Incoming messages determine L1/L2/L3 membership, and outgoing messages appear in Sent. Microsoft Sent Items is identified by its well-known folder ID, so sending aliases and localized folder names do not break this separation.
+
+Before submitting a message, the outbox records a durable send attempt. Failures before submission can retry automatically; an uncertain delivery or failure to save the successful result cannot trigger another send. Such attempts are flagged for reconciliation. Microsoft messages are imported into Sent immediately after successful sending when available, with normal polling as a fallback.
+
 Sent supports up to 10 outgoing attachments totaling 20 MB per message. Microsoft files of 3 MB or larger use chunked upload sessions; smaller files are attached individually. This applies to new messages, replies, and forwards and uses the existing `Mail.ReadWrite` and `Mail.Send` permissions. The mailbox provider may impose additional message-size limits.
 
 ## First import

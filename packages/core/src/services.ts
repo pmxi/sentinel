@@ -97,8 +97,14 @@ export class SentServices {
         if (!account) throw new Error("Mutation account no longer exists");
         const provider = this.provider(account.provider);
         if (item.action === "send") {
-          const payload = item.payload as { draft?: Draft; attachments?: OutgoingAttachment[] };
+          const payload = item.payload as {
+            draft?: Draft;
+            attachments?: OutgoingAttachment[];
+            sendAttemptedAt?: string;
+          };
           if (!payload.draft) throw new Error("Send mutation is missing its draft");
+          if (payload.sendAttemptedAt)
+            throw new Error("This send was already attempted; delivery requires reconciliation");
           let inReplyTo: string | null = null;
           let replyToProviderMessageId: string | null = null;
           let forwardOfProviderMessageId: string | null = null;
@@ -116,19 +122,41 @@ export class SentServices {
               (await this.repository.getProviderMessageReference(payload.draft.forwardOfMessageId))
                 ?.providerMessageId ?? null;
           }
-          await provider.send(account, {
-            from: account.email,
-            to: payload.draft.to,
-            cc: payload.draft.cc,
-            bcc: payload.draft.bcc,
-            subject: payload.draft.subject,
-            body: payload.draft.body,
-            inReplyTo,
-            replyToProviderMessageId,
-            forwardOfProviderMessageId,
-            references,
-            attachments: payload.attachments ?? [],
-          });
+          const sentId = await provider.send(
+            account,
+            {
+              from: account.email,
+              to: payload.draft.to,
+              cc: payload.draft.cc,
+              bcc: payload.draft.bcc,
+              subject: payload.draft.subject,
+              body: payload.draft.body,
+              inReplyTo,
+              replyToProviderMessageId,
+              forwardOfProviderMessageId,
+              references,
+              attachments: payload.attachments ?? [],
+            },
+            () => this.repository.recordSendAttempt(item.id),
+          );
+          await this.repository.completeMutation(item.id);
+          if (account.provider === "microsoft") {
+            try {
+              const results = await this.providers.microsoft.refetchMessages(account, [
+                {
+                  providerMessageId: sentId,
+                  folderId: "sentitems",
+                  folderName: "Sent Items",
+                },
+              ]);
+              for (const result of results) {
+                if (result.message) await this.repository.upsertMessage(account.id, result.message);
+              }
+            } catch {
+              // Delivery is already accepted; normal mailbox polling will catch up.
+            }
+          }
+          continue;
         } else {
           if (!item.messageId) throw new Error("Message mutation is missing its message id");
           const reference = await this.repository.getProviderMessageReference(item.messageId);

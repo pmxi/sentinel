@@ -277,7 +277,11 @@ export class GmailProvider implements MailProvider {
     });
   }
 
-  async send(account: StoredAccount, message: OutgoingMessage): Promise<string> {
+  async send(
+    account: StoredAccount,
+    message: OutgoingMessage,
+    beforeSend?: () => Promise<void>,
+  ): Promise<string> {
     const gmail = await this.client(account);
     const composer = new MailComposer({
       from: message.from,
@@ -295,10 +299,14 @@ export class GmailProvider implements MailProvider {
       })),
     });
     const raw = await composer.compile().build();
-    const result = await gmail.users.messages.send({
-      userId: "me",
-      requestBody: { raw: raw.toString("base64url") },
-    });
+    await beforeSend?.();
+    const result = await gmail.users.messages.send(
+      {
+        userId: "me",
+        requestBody: { raw: raw.toString("base64url") },
+      },
+      { retry: false },
+    );
     if (!result.data.id) throw new Error("Gmail did not return a sent message id");
     return result.data.id;
   }

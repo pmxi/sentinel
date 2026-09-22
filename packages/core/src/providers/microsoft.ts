@@ -44,6 +44,7 @@ type MicrosoftCursor = {
   index: number;
   backfill: boolean;
   folderRefreshAt: string;
+  sentFolderId?: string;
 };
 const BASE_GRAPH_SCOPES = ["openid", "profile", "offline_access", "Mail.ReadWrite"];
 const SIMPLE_ATTACHMENT_LIMIT = 3 * 1024 * 1024;
@@ -218,6 +219,7 @@ export class MicrosoftProvider implements MailProvider {
     source: GraphMessage,
     accountEmail: string,
     folder: FolderCursor,
+    sentFolderId: string,
   ): Promise<NormalizedMessage | null> {
     if (source["@removed"] || !source.id) return null;
     if (source.isDraft) return null;
@@ -273,16 +275,22 @@ export class MicrosoftProvider implements MailProvider {
       htmlBody,
       headers: {},
       attachments,
-      direction: from.some((item) => item.address === accountEmail.toLowerCase())
-        ? "outbound"
-        : "inbound",
+      direction:
+        (source.parentFolderId ?? folder.id) === sentFolderId ||
+        from.some((item) => item.address === accountEmail.toLowerCase())
+          ? "outbound"
+          : "inbound",
       read: source.isRead ?? false,
       flagged: source.flag?.flagStatus === "flagged",
       archived,
       deleted,
       tombstone: false,
       containers: [{ id: source.parentFolderId ?? folder.id, name: folder.name, kind: "folder" }],
-      nativeState: { parentFolderId: source.parentFolderId, isDraft: source.isDraft },
+      nativeState: {
+        parentFolderId: source.parentFolderId,
+        isDraft: source.isDraft,
+        isSent: (source.parentFolderId ?? folder.id) === sentFolderId,
+      },
       providerUpdatedAt: source.lastModifiedDateTime
         ? new Date(source.lastModifiedDateTime)
         : receivedAt,
@@ -291,6 +299,9 @@ export class MicrosoftProvider implements MailProvider {
 
   async refetchMessages(account: StoredAccount, references: MicrosoftMessageReference[]) {
     const token = await this.token(account);
+    const sentFolderId = (
+      await this.graph<{ id: string }>(token, "/me/mailFolders/sentitems?$select=id")
+    ).id;
     const folders = new Map((await this.listFolders(token)).map((folder) => [folder.id, folder]));
     const results: Array<{
       providerMessageId: string;
@@ -312,11 +323,17 @@ export class MicrosoftProvider implements MailProvider {
                 delta: null,
                 next: null,
               },
+              sentFolderId,
             )
           : null,
       });
     }
     return results;
+  }
+
+  async getSentFolderId(account: StoredAccount): Promise<string> {
+    const token = await this.token(account);
+    return (await this.graph<{ id: string }>(token, "/me/mailFolders/sentitems?$select=id")).id;
   }
 
   private async listFolders(token: string): Promise<FolderCursor[]> {
@@ -353,6 +370,9 @@ export class MicrosoftProvider implements MailProvider {
   async sync(account: StoredAccount, cursor: string | null): Promise<SyncPage> {
     const token = await this.token(account);
     let state: MicrosoftCursor | null = cursor ? (JSON.parse(cursor) as MicrosoftCursor) : null;
+    const sentFolderId =
+      state?.sentFolderId ??
+      (await this.graph<{ id: string }>(token, "/me/mailFolders/sentitems?$select=id")).id;
     if (!state) {
       state = {
         version: 1,
@@ -360,6 +380,7 @@ export class MicrosoftProvider implements MailProvider {
         index: 0,
         backfill: true,
         folderRefreshAt: new Date().toISOString(),
+        sentFolderId,
       };
       return {
         messages: [],
@@ -368,6 +389,7 @@ export class MicrosoftProvider implements MailProvider {
         backfillComplete: false,
       };
     }
+    state.sentFolderId = sentFolderId;
     if (
       !state.backfill &&
       Date.now() - new Date(state.folderRefreshAt).getTime() > 6 * 60 * 60 * 1000
@@ -409,7 +431,13 @@ export class MicrosoftProvider implements MailProvider {
           if (source.id) deletedProviderMessageIds.push(source.id);
           continue;
         }
-        const normalized = await this.normalize(token, hydrated, account.email, folder);
+        const normalized = await this.normalize(
+          token,
+          hydrated,
+          account.email,
+          folder,
+          sentFolderId,
+        );
         if (normalized) messages.push(normalized);
       }
     }
@@ -516,7 +544,11 @@ export class MicrosoftProvider implements MailProvider {
     }
   }
 
-  async send(account: StoredAccount, message: OutgoingMessage): Promise<string> {
+  async send(
+    account: StoredAccount,
+    message: OutgoingMessage,
+    beforeSend?: () => Promise<void>,
+  ): Promise<string> {
     if (!env().MICROSOFT_MAIL_SEND_ENABLED) {
       throw new Error("Sending from Purdue requires Microsoft Mail.Send approval");
     }
@@ -551,6 +583,7 @@ export class MicrosoftProvider implements MailProvider {
       for (const attachment of message.attachments) {
         await this.addAttachment(token, draft.id, attachment);
       }
+      await beforeSend?.();
     } catch (error) {
       // Only discard the unsent draft created by this attempt. The outbox can retry from scratch.
       await this.graph(token, draftUrl, { method: "DELETE" }).catch(() => undefined);

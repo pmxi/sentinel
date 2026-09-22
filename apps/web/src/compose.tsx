@@ -149,6 +149,8 @@ function Composer({
       const saved = await sentApi.saveDraft(draft);
       await sentApi.sendDraft(saved.id, files);
       await queryClient.invalidateQueries({ queryKey: ["drafts"] });
+      void queryClient.invalidateQueries({ queryKey: ["messages"] });
+      void queryClient.invalidateQueries({ queryKey: ["thread"] });
       close();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -270,13 +272,19 @@ function Composer({
 }
 
 export function replySeed(message: MessageDetail, account: Account, all = false): ComposeSeed {
-  const recipient = message.from.filter(
-    (item) => item.address.toLowerCase() !== account.email.toLowerCase(),
+  const selfAddresses = new Set([
+    account.email.toLowerCase(),
+    ...(message.direction === "outbound"
+      ? message.from.map((item) => item.address.toLowerCase())
+      : []),
+  ]);
+  const recipient = (message.direction === "outbound" ? message.to : message.from).filter(
+    (item) => !selfAddresses.has(item.address.toLowerCase()),
   );
   const allRecipients = all
     ? [...recipient, ...message.to, ...message.cc].filter(
         (item, index, items) =>
-          item.address.toLowerCase() !== account.email.toLowerCase() &&
+          !selfAddresses.has(item.address.toLowerCase()) &&
           items.findIndex((other) => other.address.toLowerCase() === item.address.toLowerCase()) ===
             index,
       )
