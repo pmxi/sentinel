@@ -471,6 +471,12 @@ export class MailRepository {
         )
       ).rows[0];
       if (!message) throw new Error("Message not found");
+      const pendingUndo = await client.query(
+        `select id from mutation_outbox where message_id=$1 and action=$2 and status='pending'
+        and (payload->>'undoUntil')::timestamptz > clock_timestamp()`,
+        [messageId, action],
+      );
+      if (pendingUndo.rowCount) throw new Error("This action is already pending");
       const id = randomUUID();
       await client.query(
         `insert into mutation_outbox(id,idempotency_key,account_id,message_id,action,payload,next_attempt_at)

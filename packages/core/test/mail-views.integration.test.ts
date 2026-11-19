@@ -105,6 +105,32 @@ describe.skipIf(!databaseUrl)("mail views and send checkpoints in PostgreSQL", (
     await expect(repository.undoMutation(id)).rejects.toThrow("Undo window expired");
   });
 
+  it.each(["archive", "delete"])(
+    "rejects overlapping %s actions so undo preserves original state",
+    async (action) => {
+      const saved = await message("overlap", 8);
+      const until = new Date(Date.now() + 5_000).toISOString();
+      const results = await Promise.allSettled([
+        repository.enqueueAction(saved.id, action, until),
+        repository.enqueueAction(saved.id, action, until),
+      ]);
+      const queued = results.find((result) => result.status === "fulfilled");
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect(results.find((result) => result.status === "rejected")).toMatchObject({
+        reason: new Error("This action is already pending"),
+      });
+      if (queued?.status !== "fulfilled") throw new Error("Action was not queued");
+      await repository.undoMutation(queued.value);
+      const column = action === "archive" ? "archived" : "deleted";
+      expect(
+        (await getPool().query(`select ${column} from messages where id=$1`, [saved.id])).rows[0][
+          column
+        ],
+      ).toBe(false);
+      expect(await repository.claimMutations()).toEqual([]);
+    },
+  );
+
   it("restores the original archived state instead of unarchiving on undo", async () => {
     const saved = await message("already archived", 8, { archived: true });
     const id = await repository.enqueueAction(

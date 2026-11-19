@@ -155,6 +155,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     } catch (error) {
       if (error instanceof Error && error.message === "Message not found")
         return reply.code(404).send({ error: error.message });
+      if (error instanceof Error && error.message === "This action is already pending")
+        return reply.code(409).send({ error: error.message });
       throw error;
     }
   });
