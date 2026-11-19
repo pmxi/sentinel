@@ -52,7 +52,7 @@ restart() {
   started=$(node -p 'Date.now()')
   systemctl --user restart sent-server.service sent-worker.service
 }
-previous=$(readlink -f "$ROOT/current" || true)
+previous=$(readlink -e "$ROOT/current" || true)
 if [[ -z "$previous" ]]; then
   [[ -d "$LEGACY" ]] || { log "Missing legacy release: $LEGACY"; exit 1; }
   ln -sfn "$LEGACY" "$ROOT/releases/legacy-328f56f"
@@ -62,7 +62,7 @@ fi
 
 mode=${1:-auto}
 if [[ "$mode" == rollback ]]; then
-  target=$(readlink -f "$ROOT/previous" || true)
+  target=$(readlink -e "$ROOT/previous" || true)
   [[ -d "$target" ]] || { log 'No previous release'; exit 1; }
   log "Manual rollback to $target"
   link "$target" "$ROOT/current"
@@ -118,12 +118,12 @@ failed() {
 }
 trap failed ERR INT TERM
 release="$ROOT/releases/$sha"
-[[ "$(readlink -f "$ROOT/current")" != "$release" ]] || { log 'Requested release is already current'; exit 0; }
+[[ "$(readlink -e "$ROOT/current")" != "$release" ]] || { log 'Requested release is already current'; exit 0; }
 log "Building $sha"
 if [[ ! -d "$ROOT/cache.git" ]]; then git clone --mirror "$REPO" "$ROOT/cache.git"; fi
 git --git-dir="$ROOT/cache.git" fetch origin '+refs/heads/*:refs/heads/*'
 git --git-dir="$ROOT/cache.git" cat-file -e "$sha^{commit}"
-saved_previous=$(readlink -f "$ROOT/previous" || true)
+saved_previous=$(readlink -e "$ROOT/previous" || true)
 if [[ "$release" != "$saved_previous" ]]; then
   if [[ -d "$release" ]]; then rm -rf -- "$release"; fi
   mkdir "$release"

@@ -95,6 +95,17 @@ def main():
             return result.stdout
 
         try:
+            bootstrap = commit()
+            state["bad"] = bootstrap
+            output = deploy(1)
+            assert "Previous release healthy" in output
+            assert (root / "current").resolve() == legacy
+            assert (root / "releases" / "legacy-328f56f").resolve() == legacy
+            assert (root / "state" / f"failed-{bootstrap}").exists()
+            print("PASS first-bootstrap failure -> healthy legacy rollback")
+            state["bad"] = None
+            shutil.rmtree(root)
+            calls.unlink()
             first = commit()
             output = deploy()
             assert (root / "current").resolve().name == first
