@@ -1,7 +1,7 @@
 import type { Account, Draft } from "@sent/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Menu, X } from "lucide-react";
-import { type FormEvent, useEffect, useState } from "react";
+import { Command, Menu, X } from "lucide-react";
+import { type FormEvent, useEffect, useRef, useState } from "react";
 import {
   Link,
   Navigate,
@@ -13,6 +13,7 @@ import {
   useNavigate,
 } from "react-router-dom";
 import { ApiError, sentApi } from "./api";
+import { CommandProvider, useCommandPalette, useCommands } from "./commands";
 import { ComposeProvider, useCompose } from "./compose";
 import { InboxPage, SearchResults } from "./InboxPage";
 import { LoginPage } from "./LoginPage";
@@ -40,25 +41,27 @@ function AuthenticatedApp() {
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: sentApi.accounts });
   return (
     <ComposeProvider accounts={accounts.data?.accounts ?? []}>
-      <Routes>
-        <Route element={<Shell accounts={accounts.data?.accounts ?? []} />}>
-          <Route index element={<Navigate to="/inbox/l1" replace />} />
-          <Route
-            path="/inbox/:view"
-            element={<InboxPage accounts={accounts.data?.accounts ?? []} />}
-          />
-          <Route
-            path="/search"
-            element={<SearchResults accounts={accounts.data?.accounts ?? []} />}
-          />
-          <Route path="/drafts" element={<DraftsPage />} />
-          <Route
-            path="/settings"
-            element={<SettingsPage accounts={accounts.data?.accounts ?? []} />}
-          />
-          <Route path="*" element={<Navigate to="/inbox/l1" replace />} />
-        </Route>
-      </Routes>
+      <CommandProvider>
+        <Routes>
+          <Route element={<Shell accounts={accounts.data?.accounts ?? []} />}>
+            <Route index element={<Navigate to="/inbox/l1" replace />} />
+            <Route
+              path="/inbox/:view"
+              element={<InboxPage accounts={accounts.data?.accounts ?? []} />}
+            />
+            <Route
+              path="/search"
+              element={<SearchResults accounts={accounts.data?.accounts ?? []} />}
+            />
+            <Route path="/drafts" element={<DraftsPage />} />
+            <Route
+              path="/settings"
+              element={<SettingsPage accounts={accounts.data?.accounts ?? []} />}
+            />
+            <Route path="*" element={<Navigate to="/inbox/l1" replace />} />
+          </Route>
+        </Routes>
+      </CommandProvider>
     </ComposeProvider>
   );
 }
@@ -69,6 +72,41 @@ function Shell({ accounts }: { accounts: Account[] }) {
   const location = useLocation();
   const navigate = useNavigate();
   const compose = useCompose();
+  const searchInput = useRef<HTMLInputElement>(null);
+  const { openPalette } = useCommandPalette();
+  useCommands("shell", [
+    {
+      id: "compose",
+      label: "Compose a message",
+      group: "Mail",
+      keys: ["c"],
+      run: () => compose.openCompose(),
+    },
+    {
+      id: "search",
+      label: "Search mail",
+      group: "Mail",
+      keys: ["/"],
+      run: () => searchInput.current?.focus(),
+    },
+    ...(
+      [
+        ["important", "Go to Important inbox", "g i", "/inbox/l1"],
+        ["updates", "Go to Updates", "g u", "/inbox/l2"],
+        ["low", "Go to Low priority", "g l", "/inbox/l3"],
+        ["all", "Go to All mail", "g a", "/inbox/all"],
+        ["sent", "Go to Sent", "g s", "/inbox/sent"],
+        ["drafts", "Go to Drafts", "g d", "/drafts"],
+        ["trash", "Go to Trash", "g t", "/inbox/trash"],
+      ] as const
+    ).map(([id, label, key, path]) => ({
+      id,
+      label,
+      group: "Navigation" as const,
+      keys: [key],
+      run: () => navigate(path),
+    })),
+  ]);
   useEffect(() => {
     if (location.pathname) setMenuOpen(false);
   }, [location.pathname]);
@@ -109,6 +147,17 @@ function Shell({ accounts }: { accounts: Account[] }) {
           <NavItem to="/inbox/trash" label="Trash" />
         </nav>
         <div className="sidebar-bottom">
+          <button
+            className="shortcuts-button"
+            onClick={openPalette}
+            disabled={compose.isOpen}
+            title="Commands: ⌘K / Ctrl+K. Press ? to browse shortcuts."
+            aria-keyshortcuts="Meta+k Control+k"
+          >
+            <Command size={15} />
+            <span>Commands</span>
+            <kbd>{navigator.platform.includes("Mac") ? "⌘ K" : "Ctrl K"}</kbd>
+          </button>
           <NavItem to="/settings" label="Settings" />
           <div className="account-stack">
             {accounts.map((account) => (
@@ -133,10 +182,16 @@ function Shell({ accounts }: { accounts: Account[] }) {
           </button>
           <form className="global-search" onSubmit={submitSearch}>
             <input
+              ref={searchInput}
+              aria-label="Search mail"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") event.currentTarget.blur();
+              }}
             />
+            <kbd>/</kbd>
           </form>
         </header>
         {accounts.length === 0 && location.pathname !== "/settings" && (
