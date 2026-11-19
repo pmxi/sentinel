@@ -106,6 +106,7 @@ else
   exit 2
 fi
 
+saved_previous=$(readlink -e "$ROOT/previous" || true)
 failed() {
   trap - ERR INT TERM
   set +e
@@ -113,6 +114,11 @@ failed() {
   record "failed-$sha"
   record failed
   link "$previous" "$ROOT/current"
+  if [[ -n "$saved_previous" ]]; then
+    link "$saved_previous" "$ROOT/previous"
+  else
+    rm -f "$ROOT/previous"
+  fi
   if restart && healthy; then log 'Previous release healthy'; else log 'CRITICAL: rollback health failed'; fi
   exit 1
 }
@@ -123,7 +129,6 @@ log "Building $sha"
 if [[ ! -d "$ROOT/cache.git" ]]; then git clone --mirror "$REPO" "$ROOT/cache.git"; fi
 git --git-dir="$ROOT/cache.git" fetch origin '+refs/heads/*:refs/heads/*'
 git --git-dir="$ROOT/cache.git" cat-file -e "$sha^{commit}"
-saved_previous=$(readlink -e "$ROOT/previous" || true)
 if [[ "$release" != "$saved_previous" ]]; then
   if [[ -d "$release" ]]; then rm -rf -- "$release"; fi
   mkdir "$release"

@@ -121,7 +121,9 @@ def main():
             assert "Previous release healthy" in output
             assert (root / "current").resolve().name == first
             assert (root / "state" / f"failed-{second}").exists()
+            assert (root / "previous").resolve() == legacy
             print("PASS health failure -> rollback verified healthy, failed SHA recorded")
+            print("PASS failed deploy preserves earlier previous release")
             api = state["api"]
             deploy()
             assert state["api"] == api
