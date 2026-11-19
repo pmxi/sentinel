@@ -11,6 +11,7 @@ import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { sentApi } from "./api";
 import { replySeed, useCompose } from "./compose";
+import { MessagePreview, RankingReason, ReaderInsights } from "./MessageInsights";
 import { ReaderText } from "./ReaderText";
 
 const viewDetails: Record<string, { title: string }> = {
@@ -185,55 +186,60 @@ function MessageList({
   return (
     <div className="message-list">
       {messages.map((message) => (
-        <button
+        <div
+          className={`message-list-item ${selectedId === message.id ? "selected" : ""}`}
           key={message.threadId}
-          className={`message-row ${!message.read ? "unread" : ""} ${message.tier === null && message.direction === "inbound" ? "unclassified" : ""} ${selectedId === message.id ? "selected" : ""}`}
-          onClick={() => onSelect(message)}
         >
-          <span className="message-copy">
-            <span className="message-line">
-              <span className="conversation-senders">
-                <strong>
-                  {message.participants
-                    .map((person) =>
-                      person.address.toLowerCase() === message.account.email.toLowerCase()
-                        ? "Me"
-                        : person.name || person.address,
-                    )
-                    .join(", ") || "Unknown"}
-                </strong>
-                {message.messageCount > 1 && (
-                  <span className="conversation-count" title={`${message.messageCount} messages`}>
-                    {message.messageCount}
-                    <span className="visually-hidden"> messages</span>
-                  </span>
-                )}
+          <button
+            className={`message-row ${!message.read ? "unread" : ""} ${message.tier === null && message.direction === "inbound" ? "unclassified" : ""} ${selectedId === message.id ? "selected" : ""}`}
+            onClick={() => onSelect(message)}
+          >
+            <span className="message-copy">
+              <span className="message-line">
+                <span className="conversation-senders">
+                  <strong>
+                    {message.participants
+                      .map((person) =>
+                        person.address.toLowerCase() === message.account.email.toLowerCase()
+                          ? "Me"
+                          : person.name || person.address,
+                      )
+                      .join(", ") || "Unknown"}
+                  </strong>
+                  {message.messageCount > 1 && (
+                    <span className="conversation-count" title={`${message.messageCount} messages`}>
+                      {message.messageCount}
+                      <span className="visually-hidden"> messages</span>
+                    </span>
+                  )}
+                </span>
+                <time>{formatListDate(message.receivedAt)}</time>
               </span>
-              <time>{formatListDate(message.receivedAt)}</time>
+              <span className="message-subject">
+                {message.subject.replace(/^(?:(?:re|fw|fwd):\s*)+/i, "") || "(No subject)"}
+              </span>
+              <MessagePreview message={message} />
+              <span className="message-meta">
+                {message.account.email}
+                {message.unreadCount > 0 && (
+                  <span className="conversation-unread">{message.unreadCount} unread</span>
+                )}
+                {message.attachmentCount > 0 && (
+                  <>
+                    <Paperclip size={12} />
+                    {message.attachmentCount}
+                  </>
+                )}
+                {message.tier === null && message.direction === "inbound" && (
+                  <span className="sorting-label">Sorting…</span>
+                )}
+                {message.syncPending && <span>Syncing…</span>}
+              </span>
             </span>
-            <span className="message-subject">
-              {message.subject.replace(/^(?:(?:re|fw|fwd):\s*)+/i, "") || "(No subject)"}
-            </span>
-            <span className="message-snippet">{message.snippet}</span>
-            <span className="message-meta">
-              {message.account.email}
-              {message.unreadCount > 0 && (
-                <span className="conversation-unread">{message.unreadCount} unread</span>
-              )}
-              {message.attachmentCount > 0 && (
-                <>
-                  <Paperclip size={12} />
-                  {message.attachmentCount}
-                </>
-              )}
-              {message.tier === null && message.direction === "inbound" && (
-                <span className="sorting-label">Sorting…</span>
-              )}
-              {message.syncPending && <span>Syncing…</span>}
-            </span>
-          </span>
-          {message.flagged && <Flag className="row-flag" size={14} fill="currentColor" />}
-        </button>
+            {message.flagged && <Flag className="row-flag" size={14} fill="currentColor" />}
+          </button>
+          <RankingReason message={message} />
+        </div>
       ))}
     </div>
   );
@@ -444,16 +450,11 @@ function Reader({
             To: {message.to.map(formatAddress).join(", ") || "me"}
           </p>
           {conversation.length > 0 && <span className="latest-label">Latest message</span>}
+          <ReaderInsights message={message} />
           <div className="email-body">
             <MessageBody message={message} view={bodyView} title="Email content" />
           </div>
           <MessageAttachments message={message} />
-          {message.reasoning && (
-            <details className="reasoning">
-              <summary>Why Sent chose L{message.tier}</summary>
-              <p>{message.reasoning}</p>
-            </details>
-          )}
         </section>
         <div className="reply-actions">
           <button onClick={() => account && compose.openCompose(replySeed(message, account))}>

@@ -27,6 +27,12 @@ describe.skipIf(!databaseUrl)("mail views and send checkpoints in PostgreSQL", (
         .replace("CREATE EXTENSION IF NOT EXISTS vector;", "")
         .replace("vector(3072)", "real[]"),
     );
+    const summaryMigration = await readFile(
+      new URL("../src/db/migrations/0003_ai_summary.sql", import.meta.url),
+      "utf8",
+    );
+    await getPool().query(summaryMigration);
+    await getPool().query(summaryMigration);
   });
   beforeEach(async () => {
     await getPool().query("truncate accounts cascade");
@@ -196,6 +202,72 @@ describe.skipIf(!databaseUrl)("mail views and send checkpoints in PostgreSQL", (
     expect(
       (await repository.listMessages({ view: "l3", limit: 50 })).messages.map((item) => item.id),
     ).toEqual([newsletter.id]);
+  });
+
+  it("persists summaries across list, detail, thread, and search without losing manual tiers", async () => {
+    const source = await message("summary", 9);
+    await repository.setTierOverride(source.id, 2);
+    await repository.saveClassification(source.id, {
+      tier: 1,
+      reasoning: "A professor directly requests a reply.",
+      summary: "  Send the revised lab by Friday.  ",
+      plainText: "Please send the revised lab by Friday.",
+      model: "test-model",
+      promptVersion: "summary-test",
+    });
+    const expected = {
+      aiSummary: "Send the revised lab by Friday.",
+      reasoning: "A professor directly requests a reply.",
+      tier: 2,
+      modelTier: 1,
+    };
+    expect((await repository.listMessages({ view: "l2", limit: 50 })).messages[0]).toMatchObject(
+      expected,
+    );
+    expect(await repository.getMessage(source.id)).toMatchObject(expected);
+    const detail = await repository.getMessage(source.id);
+    expect((await repository.getThread(detail?.threadId ?? ""))[0]).toMatchObject(expected);
+    expect((await repository.search({ q: "summary", limit: 50 })).messages[0]).toMatchObject(
+      expected,
+    );
+    await repository.saveClassification(source.id, {
+      tier: 3,
+      reasoning: "An informational update.",
+      summary: "The lab was accepted.",
+      plainText: "Accepted.",
+      model: "test-model",
+      promptVersion: "summary-test-2",
+    });
+    expect(await repository.getMessage(source.id)).toMatchObject({
+      aiSummary: "The lab was accepted.",
+      modelTier: 3,
+      tier: 2,
+    });
+  });
+
+  it("keeps older and unsorted messages readable without inventing AI insights", async () => {
+    const source = await message("legacy", 9);
+    expect(await repository.getMessage(source.id)).toMatchObject({
+      aiSummary: null,
+      reasoning: null,
+      modelTier: null,
+    });
+    await repository.setTierOverride(source.id, 2);
+    expect(await repository.getMessage(source.id)).toMatchObject({
+      aiSummary: null,
+      reasoning: null,
+      modelTier: null,
+      tier: 2,
+    });
+    await getPool().query(
+      "update classifications set model='legacy',reasoning='A real model reason' where message_id=$1",
+      [source.id],
+    );
+    expect(await repository.getMessage(source.id)).toMatchObject({
+      aiSummary: null,
+      reasoning: "A real model reason",
+      modelTier: 1,
+    });
   });
 
   async function enqueueDraft() {

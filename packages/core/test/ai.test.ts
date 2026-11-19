@@ -41,15 +41,17 @@ describe("reader link references", () => {
 });
 
 describe("classification output", () => {
-  it("accepts the intentionally small contract", () => {
+  it("accepts a separate factual summary alongside the tier explanation and reader text", () => {
     expect(
       ClassificationOutputSchema.parse({
         reasoning: "A professor requested a reply.",
+        summary: "Send the revised lab by Friday.",
         tier: 1,
         plainText: "Please send me the revised lab by Friday.",
       }),
     ).toEqual({
       reasoning: "A professor requested a reply.",
+      summary: "Send the revised lab by Friday.",
       tier: 1,
       plainText: "Please send me the revised lab by Friday.",
     });
@@ -57,6 +59,17 @@ describe("classification output", () => {
 
   it("rejects extra tiers and missing reasoning", () => {
     expect(() => ClassificationOutputSchema.parse({ reasoning: "", tier: 4 })).toThrow();
+  });
+
+  it.each([undefined, "", "   ", "x".repeat(281)])("rejects invalid summaries: %s", (summary) => {
+    expect(() =>
+      ClassificationOutputSchema.parse({
+        reasoning: "A professor requested a reply.",
+        tier: 1,
+        plainText: "Please send the lab.",
+        summary,
+      }),
+    ).toThrow();
   });
 });
 

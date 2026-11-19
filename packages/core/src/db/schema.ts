@@ -149,6 +149,7 @@ export const classifications = pgTable("classifications", {
     .references(() => messages.id, { onDelete: "cascade" }),
   modelTier: integer("model_tier").$type<Tier>().notNull(),
   reasoning: text("reasoning").notNull(),
+  summary: text("summary"),
   plainText: text("plain_text"),
   manualTier: integer("manual_tier").$type<Tier>(),
   model: text("model").notNull(),

@@ -53,6 +53,8 @@ type MessageRow = QueryResultRow & {
   model_tier: Tier | null;
   manual_tier: Tier | null;
   reasoning: string | null;
+  summary: string | null;
+  classification_model: string | null;
   attachments: MessageDetail["attachments"];
   internet_message_id?: string | null;
   sync_pending: boolean;
@@ -61,7 +63,7 @@ type MessageRow = QueryResultRow & {
 const MESSAGE_SELECT = `
   m.id, m.thread_id, m.account_id, a.provider, a.email account_email, a.display_name account_display_name,
   m.subject, m.from_addresses, m.snippet, m.received_at, m.read, m.flagged, m.direction, m.attachments,
-  c.model_tier, c.manual_tier, c.reasoning, c.plain_text,
+  c.model_tier, c.manual_tier, c.reasoning, c.summary, c.plain_text, c.model classification_model,
   exists(select 1 from mutation_outbox o where o.message_id=m.id and o.status in ('pending','processing')) sync_pending`;
 
 function mapAccount(row: AccountRow): Account {
@@ -93,8 +95,9 @@ function mapSummary(row: MessageRow): MessageSummary {
     flagged: row.flagged,
     direction: row.direction,
     tier: row.manual_tier ?? row.model_tier,
-    modelTier: row.model_tier,
-    reasoning: row.reasoning,
+    modelTier: row.classification_model === "manual" ? null : row.model_tier,
+    reasoning: row.classification_model === "manual" ? null : row.reasoning,
+    aiSummary: row.summary ?? null,
     attachmentCount: row.attachments.length,
     syncPending: row.sync_pending,
   };
@@ -683,6 +686,7 @@ export class MailRepository {
     input: {
       tier: Tier;
       reasoning: string;
+      summary: string;
       plainText: string;
       model: string;
       promptVersion: string;
@@ -690,9 +694,9 @@ export class MailRepository {
   ): Promise<void> {
     await transaction(async (client) => {
       await client.query(
-        `insert into classifications(message_id,model_tier,reasoning,plain_text,model,prompt_version,classified_at,updated_at)
-        values($1,$2,$3,$4,$5,$6,now(),now()) on conflict(message_id) do update set model_tier=excluded.model_tier,
-        reasoning=excluded.reasoning,plain_text=excluded.plain_text,model=excluded.model,
+        `insert into classifications(message_id,model_tier,reasoning,plain_text,model,prompt_version,summary,classified_at,updated_at)
+        values($1,$2,$3,$4,$5,$6,$7,now(),now()) on conflict(message_id) do update set model_tier=excluded.model_tier,
+        reasoning=excluded.reasoning,summary=excluded.summary,plain_text=excluded.plain_text,model=excluded.model,
         prompt_version=excluded.prompt_version,classified_at=now(),updated_at=now()`,
         [
           messageId,
@@ -701,6 +705,7 @@ export class MailRepository {
           input.plainText.trim(),
           input.model,
           input.promptVersion,
+          input.summary.trim(),
         ],
       );
       await client.query("delete from classification_failures where message_id=$1", [messageId]);

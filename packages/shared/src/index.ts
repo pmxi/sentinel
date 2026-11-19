@@ -49,6 +49,7 @@ export const MessageSummarySchema = z.object({
   tier: TierSchema.nullable(),
   modelTier: TierSchema.nullable(),
   reasoning: z.string().nullable(),
+  aiSummary: z.string().nullable().default(null),
   attachmentCount: z.number().int().nonnegative(),
   syncPending: z.boolean(),
 });
