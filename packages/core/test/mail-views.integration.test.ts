@@ -156,4 +156,60 @@ describe.skipIf(!databaseUrl)("mail views and send checkpoints in PostgreSQL", (
     expect(row.last_error).toContain("Automatic resend blocked");
     expect(await repository.claimMutations()).toEqual([]);
   });
+
+  it("degrades health when any connected account has not synced recently", async () => {
+    await repository.heartbeat("main");
+    await repository.finishSync(accountId, null, true);
+    const recent = await repository.health();
+    expect(recent.status).toBe("degraded");
+    expect(recent.sync).toEqual({
+      accounts: 2,
+      needsReauth: 0,
+      oldestSuccessfulSyncAt: expect.any(String),
+      stale: 1,
+      fresh: false,
+    });
+
+    await repository.finishSync(otherAccountId, null, true);
+    const fresh = await repository.health();
+    expect(fresh.status).toBe("ok");
+    expect(fresh.sync).toEqual({ ...recent.sync, stale: 0, fresh: true });
+
+    const { rows } = await getPool().query<{ last_synced_at: Date }>(
+      "update accounts set last_synced_at=now() - interval '4 minutes' where id=$1 returning last_synced_at",
+      [accountId],
+    );
+    const stale = await repository.health();
+    expect(stale.status).toBe("degraded");
+    expect(stale.sync).toEqual({
+      ...recent.sync,
+      oldestSuccessfulSyncAt: rows[0]?.last_synced_at.toISOString(),
+    });
+  });
+
+  it("degrades health for a reauth account even if its last sync is recent", async () => {
+    await repository.heartbeat("main");
+    await repository.finishSync(accountId, null, true);
+    await repository.finishSync(otherAccountId, null, true);
+    await repository.failSync(accountId, "unauthorized", true);
+    expect(await repository.health()).toMatchObject({
+      status: "degraded",
+      sync: { accounts: 2, needsReauth: 1, stale: 0, fresh: false },
+    });
+  });
+
+  it("treats no connected accounts as fresh without masking a missing worker heartbeat", async () => {
+    await getPool().query("truncate accounts cascade; truncate worker_state");
+    const empty = await repository.health();
+    expect(empty.status).toBe("degraded");
+    expect(empty.sync).toEqual({
+      accounts: 0,
+      needsReauth: 0,
+      oldestSuccessfulSyncAt: null,
+      stale: 0,
+      fresh: true,
+    });
+    await repository.heartbeat("main");
+    expect((await repository.health()).status).toBe("ok");
+  });
 });

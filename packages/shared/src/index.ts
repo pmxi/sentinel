@@ -130,4 +130,11 @@ export type HealthResponse = {
   workerHeartbeat: string | null;
   failedMutations: number;
   classificationFailures: number;
+  sync: {
+    accounts: number;
+    needsReauth: number;
+    oldestSuccessfulSyncAt: string | null;
+    stale: number;
+    fresh: boolean;
+  };
 };

@@ -142,8 +142,23 @@ Check status with:
 ```sh
 docker compose ps
 docker compose logs -f server worker
-curl -fsS https://$SENT_DOMAIN/api/health
+curl -fsS --max-time 10 "https://$SENT_DOMAIN/api/health"
 ```
+
+`GET /api/health` needs no credentials. For monitoring, require a JSON response with
+`database: true`, `status: "ok"`, and `sync.fresh: true`; both `"ok"` and
+`"degraded"` can return HTTP 200. `workerHeartbeat` reports when the worker last
+ran its poll tick, not when mail was last synced. For an API/DB and sync-only
+watch, check `database`, `workerHeartbeat` (at most 3 minutes old), and `sync.fresh`
+separately: failed outbound mutations can also make the overall status degraded.
+
+`sync` reports the number of connected `accounts`, how many `needsReauth`, and
+how many are `stale` (never synced successfully or last successful sync more than
+3 minutes ago). These counts can overlap. `oldestSuccessfulSyncAt` is the oldest
+recorded successful sync across accounts, or `null` if there isn't one. Sync is
+fresh when neither count is nonzero, including when there are no accounts to
+sync. If the database is unavailable, `database` and `sync.fresh` are false and
+the zero counts are placeholders, not evidence that no accounts exist.
 
 ## Backups
 
