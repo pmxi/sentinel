@@ -307,7 +307,8 @@ function Reader({
     mutationFn: (value: Tier) => sentApi.tier(message?.id ?? messageId, value),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["messages"] });
-      void queryClient.invalidateQueries({ queryKey: ["message", messageId] });
+      void queryClient.invalidateQueries({ queryKey: ["message"] });
+      void queryClient.invalidateQueries({ queryKey: ["search"] });
       void queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
     },
   });
