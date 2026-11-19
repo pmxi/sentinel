@@ -254,7 +254,7 @@ function Reader({
   const trash = view === "trash";
   const [bodyView, setBodyView] = useState<"plain" | "original">("plain");
   const newestRef = useRef<HTMLElement>(null);
-  const openedConversation = useRef(false);
+  const openedMessages = useRef(new Set<string>());
   const scrolledToNewest = useRef(false);
   const detail = useQuery({
     queryKey: ["message", messageId],
@@ -288,12 +288,15 @@ function Reader({
     },
   });
   useEffect(() => {
-    if (!thread.data || openedConversation.current) return;
-    openedConversation.current = true;
-    for (const item of thread.data.messages) {
+    // On a thread failure the selected message is still shown. Mark only what
+    // was displayed, then handle any remaining messages if the thread recovers.
+    const visible = thread.data?.messages ?? (thread.isError && detail.data ? [detail.data] : []);
+    for (const item of visible) {
+      if (openedMessages.current.has(item.id)) continue;
+      openedMessages.current.add(item.id);
       if (!item.read) performAction({ id: item.id, action: "mark_read" });
     }
-  }, [thread.data, performAction]);
+  }, [thread.data, thread.isError, detail.data, performAction]);
   useEffect(() => {
     if (!thread.data || scrolledToNewest.current || !newestRef.current) return;
     scrolledToNewest.current = true;
