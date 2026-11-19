@@ -244,8 +244,17 @@ On the native production host, `sent-backup.timer` is a **system** timer, separa
 from the user-level deploy timer. It runs a root-installed copy of
 `deploy/backup-native.sh` at `/usr/local/lib/sent/backup.sh` as the backup account
 and writes private dumps under `/opt/sent/backups`. An administrator must
-install updates to that copy and to the system unit; never point the system
-unit at a path writable by the app's service account.
+install updates to that copy and to the system unit. Don't use app-writable
+files for the backup account's program or environment.
+
+Before installing the updated service and script together, provision
+`/etc/sent/pg_service.conf` as `root:ubuntu`, mode `0640`, with a
+`[sent-backup]` section containing the live database's libpq connection
+settings (`host`, `port`, `dbname`, `user`, `password` or `passfile`, and any
+TLS options). The backup service no longer reads `/opt/sent/app/.env`, and
+database credentials aren't passed on the command line. After installation
+and `sudo systemctl daemon-reload`, test via `sudo systemctl start sent-backup.service`
+and verify a fresh private archive appears. The app services do not need to restart.
 
 Test a custom-format dump in a fresh scratch database. Use PostgreSQL client
 tools matching the source major version. Have a database administrator create
