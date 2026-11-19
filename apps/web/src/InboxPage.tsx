@@ -8,13 +8,42 @@ import type {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Flag, Mail, MailOpen, Paperclip, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { sentApi } from "./api";
 import { useCommands, useFrameCommands } from "./commands";
 import { replySeed, useCompose } from "./compose";
 import { messageCursorIndex, nextMessageIndex } from "./keyboard";
 import { MessagePreview, RankingReason, ReaderInsights } from "./MessageInsights";
 import { ReaderText } from "./ReaderText";
+import { nextMessageId, useTriage } from "./triage";
+
+function useMessageNavigation(messages: MessageSummary[]) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [, setParams] = useSearchParams();
+  const triage = useTriage();
+  const visible = messages.filter((message) => !triage.hiddenIds.has(message.id));
+  const restore = (id: string) => {
+    const next = new URLSearchParams(location.search);
+    next.set("message", id);
+    void navigate({ pathname: location.pathname, search: next.toString() });
+  };
+  const advance = (id: string) => {
+    if (window.location.pathname !== location.pathname) return;
+    const nextId = nextMessageId(visible, id);
+    setParams(
+      (current) => {
+        if (current.get("message") !== id) return current;
+        const next = new URLSearchParams(current);
+        if (nextId) next.set("message", nextId);
+        else next.delete("message");
+        return next;
+      },
+      { replace: true },
+    );
+  };
+  return { visible, advance, restore };
+}
 
 const viewDetails: Record<string, { title: string }> = {
   l1: { title: "Important" },
@@ -39,6 +68,7 @@ export function InboxPage({ accounts }: { accounts: Account[] }) {
     refetchInterval: 4_000,
   });
   const detail = viewDetails[view] ?? viewDetails.all;
+  const navigation = useMessageNavigation(messages.data?.messages ?? []);
   const select = (message: MessageSummary) => {
     setParams((current) => {
       const next = new URLSearchParams(current);
@@ -74,7 +104,7 @@ export function InboxPage({ accounts }: { accounts: Account[] }) {
           )}
         </header>
         <MessageList
-          messages={messages.data?.messages ?? []}
+          messages={navigation.visible}
           loading={messages.isLoading}
           error={messages.error?.message}
           selectedId={selectedId}
@@ -86,6 +116,8 @@ export function InboxPage({ accounts }: { accounts: Account[] }) {
           key={selectedId}
           messageId={selectedId}
           accounts={accounts}
+          advance={() => navigation.advance(selectedId)}
+          restore={() => navigation.restore(selectedId)}
           close={() => {
             const next = new URLSearchParams(params);
             next.delete("message");
@@ -108,6 +140,7 @@ export function SearchResults({ accounts }: { accounts: Account[] }) {
     queryFn: () => sentApi.search(new URLSearchParams({ q, limit: "75" })),
     enabled: Boolean(q),
   });
+  const navigation = useMessageNavigation(result.data?.messages ?? []);
   return (
     <div className={`mail-layout ${selectedId ? "has-reader" : ""}`}>
       <section className="message-pane">
@@ -122,7 +155,7 @@ export function SearchResults({ accounts }: { accounts: Account[] }) {
           </div>
         </header>
         <MessageList
-          messages={result.data?.messages ?? []}
+          messages={navigation.visible}
           loading={result.isLoading}
           error={result.error?.message}
           selectedId={selectedId}
@@ -138,6 +171,8 @@ export function SearchResults({ accounts }: { accounts: Account[] }) {
           key={selectedId}
           messageId={selectedId}
           accounts={accounts}
+          advance={() => navigation.advance(selectedId)}
+          restore={() => navigation.restore(selectedId)}
           close={() => {
             const next = new URLSearchParams(params);
             next.delete("message");
@@ -298,15 +333,20 @@ function Reader({
   messageId,
   accounts,
   close,
+  advance,
+  restore,
 }: {
   messageId: string;
   accounts: Account[];
   close(): void;
+  advance(): void;
+  restore(): void;
 }) {
   const queryClient = useQueryClient();
   const compose = useCompose();
   const { view } = useParams();
   const trash = view === "trash";
+  const triage = useTriage();
   const [bodyView, setBodyView] = useState<"plain" | "original">("plain");
   const [hasShownFallback, setHasShownFallback] = useState(false);
   const newestRef = useRef<HTMLElement>(null);
@@ -493,14 +533,16 @@ function Reader({
           <button
             className="icon-button"
             title="Archive latest message"
-            onClick={() => doAction("archive", true)}
+            aria-label="Archive latest message"
+            onClick={() => triage.perform(message.id, "archive", advance, restore, messageId)}
           >
             <Archive size={18} />
           </button>
           <button
             className="icon-button"
             title="Delete latest message"
-            onClick={() => doAction("delete", true)}
+            aria-label="Delete latest message"
+            onClick={() => triage.perform(message.id, "delete", advance, restore, messageId)}
           >
             <Trash2 size={18} />
           </button>
@@ -596,10 +638,28 @@ function Reader({
           <MessageAttachments message={message} />
         </section>
         <div className="reply-actions">
-          <button onClick={() => account && compose.openCompose(replySeed(message, account))}>
+          <button
+            onClick={() =>
+              account &&
+              compose.openCompose({
+                ...replySeed(message, account),
+                onSent: advance,
+                onUndo: restore,
+              })
+            }
+          >
             Reply
           </button>
-          <button onClick={() => account && compose.openCompose(replySeed(message, account, true))}>
+          <button
+            onClick={() =>
+              account &&
+              compose.openCompose({
+                ...replySeed(message, account, true),
+                onSent: advance,
+                onUndo: restore,
+              })
+            }
+          >
             Reply all
           </button>
           <button onClick={forward}>Forward</button>

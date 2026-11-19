@@ -1425,6 +1425,72 @@ kbd {
 .sidebar-scrim {
   display: none;
 }
+.action-toasts {
+  position: fixed;
+  z-index: 70;
+  bottom: 26px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: grid;
+  gap: 9px;
+  width: min(400px, calc(100vw - 32px));
+}
+.action-toast {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  min-height: 56px;
+  padding: 15px 18px;
+  overflow: hidden;
+  border: 1px solid #3a3a3a;
+  border-radius: 8px;
+  background: #202120;
+  color: #fff;
+  box-shadow: 0 8px 26px #0002;
+  font-size: 13px;
+}
+.action-toast > span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.action-toast button {
+  padding: 4px;
+  border: 0;
+  background: transparent;
+  color: #c4e8b9;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.action-toast button:focus-visible {
+  outline: 2px solid #c4e8b9;
+  outline-offset: 3px;
+}
+.action-toast button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+.action-toast.is-error {
+  border-color: #a66b60;
+}
+.toast-timer {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  width: 100%;
+  background: #c4e8b9;
+  transform-origin: left;
+  animation: toast-countdown linear forwards;
+}
+@keyframes toast-countdown {
+  to {
+    transform: scaleX(0);
+  }
+}
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;

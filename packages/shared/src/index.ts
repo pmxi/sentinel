@@ -2,6 +2,9 @@ import { z } from "zod";
 
 export const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 export const MAX_ATTACHMENT_COUNT = 10;
+export const UNDO_WINDOW_MS = 5_000;
+
+export type MutationReceipt = { mutationId: string; undoUntil?: string | null };
 
 export const ProviderSchema = z.enum(["gmail", "microsoft"]);
 export type Provider = z.infer<typeof ProviderSchema>;
@@ -94,6 +97,7 @@ export const SearchQuerySchema = z.object({
 
 export const MessageActionSchema = z.object({
   action: z.enum(["mark_read", "mark_unread", "flag", "unflag", "archive", "delete"]),
+  undoable: z.boolean().default(false),
 });
 
 export const TierOverrideSchema = z.object({ tier: TierSchema.nullable() });
