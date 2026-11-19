@@ -123,6 +123,82 @@ automatically classifies, generates reader text, and embeds newly synchronized m
 
 ## Production deployment
 
+### Native production: pull-based push-to-deploy
+
+The production box runs user systemd units as `sentinel` (linger must already
+be enabled). Every two minutes `sent-deploy.timer` checks GitHub's `master` SHA.
+Only a new SHA queries the GitHub check-runs API; the latest GitHub Actions
+`check` job must succeed. Pending checks retry next tick; rejected checks and
+failed deploys are remembered so they do not loop. No inbound webhook is needed.
+
+Releases are built from a cached mirror into `~/sent/releases/<sha>` with
+`pnpm install --frozen-lockfile` and `pnpm build`. The shared
+`/opt/sent/app/.env` is symlinked, never copied. A custom-format `pg_dump` is
+taken before migrations (last 10 retained), then `~/sent/current` switches
+atomically and both units restart. Health requires active units, database
+connectivity and a worker heartbeat after restart, not `status: "ok"`.
+If sync was fresh before deployment, its oldest successful sync must also be
+after restart. Old builds without `sync` do not impose that condition.
+Health has a four-minute budget. Failure restores and checks the previous
+release; dumps are not automatically restored. Successful releases install
+their own deploy script and retain about five releases, protecting current
+and previous.
+
+One-time bootstrap on the box, as `sentinel`, from a checkout of this repository:
+
+```sh
+mkdir -p ~/sent/{bin,tools,releases,dumps,state} ~/.config/systemd/user
+# Unpack a trusted Node 24 linux-arm64 tarball to ~/sent/tools/node first.
+# That installation must include corepack; the runtime stays /usr/local/bin/node24.
+export PATH="$HOME/sent/tools/node/bin:$PATH"
+corepack enable
+corepack prepare pnpm@11.21.0 --activate
+# Also required on PATH: git, curl, flock, tar, pg_dump (matching the DB major).
+# git ls-remote https://github.com/pmxi/sentinel.git must work non-interactively.
+install -m 700 deploy/deploy.sh ~/sent/bin/deploy.sh
+install -m 644 deploy/systemd/sent-{server,worker,deploy}.service deploy/systemd/sent-deploy.timer ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable sent-server.service sent-worker.service
+systemctl --user enable --now sent-deploy.timer
+systemctl --user start sent-deploy.service
+```
+
+Keep `/opt/sent/app` intact: the first run registers it as
+`~/sent/releases/legacy-328f56f` and uses it for rollback. Keep its `.env` in
+place, readable only by the owner. Bootstrap needs no sudo; PostgreSQL must be
+reachable using `DATABASE_URL` from that file. The user services keep the
+existing absolute runtime and EnvironmentFile paths. Unit changes in later
+releases must be installed manually; only the script self-updates.
+
+```sh
+journalctl --user -u sent-deploy -u sent-server -u sent-worker -f
+systemctl --user status sent-deploy.timer
+cat ~/sent/state/{deployed,failed,skipped} 2>/dev/null
+readlink -f ~/sent/{current,previous}
+# Stop automatic updates while investigating or intentionally pinning a rollback:
+systemctl --user stop sent-deploy.timer
+~/sent/bin/deploy.sh rollback
+# Explicit retry / operator override: bypasses CI and failed/skipped records.
+~/sent/bin/deploy.sh force <full-40-character-commit-sha>
+systemctl --user start sent-deploy.timer
+```
+
+Manual commands share the timer's lock. Failures exit nonzero and log rollback
+health separately. `state/failed-<sha>` and `state/skipped-<sha>` preserve history;
+`state/deployed` contains the current successful SHA and UTC time. The unauthenticated
+GitHub API has a shared 60-request/hour limit; API/network errors fail closed and
+retry next tick. A missing check (or more than 100 check runs) stays pending.
+**Migrations must remain backward-compatible with the previous release: rollback
+does not undo migrations.** Copy dumps off-host and test restores separately.
+
+For isolated local deployment tests, run `python3 deploy/test-deploy.py`.
+Paths/endpoints can be overridden with `SENT_DEPLOY_ROOT`, `SENT_DEPLOY_REPO`,
+`SENT_DEPLOY_CI_URL` (commits API prefix), `SENT_DEPLOY_ENV`,
+`SENT_DEPLOY_LEGACY`, `SENT_DEPLOY_TOOLS`, and `SENT_DEPLOY_HEALTH`;
+`SENT_DEPLOY_TIMEOUT` and `SENT_DEPLOY_INTERVAL` control health polling seconds.
+
+### Docker deployment
+
 1. Point a DNS record for the desired hostname at the server.
 2. Set `SENT_DOMAIN=mail.example.com` and `SENT_PUBLIC_URL=https://mail.example.com` in `.env`.
    Leave `SENT_WEB_URL` blank in production so OAuth returns to `SENT_PUBLIC_URL`.

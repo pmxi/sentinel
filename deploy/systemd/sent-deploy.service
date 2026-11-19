@@ -1,0 +1,11 @@
+[Unit]
+Description=Pull and deploy Sent after CI succeeds
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/sent/bin/deploy.sh
+TimeoutStartSec=30min
+UMask=0077
+NoNewPrivileges=true

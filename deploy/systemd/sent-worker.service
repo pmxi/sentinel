@@ -1,23 +1,18 @@
 [Unit]
 Description=Sent email synchronization and classification worker
-After=network-online.target postgresql.service
-Wants=network-online.target postgresql.service
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
-User=ubuntu
-Group=ubuntu
-WorkingDirectory=/opt/sent/app
+WorkingDirectory=%h/sent/current
 EnvironmentFile=/opt/sent/app/.env
-ExecStart=/usr/local/bin/node24 /opt/sent/app/apps/worker/dist/index.js
+ExecStart=/usr/local/bin/node24 %h/sent/current/apps/worker/dist/index.js
 Restart=always
 RestartSec=5
 TimeoutStopSec=45
 UMask=0077
 NoNewPrivileges=true
-PrivateTmp=true
-ProtectHome=true
-ProtectSystem=full
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=default.target
