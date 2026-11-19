@@ -44,7 +44,7 @@ def main():
             path = tools / name
             path.write_text("#!/usr/bin/env bash\nset -eu\n" + body)
             path.chmod(0o700)
-        state = {"ci": "success", "bad": None, "api": 0, "sync": False}
+        state = {"ci": "success", "bad": None, "api": 0, "sync": False, "accounts": 1, "stale": None}
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def log_message(self, *_):
@@ -62,8 +62,10 @@ def main():
                     current = (root / "current").resolve().name
                     stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() + 1)) + ".999Z"
                     data = {"status": "degraded", "database": current != state["bad"], "workerHeartbeat": stamp}
-                    if state["sync"]:
-                        data["sync"] = {"fresh": True, "oldestSuccessfulSyncAt": stamp}
+                    if state["sync"] and current != legacy.name:
+                        sync_stamp = "2000-01-01T00:00:00Z" if current == state["stale"] else stamp
+                        data["sync"] = {"fresh": True, "accounts": state["accounts"],
+                                        "oldestSuccessfulSyncAt": sync_stamp if state["accounts"] else None}
                 body = json.dumps(data).encode()
                 self.send_response(200)
                 self.end_headers()
@@ -124,6 +126,11 @@ def main():
             assert (root / "previous").resolve() == legacy
             print("PASS health failure -> rollback verified healthy, failed SHA recorded")
             print("PASS failed deploy preserves earlier previous release")
+            deploy(0, "rollback")
+            assert (root / "current").resolve() == legacy
+            print("PASS fresh sync -> manual rollback to legacy without sync block")
+            deploy(0, "rollback")
+            assert (root / "current").resolve().name == first
             api = state["api"]
             deploy()
             assert state["api"] == api
@@ -153,6 +160,19 @@ def main():
             deploy(0, "force", fourth)
             assert (root / "current").resolve().name == fourth
             print("PASS force deploy")
+            state["accounts"] = 0
+            fifth = commit()
+            deploy()
+            assert (root / "current").resolve().name == fifth
+            print("PASS fresh sync with zero accounts and null timestamp")
+            state["accounts"] = 1
+            sixth = commit()
+            state["stale"] = sixth
+            output = deploy(1)
+            assert "Previous release healthy" in output
+            assert (root / "current").resolve().name == fifth
+            assert (root / "previous").resolve().name == fourth
+            print("PASS fresh sync with accounts rejects pre-restart sync timestamp")
         finally:
             server.shutdown()
 

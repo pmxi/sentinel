@@ -41,7 +41,8 @@ let s=""; for await (const c of process.stdin) s+=c;
 try {
  const h=JSON.parse(s), since=Number(process.argv[1]);
  process.exit(h.database === true && Date.parse(h.workerHeartbeat)>since &&
-   (process.argv[2]!=="true" || Date.parse(h.sync?.oldestSuccessfulSyncAt)>since) ? 0 : 1);
+   (process.argv[2]!=="true" || !h.sync || !(h.sync.accounts>0) ||
+     Date.parse(h.sync.oldestSuccessfulSyncAt)>since) ? 0 : 1);
 } catch { process.exit(1); }
 ' "$started" "$fresh"; then return 0; fi
     sleep "$INTERVAL"
