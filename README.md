@@ -238,15 +238,47 @@ the zero counts are placeholders, not evidence that no accounts exist.
 
 ## Backups
 
-Run `scripts/backup.sh` from cron or a systemd timer. It writes compressed PostgreSQL dumps to `./backups` by default and retains 14 days. Override the destination with `SENT_BACKUP_DIR`, ideally to encrypted storage copied off the host.
+For Docker, run `scripts/backup.sh` from cron or a systemd timer. It writes compressed PostgreSQL dumps to `./backups` by default and retains 14 days. Override the destination with `SENT_BACKUP_DIR`, ideally to encrypted storage copied off the host.
 
-Test restoration on a non-production copy:
+On the native production host, `sent-backup.timer` is a **system** timer, separate
+from the user-level deploy timer. It runs a root-installed copy of
+`deploy/backup-native.sh` at `/usr/local/lib/sent/backup.sh` as the backup account
+and writes private dumps under `/opt/sent/backups`. An administrator must
+install updates to that copy and to the system unit. Don't use app-writable
+files for the backup account's program or environment.
+
+Before installing the updated service and script together, provision
+`/etc/sent/pg_service.conf` as `root:ubuntu`, mode `0640`, with a
+`[sent-backup]` section containing the live database's libpq connection
+settings (`host`, `port`, `dbname`, `user`, `password` or `passfile`, and any
+TLS options). The backup service no longer reads `/opt/sent/app/.env`, and
+database credentials aren't passed on the command line. After installation
+and `sudo systemctl daemon-reload`, test via `sudo systemctl start sent-backup.service`
+and verify a fresh private archive appears. The app services do not need to restart.
+
+Test a custom-format dump in a fresh scratch database. Use PostgreSQL client
+tools matching the source major version. Have a database administrator create
+a database owned by the restore role and preinstall the extensions if that
+role cannot install them. For example, on the native host:
 
 ```sh
-scripts/restore.sh /path/to/sent-YYYYMMDDTHHMMSSZ.dump
+sudo -u postgres createdb --owner=sent sent_restore_check
+sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d sent_restore_check \
+  -c 'CREATE EXTENSION pgcrypto; CREATE EXTENSION vector;'
+# Set PGHOST, PGPORT, PGUSER, and any required libpq connection options.
+# Authenticate with a private .pgpass or PGPASSWORD; never put secrets in argv.
+scripts/restore.sh --scratch sent_restore_check /path/to/sent-YYYYMMDDTHHMMSSZ.dump
+# After verifying counts, migrations, and vector data:
+dropdb --maintenance-db=postgres sent_restore_check
 ```
 
-The restore script requires an explicit `RESTORE` confirmation because it replaces the database.
+Scratch mode only accepts `sent_restore_*` names and does not create, drop, or
+clean the database. It restores atomically and skips source ownership, grants,
+and comments (the extension comments are owned by the administrator).
+
+For actual disaster recovery in Docker, stop the server and worker, then run
+`scripts/restore.sh /path/to/sent.dump` **without** `--scratch`. That form requires
+an explicit `RESTORE` confirmation because it replaces the Compose database.
 
 ## Common commands
 
