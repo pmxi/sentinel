@@ -139,14 +139,25 @@ fi
 log 'Taking pre-migration database dump'
 # libpq does not expand a URL in PGDATABASE, and argv is visible to other users, so pass it as PG* variables.
 # shellcheck disable=SC2016
-mapfile -t pg_env < <(node --env-file="$ENV_FILE" -e '
+pg_values=$(node --env-file="$ENV_FILE" -e '
 const u = new URL(process.env.DATABASE_URL);
 const d = decodeURIComponent;
-for (const [k, v] of [["PGHOST", u.hostname], ["PGPORT", u.port], ["PGUSER", d(u.username)], ["PGPASSWORD", d(u.password)], ["PGDATABASE", d(u.pathname.slice(1))]])
-  if (v) console.log(k + "=" + v);
+const values = new Map([["host", u.hostname], ["port", u.port], ["user", d(u.username)], ["password", d(u.password)], ["dbname", d(u.pathname.slice(1))]]);
+for (const [k, v] of u.searchParams) values.set(k, v);
+const names = {host:"PGHOST", hostaddr:"PGHOSTADDR", port:"PGPORT", user:"PGUSER", password:"PGPASSWORD", dbname:"PGDATABASE", sslmode:"PGSSLMODE", sslrootcert:"PGSSLROOTCERT", sslcert:"PGSSLCERT", sslkey:"PGSSLKEY", sslcrl:"PGSSLCRL", sslcrldir:"PGSSLCRLDIR", sslpassword:"PGSSLPASSWORD", ssl_min_protocol_version:"PGSSLMINPROTOCOLVERSION", ssl_max_protocol_version:"PGSSLMAXPROTOCOLVERSION", channel_binding:"PGCHANNELBINDING", connect_timeout:"PGCONNECT_TIMEOUT", application_name:"PGAPPNAME", options:"PGOPTIONS", target_session_attrs:"PGTARGETSESSIONATTRS", service:"PGSERVICE", passfile:"PGPASSFILE"};
+for (const [k, v] of values) {
+  if (!names[k] || /[\r\n\0]/.test(v)) throw new Error("Unsupported database connection option or value");
+  console.log(names[k] + "=" + v);
+}
 ')
+mapfile -t pg_env <<<"$pg_values"
+unset pg_values
 dump="$ROOT/dumps/$(date -u +%Y%m%dT%H%M%S)-$sha.dump"
-env "${pg_env[@]}" pg_dump --format=custom --no-owner --no-acl --file="$dump.tmp"
+(
+  trap - ERR
+  export "${pg_env[@]}"
+  pg_dump --format=custom --no-owner --no-acl --file="$dump.tmp"
+)
 mv "$dump.tmp" "$dump"
 unset pg_env
 mapfile -t dumps < <(find "$ROOT/dumps" -maxdepth 1 -name '*.dump' -printf '%f\n' | sort -r | tail -n +11)

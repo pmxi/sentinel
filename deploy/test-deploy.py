@@ -27,7 +27,7 @@ def main():
         tools = base / "tools" / "bin"
         tools.mkdir(parents=True)
         env_file = base / "shared.env"
-        env_file.write_text("DATABASE_URL=postgres://fake/test\n")
+        env_file.write_text("DATABASE_URL=postgres://test:fake%40password@fake/test?sslmode=verify-full&sslrootcert=%2Ffake%2Froot.crt&sslcert=%2Ffake%2Fclient.crt&sslkey=%2Ffake%2Fclient.key\n")
         work = base / "work"
         work.mkdir()
         run("git", "init", "-b", "master", str(work))
@@ -38,7 +38,7 @@ def main():
         calls = base / "calls"
         for name, body in {
             "pnpm": 'printf "pnpm %s\\n" "$*" >> "$TEST_CALLS"\n',
-            "pg_dump": 'printf "dump\\n" >> "$TEST_CALLS"\nfor arg; do case "$arg" in --file=*) printf fake > "${arg#--file=}";; esac; done\n',
+            "pg_dump": '[[ "$PGPASSWORD" == "fake@password" && "$PGSSLMODE" == verify-full && "$PGSSLROOTCERT" == /fake/root.crt && "$PGSSLCERT" == /fake/client.crt && "$PGSSLKEY" == /fake/client.key ]]\nprintf "dump\\n" >> "$TEST_CALLS"\nfor arg; do case "$arg" in --file=*) printf fake > "${arg#--file=}";; esac; done\n',
             "systemctl": 'printf "systemctl %s\\n" "$*" >> "$TEST_CALLS"\n',
         }.items():
             path = tools / name
