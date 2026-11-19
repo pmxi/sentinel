@@ -402,6 +402,7 @@ function Reader({
                   view={bodyView}
                   title={`Message from ${item.from[0]?.name || item.from[0]?.address || "sender"}`}
                 />
+                <MessageAttachments message={item} />
               </details>
             ))}
           </div>
@@ -420,25 +421,7 @@ function Reader({
           <div className="email-body">
             <MessageBody message={message} view={bodyView} title="Email content" />
           </div>
-          {message.attachments.length > 0 && (
-            <div className="attachments">
-              <span className="section-label">Attachments</span>
-              <div>
-                {message.attachments.map((item) => (
-                  <a
-                    key={item.id}
-                    href={`/api/messages/${message.id}/attachments/${encodeURIComponent(item.id)}`}
-                  >
-                    <Paperclip size={15} />
-                    <span>
-                      {item.filename}
-                      <small>{formatBytes(item.size)}</small>
-                    </span>
-                  </a>
-                ))}
-              </div>
-            </div>
-          )}
+          <MessageAttachments message={message} />
           {message.reasoning && (
             <details className="reasoning">
               <summary>Why Sent chose L{message.tier}</summary>
@@ -470,6 +453,33 @@ function Reader({
         </div>
       </article>
     </section>
+  );
+}
+
+export function MessageAttachments({
+  message,
+}: {
+  message: Pick<MessageDetail, "id" | "attachments">;
+}) {
+  if (message.attachments.length === 0) return null;
+  return (
+    <div className="attachments">
+      <span className="section-label">Attachments</span>
+      <div>
+        {message.attachments.map((item) => (
+          <a
+            key={item.id}
+            href={`/api/messages/${message.id}/attachments/${encodeURIComponent(item.id)}`}
+          >
+            <Paperclip size={15} />
+            <span>
+              {item.filename}
+              <small>{formatBytes(item.size)}</small>
+            </span>
+          </a>
+        ))}
+      </div>
+    </div>
   );
 }
 
