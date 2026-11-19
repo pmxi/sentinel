@@ -40,7 +40,8 @@ export const sentApi = {
   accounts: () => api<{ accounts: Account[] }>("/api/accounts"),
   messages: (query: URLSearchParams) => api<MessageListResponse>(`/api/messages?${query}`),
   message: (id: string) => api<MessageDetail>(`/api/messages/${id}`),
-  thread: (id: string) => api<{ messages: MessageDetail[] }>(`/api/threads/${id}`),
+  thread: (id: string, trash = false) =>
+    api<{ messages: MessageDetail[] }>(`/api/threads/${id}?trash=${trash}`),
   action: (id: string, action: string) =>
     api<{ mutationId: string }>(`/api/messages/${id}/action`, {
       method: "POST",

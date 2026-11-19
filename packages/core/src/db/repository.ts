@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   Account,
+  ConversationSummary,
   Draft,
   DraftInput,
   HealthResponse,
@@ -44,7 +45,9 @@ type MessageRow = QueryResultRow & {
   sent_at?: Date | null;
   received_at: Date;
   read: boolean;
-  thread_read?: boolean;
+  message_count?: number;
+  unread_count?: number;
+  participants?: MessageSummary["from"];
   flagged: boolean;
   direction: "inbound" | "outbound";
   model_tier: Tier | null;
@@ -86,7 +89,7 @@ function mapSummary(row: MessageRow): MessageSummary {
     from: row.from_addresses,
     snippet: row.snippet,
     receivedAt: row.received_at.toISOString(),
-    read: row.thread_read ?? row.read,
+    read: row.read,
     flagged: row.flagged,
     direction: row.direction,
     tier: row.manual_tier ?? row.model_tier,
@@ -110,6 +113,31 @@ function mapDetail(row: MessageRow): MessageDetail {
     attachments: row.attachments,
     internetMessageId: row.internet_message_id ?? null,
   };
+}
+
+function mapConversation(row: MessageRow): ConversationSummary {
+  return {
+    ...mapSummary(row),
+    read: row.unread_count === 0,
+    messageCount: row.message_count ?? 1,
+    unreadCount: row.unread_count ?? 0,
+    participants: row.participants ?? row.from_addresses,
+  };
+}
+
+// Applied to the final page, not to the search candidates. Counts and participants
+// describe the visible conversation, including replies outside the current tier.
+function conversationMetadata(deleted: boolean): string {
+  return `cross join lateral (
+    select count(*)::int message_count, count(*) filter (where not tm.read)::int unread_count,
+      coalesce((select jsonb_agg(person order by person->>'address') from (
+        select distinct on (lower(person->>'address')) person
+        from messages pm cross join lateral jsonb_array_elements(pm.from_addresses) person
+        where pm.thread_id=page.thread_id and not pm.tombstone and pm.deleted=${deleted}
+        order by lower(person->>'address'), pm.received_at desc, pm.id desc
+      ) senders), '[]'::jsonb) participants
+    from messages tm where tm.thread_id=page.thread_id and not tm.tombstone and tm.deleted=${deleted}
+  ) metadata`;
 }
 
 function encodeCursor(receivedAt: Date, id: string): string {
@@ -370,19 +398,19 @@ export class MailRepository {
     const result = await getPool().query<MessageRow>(
       `with conversations as (
       select ${MESSAGE_SELECT},
-        row_number() over (partition by m.thread_id order by m.received_at desc,m.id desc) as thread_rank,
-        bool_and(m.read) over (partition by m.thread_id) as thread_read
+        row_number() over (partition by m.thread_id order by m.received_at desc,m.id desc) as thread_rank
       from messages m join accounts a on a.id=m.account_id left join classifications c on c.message_id=m.id
-      where ${conditions.join(" and ")})
-      select * from conversations where thread_rank=1 ${cursorCondition}
-      order by received_at desc,id desc limit ${limitParameter}`,
+      where ${conditions.join(" and ")}), page as (select * from conversations where thread_rank=1 ${cursorCondition}
+      order by received_at desc,id desc limit ${limitParameter})
+      select page.*,metadata.* from page ${conversationMetadata(input.view === "trash")}
+      order by received_at desc,id desc`,
       params,
     );
     const hasMore = result.rows.length > input.limit;
     const rows = result.rows.slice(0, input.limit);
     const last = rows.at(-1);
     return {
-      messages: rows.map(mapSummary),
+      messages: rows.map(mapConversation),
       nextCursor: hasMore && last ? encodeCursor(last.received_at, last.id) : null,
     };
   }
@@ -400,14 +428,14 @@ export class MailRepository {
     return row ? mapDetail(row) : null;
   }
 
-  async getThread(threadId: string): Promise<MessageDetail[]> {
+  async getThread(threadId: string, trash = false): Promise<MessageDetail[]> {
     const rows = (
       await getPool().query<MessageRow>(
         `select ${MESSAGE_SELECT},m.to_addresses,m.cc_addresses,m.bcc_addresses,
       m.sent_at,m.text_body,m.html_body,m.internet_message_id
       from messages m join accounts a on a.id=m.account_id left join classifications c on c.message_id=m.id
-      where m.thread_id=$1 and not m.tombstone order by m.received_at`,
-        [threadId],
+      where m.thread_id=$1 and not m.tombstone and m.deleted=$2 order by m.received_at,m.id`,
+        [threadId, trash],
       )
     ).rows;
     return rows.map(mapDetail);
@@ -765,7 +793,6 @@ export class MailRepository {
     let sql: string;
     if (input.embedding) {
       const embedding = add(`[${input.embedding.join(",")}]`);
-      const limit = add(input.limit);
       sql = `with lexical as (
           select m.id,row_number() over(order by ts_rank_cd(m.search_document,websearch_to_tsquery('english',$1)) desc) rank
           from messages m left join classifications c on c.message_id=m.id where ${where}
@@ -778,17 +805,26 @@ export class MailRepository {
           select id,sum(score) score from (
             select id,1.0/(60+rank) score from lexical union all select id,1.0/(60+rank) score from semantic
           ) scores group by id
-        ) select ${MESSAGE_SELECT} from fused f join messages m on m.id=f.id join accounts a on a.id=m.account_id
-          left join classifications c on c.message_id=m.id order by f.score desc,m.received_at desc limit ${limit}`;
+        ), matches as (select ${MESSAGE_SELECT}, f.score search_score
+          from fused f join messages m on m.id=f.id join accounts a on a.id=m.account_id
+          left join classifications c on c.message_id=m.id)`;
     } else {
-      const limit = add(input.limit);
-      sql = `select ${MESSAGE_SELECT} from messages m join accounts a on a.id=m.account_id
+      sql = `with matches as (select ${MESSAGE_SELECT},
+        ts_rank_cd(m.search_document,websearch_to_tsquery('english',$1)) search_score
+        from messages m join accounts a on a.id=m.account_id
         left join classifications c on c.message_id=m.id where ${where}
-        and m.search_document @@ websearch_to_tsquery('english',$1)
-        order by ts_rank_cd(m.search_document,websearch_to_tsquery('english',$1)) desc,m.received_at desc limit ${limit}`;
+        and m.search_document @@ websearch_to_tsquery('english',$1))`;
     }
+    const limit = add(input.limit);
+    sql += `, ranked as (
+      select *, row_number() over (partition by thread_id order by search_score desc,received_at desc,id desc) thread_rank
+      from matches
+    ), page as (
+      select * from ranked where thread_rank=1 order by search_score desc,received_at desc,id desc limit ${limit}
+    ) select page.*,metadata.* from page ${conversationMetadata(false)}
+      order by search_score desc,received_at desc,id desc`;
     const rows = (await getPool().query<MessageRow>(sql, params)).rows;
-    return { messages: rows.map(mapSummary), mode: input.embedding ? "hybrid" : "lexical" };
+    return { messages: rows.map(mapConversation), mode: input.embedding ? "hybrid" : "lexical" };
   }
 
   async heartbeat(name: string, metadata: Record<string, unknown> = {}): Promise<void> {

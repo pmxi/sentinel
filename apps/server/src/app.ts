@@ -134,7 +134,10 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
   app.get("/api/threads/:id", async (request) => {
     const { id } = IdParamSchema.parse(request.params);
-    return { messages: await repository.getThread(id) };
+    const { trash } = z
+      .object({ trash: z.enum(["true", "false"]).default("false") })
+      .parse(request.query);
+    return { messages: await repository.getThread(id, trash === "true") };
   });
 
   app.post("/api/messages/:id/action", async (request, reply) => {

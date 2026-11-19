@@ -54,6 +54,13 @@ export const MessageSummarySchema = z.object({
 });
 export type MessageSummary = z.infer<typeof MessageSummarySchema>;
 
+export const ConversationSummarySchema = MessageSummarySchema.extend({
+  messageCount: z.number().int().positive(),
+  unreadCount: z.number().int().nonnegative(),
+  participants: z.array(MailAddressSchema),
+});
+export type ConversationSummary = z.infer<typeof ConversationSummarySchema>;
+
 export const MessageDetailSchema = MessageSummarySchema.extend({
   to: z.array(MailAddressSchema),
   cc: z.array(MailAddressSchema),
@@ -115,12 +122,12 @@ export const LoginSchema = z.object({ password: z.string().min(1).max(1024) });
 export const ApiErrorSchema = z.object({ error: z.string(), details: z.unknown().optional() });
 
 export type MessageListResponse = {
-  messages: MessageSummary[];
+  messages: ConversationSummary[];
   nextCursor: string | null;
 };
 
 export type SearchResponse = {
-  messages: MessageSummary[];
+  messages: ConversationSummary[];
   mode: "hybrid" | "lexical";
 };
 
