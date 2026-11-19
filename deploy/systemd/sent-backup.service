@@ -7,10 +7,11 @@ Wants=postgresql.service
 Type=oneshot
 User=ubuntu
 Group=ubuntu
-WorkingDirectory=/opt/sent/app
+WorkingDirectory=/
 EnvironmentFile=/opt/sent/app/.env
 Environment=SENT_BACKUP_DIR=/opt/sent/backups
-ExecStart=/opt/sent/app/deploy/backup-native.sh
+Environment=NODE_BIN=/usr/local/bin/node24
+ExecStart=/usr/local/lib/sent/backup.sh
 UMask=0077
 Nice=10
 NoNewPrivileges=true

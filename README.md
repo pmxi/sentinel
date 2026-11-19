@@ -238,15 +238,38 @@ the zero counts are placeholders, not evidence that no accounts exist.
 
 ## Backups
 
-Run `scripts/backup.sh` from cron or a systemd timer. It writes compressed PostgreSQL dumps to `./backups` by default and retains 14 days. Override the destination with `SENT_BACKUP_DIR`, ideally to encrypted storage copied off the host.
+For Docker, run `scripts/backup.sh` from cron or a systemd timer. It writes compressed PostgreSQL dumps to `./backups` by default and retains 14 days. Override the destination with `SENT_BACKUP_DIR`, ideally to encrypted storage copied off the host.
 
-Test restoration on a non-production copy:
+On the native production host, `sent-backup.timer` is a **system** timer, separate
+from the user-level deploy timer. It runs a root-installed copy of
+`deploy/backup-native.sh` at `/usr/local/lib/sent/backup.sh` as the backup account
+and writes private dumps under `/opt/sent/backups`. An administrator must
+install updates to that copy and to the system unit; never point the system
+unit at a path writable by the app's service account.
+
+Test a custom-format dump in a fresh scratch database. Use PostgreSQL client
+tools matching the source major version. Have a database administrator create
+a database owned by the restore role and preinstall the extensions if that
+role cannot install them. For example, on the native host:
 
 ```sh
-scripts/restore.sh /path/to/sent-YYYYMMDDTHHMMSSZ.dump
+sudo -u postgres createdb --owner=sent sent_restore_check
+sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d sent_restore_check \
+  -c 'CREATE EXTENSION pgcrypto; CREATE EXTENSION vector;'
+# Set PGHOST, PGPORT, PGUSER, and any required libpq connection options.
+# Authenticate with a private .pgpass or PGPASSWORD; never put secrets in argv.
+scripts/restore.sh --scratch sent_restore_check /path/to/sent-YYYYMMDDTHHMMSSZ.dump
+# After verifying counts, migrations, and vector data:
+dropdb --maintenance-db=postgres sent_restore_check
 ```
 
-The restore script requires an explicit `RESTORE` confirmation because it replaces the database.
+Scratch mode only accepts `sent_restore_*` names and does not create, drop, or
+clean the database. It restores atomically and skips source ownership, grants,
+and comments (the extension comments are owned by the administrator).
+
+For actual disaster recovery in Docker, stop the server and worker, then run
+`scripts/restore.sh /path/to/sent.dump` **without** `--scratch`. That form requires
+an explicit `RESTORE` confirmation because it replaces the Compose database.
 
 ## Common commands
 
