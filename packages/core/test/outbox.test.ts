@@ -70,5 +70,16 @@ describe("send outbox delivery safety", () => {
     expect(send).toHaveBeenCalledTimes(2);
     expect(repository.recordSendAttempt).toHaveBeenCalledOnce();
     expect(repository.completeMutation).toHaveBeenCalledOnce();
+    expect(repository.failMutation).toHaveBeenCalledWith("mutation", "Attachment upload failed");
+  });
+
+  it("records repeated pre-dispatch failures without marking the send attempted", async () => {
+    const { services, send, repository } = setup();
+    send.mockRejectedValue(new Error("Graph 502"));
+    for (let attempt = 0; attempt < 12; attempt++) await services.processOutbox();
+    expect(repository.failMutation).toHaveBeenCalledTimes(12);
+    expect(repository.failMutation).toHaveBeenLastCalledWith("mutation", "Graph 502");
+    expect(repository.recordSendAttempt).not.toHaveBeenCalled();
+    expect(repository.completeMutation).not.toHaveBeenCalled();
   });
 });

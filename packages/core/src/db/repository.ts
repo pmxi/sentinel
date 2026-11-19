@@ -586,11 +586,24 @@ export class MailRepository {
 
   async failMutation(id: string, error: string): Promise<void> {
     await getPool().query(
-      `update mutation_outbox set status=case when attempts>=8 or payload ? 'sendAttemptedAt' then 'failed'::mutation_status else 'pending'::mutation_status end,
+      `with failed_mutation as (
+      update mutation_outbox set status=case when attempts>=12 or payload ? 'sendAttemptedAt' then 'failed'::mutation_status else 'pending'::mutation_status end,
       next_attempt_at=now() + (least(3600,power(2,attempts)::int) * interval '1 second'),
       last_error=case when payload ? 'sendAttemptedAt'
         then 'Delivery may have succeeded. Automatic resend blocked; check Sent before retrying. ' || $2
-        else $2 end where id=$1`,
+        else $2 end where id=$1 and status in ('pending','processing')
+      returning action,status,payload
+      )
+      insert into drafts(id,account_id,to_addresses,cc_addresses,bcc_addresses,subject,body,
+        reply_to_message_id,forward_of_message_id,created_at,updated_at)
+      select (draft->>'id')::uuid,(draft->>'accountId')::uuid,draft->'to',draft->'cc',draft->'bcc',
+        draft->>'subject',draft->>'body',
+        (select id from messages where id=(draft->>'replyToMessageId')::uuid),
+        (select id from messages where id=(draft->>'forwardOfMessageId')::uuid),
+        (draft->>'createdAt')::timestamptz,now()
+      from (select payload->'draft' as draft from failed_mutation
+        where action='send' and status='failed' and not (payload ? 'sendAttemptedAt')) restored
+      on conflict (id) do nothing`,
       [id, error.slice(0, 2000)],
     );
   }
