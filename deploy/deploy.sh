@@ -137,11 +137,18 @@ if [[ "$release" != "$saved_previous" ]]; then
   )
 fi
 log 'Taking pre-migration database dump'
-database_url=$(node --env-file="$ENV_FILE" -e 'if (!process.env.DATABASE_URL) process.exit(1); process.stdout.write(process.env.DATABASE_URL)')
+# libpq does not expand a URL in PGDATABASE, and argv is visible to other users, so pass it as PG* variables.
+# shellcheck disable=SC2016
+mapfile -t pg_env < <(node --env-file="$ENV_FILE" -e '
+const u = new URL(process.env.DATABASE_URL);
+const d = decodeURIComponent;
+for (const [k, v] of [["PGHOST", u.hostname], ["PGPORT", u.port], ["PGUSER", d(u.username)], ["PGPASSWORD", d(u.password)], ["PGDATABASE", d(u.pathname.slice(1))]])
+  if (v) console.log(k + "=" + v);
+')
 dump="$ROOT/dumps/$(date -u +%Y%m%dT%H%M%S)-$sha.dump"
-PGDATABASE="$database_url" pg_dump --format=custom --no-owner --no-acl --file="$dump.tmp"
+env "${pg_env[@]}" pg_dump --format=custom --no-owner --no-acl --file="$dump.tmp"
 mv "$dump.tmp" "$dump"
-unset database_url
+unset pg_env
 mapfile -t dumps < <(find "$ROOT/dumps" -maxdepth 1 -name '*.dump' -printf '%f\n' | sort -r | tail -n +11)
 for old in "${dumps[@]}"; do rm -- "$ROOT/dumps/$old"; done
 log 'Applying migrations'
