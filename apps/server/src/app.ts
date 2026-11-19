@@ -7,6 +7,7 @@ import fastifyStatic from "@fastify/static";
 import { databaseIsReady, env, requireConfig, SentServices } from "@sent/core";
 import {
   DraftInputSchema,
+  type HealthResponse,
   LoginSchema,
   MAX_ATTACHMENT_BYTES,
   MAX_ATTACHMENT_COUNT,
@@ -104,7 +105,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
   app.get("/api/auth/session", async () => ({ authenticated: true }));
 
-  app.get("/api/health", async () => {
+  app.get("/api/health", async (): Promise<HealthResponse> => {
     const database = await databaseIsReady();
     if (!database)
       return {
@@ -113,6 +114,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         workerHeartbeat: null,
         failedMutations: 0,
         classificationFailures: 0,
+        sync: { accounts: 0, needsReauth: 0, oldestSuccessfulSyncAt: null, stale: 0, fresh: false },
       };
     const health = await repository.health();
     return { ...health, database: true };

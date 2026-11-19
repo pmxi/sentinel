@@ -791,20 +791,38 @@ export class MailRepository {
       worker_heartbeat: Date | null;
       failed_mutations: string;
       classification_failures: string;
+      accounts: string;
+      needs_reauth: string;
+      oldest_successful_sync_at: Date | null;
+      stale: string;
     }>(`select (select max(heartbeat_at) from worker_state) worker_heartbeat,
       (select count(*) from mutation_outbox where status='failed') failed_mutations,
-      (select count(*) from classification_failures) classification_failures`);
+      (select count(*) from classification_failures) classification_failures,
+      count(*) accounts,
+      count(*) filter (where status='needs_reauth') needs_reauth,
+      min(last_synced_at) oldest_successful_sync_at,
+      count(*) filter (where last_synced_at is null or last_synced_at < now() - interval '3 minutes') stale
+      from accounts`);
     const row = result.rows[0];
     const heartbeat = row?.worker_heartbeat ?? null;
+    const failedMutations = Number(row?.failed_mutations ?? 0);
+    const needsReauth = Number(row?.needs_reauth ?? 0);
+    const stale = Number(row?.stale ?? 0);
+    const fresh = needsReauth === 0 && stale === 0;
     const degraded =
-      !heartbeat ||
-      Date.now() - heartbeat.getTime() > 180_000 ||
-      Number(row?.failed_mutations ?? 0) > 0;
+      !heartbeat || Date.now() - heartbeat.getTime() > 180_000 || failedMutations > 0 || !fresh;
     return {
       status: degraded ? "degraded" : "ok",
       workerHeartbeat: heartbeat?.toISOString() ?? null,
-      failedMutations: Number(row?.failed_mutations ?? 0),
+      failedMutations,
       classificationFailures: Number(row?.classification_failures ?? 0),
+      sync: {
+        accounts: Number(row?.accounts ?? 0),
+        needsReauth,
+        oldestSuccessfulSyncAt: row?.oldest_successful_sync_at?.toISOString() ?? null,
+        stale,
+        fresh,
+      },
     };
   }
 }
