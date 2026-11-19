@@ -134,12 +134,120 @@ describe.skipIf(!databaseUrl)("mail views and send checkpoints in PostgreSQL", (
     ).toEqual([newsletter.id]);
   });
 
-  it("atomically permits only one send attempt and stops retries after dispatch", async () => {
-    const id = randomUUID();
+  async function enqueueDraft() {
+    const reply = await message("reply", 8);
+    const forward = await message("forward", 9);
+    const draft = await repository.createOrUpdateDraft({
+      accountId,
+      to: [{ name: "Recipient", address: "to@example.com" }],
+      cc: [{ name: "CC", address: "cc@example.com" }],
+      bcc: [{ name: "BCC", address: "bcc@example.com" }],
+      subject: "Recovered reply",
+      body: "Do not lose this reply",
+      replyToMessageId: reply.id,
+      forwardOfMessageId: forward.id,
+    });
+    const id = await repository.enqueueSend(draft.id, []);
+    expect(await repository.getDraft(draft.id)).toBeNull();
+    return { id, draft };
+  }
+
+  it.each([false, true])(
+    "restores a terminally failed unattempted send (deleted references: %s)",
+    async (deleted) => {
+      const { id, draft } = await enqueueDraft();
+      if (deleted) await getPool().query("delete from messages where account_id=$1", [accountId]);
+      await getPool().query(
+        "update mutation_outbox set attempts=12,status='processing' where id=$1",
+        [id],
+      );
+      await repository.failMutation(id, "Graph 502");
+      const restored = await repository.getDraft(draft.id);
+      expect(restored).toEqual({
+        ...draft,
+        replyToMessageId: deleted ? null : draft.replyToMessageId,
+        forwardOfMessageId: deleted ? null : draft.forwardOfMessageId,
+        updatedAt: expect.any(String),
+      });
+      expect(Date.parse(restored?.updatedAt ?? "")).toBeGreaterThanOrEqual(
+        Date.parse(draft.updatedAt),
+      );
+      expect(
+        (await getPool().query("select status,last_error from mutation_outbox where id=$1", [id]))
+          .rows[0],
+      ).toEqual({ status: "failed", last_error: "Graph 502" });
+      await repository.deleteDraft(draft.id);
+      await repository.failMutation(id, "Repeated failure");
+      expect(await repository.getDraft(draft.id)).toBeNull();
+    },
+  );
+
+  it("does not overwrite an existing draft when restoring a failed send", async () => {
+    const { id, draft } = await enqueueDraft();
+    await getPool().query("insert into drafts(id,account_id,body) values($1,$2,'New content')", [
+      draft.id,
+      accountId,
+    ]);
+    await getPool().query("update mutation_outbox set attempts=12 where id=$1", [id]);
+    await repository.failMutation(id, "Graph 502");
+    expect((await repository.getDraft(draft.id))?.body).toBe("New content");
+  });
+
+  it.each([1, 8, 11])(
+    "does not restore a send after non-terminal failure at attempt %s",
+    async (attempts) => {
+      const { id, draft } = await enqueueDraft();
+      await getPool().query(
+        "update mutation_outbox set attempts=$2,status='processing' where id=$1",
+        [id, attempts],
+      );
+      await repository.failMutation(id, "Graph 502");
+      expect(await repository.getDraft(draft.id)).toBeNull();
+      expect(
+        (await getPool().query("select status from mutation_outbox where id=$1", [id])).rows[0]
+          .status,
+      ).toBe("pending");
+    },
+  );
+
+  it("uses the extended retry budget for non-send actions without restoring drafts", async () => {
+    const source = await message("archive", 8);
+    const id = await repository.enqueueAction(source.id, "archive");
+    for (const attempts of [8, 11, 12]) {
+      await getPool().query(
+        "update mutation_outbox set attempts=$2,status='processing' where id=$1",
+        [id, attempts],
+      );
+      await repository.failMutation(id, "Graph 502");
+      expect(
+        (await getPool().query("select status from mutation_outbox where id=$1", [id])).rows[0]
+          .status,
+      ).toBe(attempts === 12 ? "failed" : "pending");
+    }
+    expect(await repository.listDrafts()).toEqual([]);
+    await repository.failMutation(randomUUID(), "Missing mutation");
+    expect(await repository.listDrafts()).toEqual([]);
+  });
+
+  it("rolls back the failure transition if restoring the draft fails", async () => {
+    const { id, draft } = await enqueueDraft();
     await getPool().query(
-      "insert into mutation_outbox(id,idempotency_key,account_id,action,status,attempts) values($1::uuid,$1::text,$2,'send','processing',1)",
-      [id, accountId],
+      "update mutation_outbox set attempts=12,status='processing',payload=jsonb_set(payload,'{draft,accountId}',to_jsonb($2::text)) where id=$1",
+      [id, randomUUID()],
     );
+    await expect(repository.failMutation(id, "Graph 502")).rejects.toThrow();
+    expect(
+      (await getPool().query("select status from mutation_outbox where id=$1", [id])).rows[0]
+        .status,
+    ).toBe("processing");
+    expect(await repository.getDraft(draft.id)).toBeNull();
+  });
+
+  it("atomically permits only one send attempt and stops retries after dispatch", async () => {
+    const { id, draft } = await enqueueDraft();
+    await getPool().query("update mutation_outbox set status='processing',attempts=1 where id=$1", [
+      id,
+    ]);
     const results = await Promise.allSettled([
       repository.recordSendAttempt(id),
       repository.recordSendAttempt(id),
@@ -154,6 +262,7 @@ describe.skipIf(!databaseUrl)("mail views and send checkpoints in PostgreSQL", (
     expect(row.status).toBe("failed");
     expect(row.payload.sendAttemptedAt).toBeTruthy();
     expect(row.last_error).toContain("Automatic resend blocked");
+    expect(await repository.getDraft(draft.id)).toBeNull();
     expect(await repository.claimMutations()).toEqual([]);
   });
 
