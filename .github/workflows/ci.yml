@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: sent
+          POSTGRES_USER: sent
+          POSTGRES_PASSWORD: sent-ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sent -d sent"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      PGPASSWORD: sent-ci
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm format:check
+      - run: pnpm lint
+      - run: pnpm typecheck
+      - run: pnpm build
+      - name: Apply migrations
+        run: pnpm --filter @sent/core exec tsx src/db/migrate.ts
+        env:
+          DATABASE_URL: postgres://sent:sent-ci@localhost:5432/sent
+      - name: Create integration test database
+        run: psql -h localhost -U sent -d sent -c "create database sent_test_ci"
+      - name: Test
+        run: pnpm test
+        env:
+          SENT_TEST_DATABASE_URL: postgres://sent:sent-ci@localhost:5432/sent_test_ci
