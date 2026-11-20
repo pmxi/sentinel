@@ -201,6 +201,8 @@ def main():
             assert (root / "current").resolve().name == f"{seventh}-rust"
             assert (root / "previous").resolve() == typescript
             assert deploy() == ""
+            assert "already current" in deploy(0, "force", seventh)
+            assert (root / "current").resolve().name == f"{seventh}-rust"
             print("PASS cutover commit deployed as TypeScript by the old script -> rebuilt as Rust, TypeScript kept as previous")
         finally:
             server.shutdown()

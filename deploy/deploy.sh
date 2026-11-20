@@ -148,7 +148,7 @@ failed() {
 }
 trap failed ERR INT TERM
 release="$ROOT/releases/$sha"
-if [[ "$previous" == "$release" && ! -x "$release/bin/sent-server" ]]; then release+=-rust; fi
+if [[ -d "$release" && ! -x "$release/bin/sent-server" ]]; then release+=-rust; fi
 [[ "$previous" != "$release" ]] || { log 'Requested release is already current'; exit 0; }
 log "Building $sha"
 if [[ ! -d "$ROOT/cache.git" ]]; then git clone --mirror "$REPO" "$ROOT/cache.git"; fi
