@@ -133,7 +133,7 @@ describe("archive while automatic mark-read is pending", () => {
 
   it("deletes the conversation with the current view and account scope", async () => {
     const { client } = mount("/inbox/l2?message=message-1&account=account-1");
-    fireEvent.click(await screen.findByRole("button", { name: "Delete latest message" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete conversation" }));
     await waitFor(() =>
       expect(sentApi.threadAction).toHaveBeenCalledWith("thread-1", "delete", "l2", "account-1"),
     );
@@ -144,7 +144,7 @@ describe("archive while automatic mark-read is pending", () => {
   it("restores the conversation when the grouped request fails", async () => {
     vi.mocked(sentApi.threadAction).mockRejectedValue(new Error("Thread action failed"));
     const { container, client } = mount();
-    fireEvent.click(await screen.findByRole("button", { name: "Archive latest message" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Archive conversation" }));
     await screen.findByText("Thread action failed");
     await waitFor(() => expect(container.querySelector(".message-row")).not.toBeNull());
     client.clear();

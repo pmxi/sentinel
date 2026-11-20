@@ -550,16 +550,16 @@ function Reader({
           <TierPicker tier={message.tier} onChange={(value) => tier.mutate(value)} />
           <button
             className="icon-button"
-            title="Archive latest message"
-            aria-label="Archive latest message"
+            title="Archive conversation"
+            aria-label="Archive conversation"
             onClick={() => triageAction("archive")}
           >
             <Archive size={18} />
           </button>
           <button
             className="icon-button"
-            title="Delete latest message"
-            aria-label="Delete latest message"
+            title="Delete conversation"
+            aria-label="Delete conversation"
             onClick={() => triageAction("delete")}
           >
             <Trash2 size={18} />
