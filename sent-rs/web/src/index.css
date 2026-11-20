@@ -1,16 +1,16 @@
 :root {
-  color: #202823;
+  color: #202124;
   background: #fff;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --ink: #202823;
-  --muted: #66706a;
-  --faint: #737c76;
-  --line: #e7ebe7;
+  --ink: #202124;
+  --muted: #63666a;
+  --faint: #72757a;
+  --line: #e6e7e9;
   --paper: #fff;
-  --accent: #315d4b;
-  --accent-soft: #e8f0eb;
+  --accent: #202124;
+  --accent-soft: #f0f1f2;
   --red: #b42318;
 }
 
@@ -331,7 +331,7 @@ kbd {
   min-width: 0;
   padding: 22px 14px 18px;
   border-right: 1px solid var(--line);
-  background: #f7f9f7;
+  background: #f7f8f9;
 }
 .sidebar-brand {
   height: 40px;
@@ -389,7 +389,7 @@ kbd {
   padding: 0 11px;
   gap: 11px;
   border-radius: 7px;
-  color: #58635c;
+  color: #585c61;
   font-size: 13px;
   font-weight: 400;
 }
@@ -467,7 +467,7 @@ kbd {
   padding: 0 12px;
   border: 1px solid transparent;
   border-radius: 8px;
-  background: #f3f5f3;
+  background: #f3f4f5;
   color: var(--muted);
 }
 .global-search:focus-within {
@@ -578,7 +578,7 @@ kbd {
   margin-left: 8px;
 }
 .message-list-item.selected {
-  background: #edf4ef;
+  background: var(--accent-soft);
   box-shadow: inset 3px 0 var(--accent);
 }
 .message-ai-summary {
@@ -685,14 +685,14 @@ kbd {
   outline-offset: -2px;
 }
 .message-row.selected {
-  background: #edf4ef;
+  background: var(--accent-soft);
   box-shadow: inset 3px 0 var(--accent);
 }
 .message-row.unread {
   background: #fff;
 }
 .message-row.unread.selected {
-  background: #edf4ef;
+  background: var(--accent-soft);
 }
 .message-row.unclassified,
 .message-row.unclassified.unread {
@@ -847,7 +847,7 @@ kbd {
   align-items: center;
   justify-content: center;
   gap: 12px;
-  background: #fbfcfa;
+  background: #fafbfc;
   color: var(--muted);
   text-align: center;
   padding: 24px;
@@ -855,7 +855,7 @@ kbd {
 }
 .empty-reader-pane > svg {
   margin-bottom: 8px;
-  color: #8b9b90;
+  color: #8a8d93;
 }
 .empty-reader-pane strong {
   color: var(--ink);
@@ -1235,8 +1235,8 @@ kbd {
   border-radius: 12px;
   background: var(--paper);
   box-shadow:
-    0 16px 64px #20332626,
-    0 2px 8px #20332612;
+    0 16px 64px #20212426,
+    0 2px 8px #20212412;
   overflow: hidden;
 }
 .composer-header {
@@ -1518,7 +1518,7 @@ kbd {
   overflow: hidden;
   border: 1px solid #3a3a3a;
   border-radius: 8px;
-  background: #202120;
+  background: #202124;
   color: #fff;
   box-shadow: 0 8px 26px #0002;
   font-size: 13px;
@@ -1532,13 +1532,13 @@ kbd {
   padding: 4px;
   border: 0;
   background: transparent;
-  color: #c4e8b9;
+  color: #e0e2e5;
   font: inherit;
   font-weight: 600;
   cursor: pointer;
 }
 .action-toast button:focus-visible {
-  outline: 2px solid #c4e8b9;
+  outline: 2px solid #e0e2e5;
   outline-offset: 3px;
 }
 .action-toast button:disabled {
@@ -1554,7 +1554,7 @@ kbd {
   left: 0;
   height: 2px;
   width: 100%;
-  background: #c4e8b9;
+  background: #e0e2e5;
   transform-origin: left;
   animation: toast-countdown linear forwards;
 }
@@ -1893,7 +1893,7 @@ select:focus-visible {
 }
 .empty-list svg {
   margin-bottom: 8px;
-  color: #8b9b90;
+  color: #8a8d93;
 }
 .login-card > p {
   margin: -12px 0 28px;
