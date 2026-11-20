@@ -233,12 +233,15 @@ impl Providers {
             bail!("Invalid provider");
         };
         let encrypted = encrypt_secret(&serde_json::to_string(&credentials)?, self.key()?)?;
+        let mut tx = self.pool.begin().await?;
         let row=sqlx::query("insert into accounts(provider,email,display_name,encrypted_credentials,status,updated_at) values($1::text::provider,$2,$3,$4,'active',now()) on conflict(provider,email) do update set display_name=excluded.display_name,encrypted_credentials=excluded.encrypted_credentials,status='active',last_error=null,updated_at=now() returning id")
-            .bind(provider).bind(email.to_lowercase()).bind(display_name).bind(encrypted).fetch_one(&self.pool).await?;
+            .bind(provider).bind(email.to_lowercase()).bind(display_name).bind(encrypted).fetch_one(&mut *tx).await?;
         sqlx::query("insert into sync_cursors(account_id) values($1) on conflict do nothing")
             .bind(row.get::<Uuid, _>("id"))
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
+        crate::live::notify_changed(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
