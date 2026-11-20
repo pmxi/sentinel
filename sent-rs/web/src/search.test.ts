@@ -133,7 +133,10 @@ describe("local-first search queries", () => {
     });
     vi.stubGlobal("cancelAnimationFrame", vi.fn());
     const first = Array.from({ length: 20 }, (_, index) => row(`local-${index}`));
-    const full = [...first, ...Array.from({ length: 55 }, (_, index) => row(`rest-${index}`))];
+    const full = [
+      ...first.map((item) => ({ ...item })),
+      ...Array.from({ length: 55 }, (_, index) => row(`rest-${index}`)),
+    ];
     const search = ready(
       vi
         .fn()
@@ -142,11 +145,13 @@ describe("local-first search queries", () => {
     );
     const state = scope();
     await vi.waitFor(() => expect(state.result.data?.messages).toEqual(first));
+    const firstPublished = state.result.data?.messages[0];
     expect(search).toHaveBeenCalledTimes(1);
     frames.shift()?.(0);
     expect(search).toHaveBeenCalledTimes(1);
     frames.shift()?.(16);
     await vi.waitFor(() => expect(state.result.data?.messages).toEqual(full));
+    expect(state.result.data?.messages[0]).toBe(firstPublished);
     expect(search).toHaveBeenLastCalledWith("needle", 75);
   });
   it("ignores an in-flight local fill after unmount", async () => {

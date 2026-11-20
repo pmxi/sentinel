@@ -13,8 +13,10 @@ The search page and Cmd+K share the existing debounced query cache. Once the rep
 is ready they publish a viewport-sized local lexical page without a request, then
 append the rest of the 75-result page after paint. Native FTS rank limits candidates;
 ties and duplicate conversations expand the bound before recency/ID tie-breaking.
-Background initialization warms the search index into SQLite's bounded 16 MiB page
-cache; this uses RAM, not another persistent copy or a search-result cache.
+Background initialization warms the search index into SQLite's 64 MiB target page
+cache; this uses RAM, not another persistent copy or a search-result cache. When
+recent-body initialization completes, it reads the FTS payload pages and runs one
+representative header query to warm the SQLite/WASM search path before user input.
 Online hybrid search
 refines asynchronously after that paint; existing rows and selected message identities
 stay fixed while semantic-only conversations append. Offline no refinement is sent.

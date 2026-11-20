@@ -81,6 +81,25 @@ describe("real SQLite replica", () => {
     expect(store.db.selectValue("select subject from search_documents limit 1")).toBeNull();
     expect(store.storageStats().ftsAllocatedBytes).toBeGreaterThan(0);
   });
+  it("warms a representative query once when recent-body initialization finishes", () => {
+    seed([
+      row("one", {
+        subject: "Comet memo",
+        receivedAt: "2000-01-01T00:00:00Z",
+        sortReceivedAt: "2000-01-01T00:00:00.000000Z",
+      }),
+    ]);
+    const search = vi.spyOn(store, "search");
+    expect(store.recentBodies()).toEqual([]);
+    expect(store.recentBodies()).toEqual([]);
+    expect(search).toHaveBeenCalledExactlyOnceWith("Comet", 20);
+    expect(store.db.selectValue("pragma cache_size")).toBe(-65536);
+  });
+  it("skips representative query warming for an empty mailbox", () => {
+    const search = vi.spyOn(store, "search");
+    expect(store.recentBodies()).toEqual([]);
+    expect(search).not.toHaveBeenCalled();
+  });
   it("keeps snapshots, deltas, archive/undo, deletions and cached bodies synchronized", () => {
     const original = row("one", {
       subject: "Headerneedle",

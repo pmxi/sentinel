@@ -72,9 +72,10 @@ export class ReplicaStore {
   private accounts = new Map<string, ReplicaRow["account"]>();
   private pendingSearch = new Set<string>();
   private warmedSearch = false;
+  private searchReadyWarmed = false;
   private searchWarmMs = 0;
   constructor(readonly db: Database) {
-    this.run("pragma temp_store=memory; pragma cache_size=-16384");
+    this.run("pragma temp_store=memory; pragma cache_size=-65536");
     if (Number(db.selectValue("pragma user_version")) !== 5) {
       this.run(
         "drop table if exists messages; drop table if exists staging; drop table if exists bodies; drop table if exists meta; drop table if exists base; drop table if exists operations; drop table if exists accounts; drop table if exists search_headers; drop table if exists search_bodies; drop table if exists search_documents; drop table if exists search_documents_content;",
@@ -111,14 +112,14 @@ export class ReplicaStore {
     });
     this.warmSearchCache();
   }
-  private warmSearchCache() {
-    if (this.warmedSearch || !this.count()) return;
+  private warmSearchCache(force = false) {
+    if ((!force && this.warmedSearch) || !this.count()) return;
     const start = performance.now();
-    this.run(`select sum(length(block)) from search_documents_data;
+    this.run(`select sum(length(hex(block))) from search_documents_data;
       select sum(length(sz)) from search_documents_docsize;
       select sum(length(c5)+length(c6)+length(c7)) from search_documents_content;
       select count(*) from search_documents_idx;`);
-    this.searchWarmMs = performance.now() - start;
+    this.searchWarmMs += performance.now() - start;
     this.warmedSearch = true;
   }
   private run(sql: string, bind: SqlValue[] = []) {
@@ -359,7 +360,17 @@ export class ReplicaStore {
       "select m.id from messages m left join bodies b on b.id=m.id and b.version=m.body_version left join meta s on s.key='bodySkipped:'||m.id and s.value=m.body_version where m.received_at>=? and b.id is null and s.key is null order by m.received_at desc,m.id desc limit 16",
       [recentBodyCutoff()],
     ).map((row) => row.id);
-    if (!ids.length) this.warmSearchCache();
+    if (!ids.length && !this.searchReadyWarmed) {
+      this.warmSearchCache(true);
+      const start = performance.now();
+      const subject = String(
+        this.db.selectValue("select data->>'$[0]' from messages limit 1") ?? "",
+      );
+      const term = subject.match(/[\p{L}\p{N}]+/u)?.[0];
+      if (term) this.search(term, 20);
+      this.searchWarmMs += performance.now() - start;
+      this.searchReadyWarmed = true;
+    }
     return ids;
   }
   storageStats() {
