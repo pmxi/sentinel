@@ -20,6 +20,7 @@ export function LoginPage() {
         <main class="login-page">
           <section class="login-card">
             <h1>Sent</h1>
+            <p>Your mail. A little more focused.</p>
             <form onSubmit={submit}>
               <label for="password">Password</label>
               <div class="password-field">
