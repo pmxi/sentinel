@@ -1,4 +1,4 @@
-import { ChevronRight, Sparkles } from "lucide-solid";
+import { ChevronRight } from "lucide-solid";
 import { createMemo } from "solid-js";
 import type { MessageSummary, Tier } from "./shared";
 
@@ -55,12 +55,10 @@ export function ReaderInsights(props: { message: Insights }) {
       {(() => {
         if (!summary() && !hasReasoning()) return null;
         return (
-          <aside class="reader-insights" aria-label="AI insights">
-            <div class="insights-heading">
-              <Sparkles size={14} aria-hidden="true" /> AI insights
-            </div>
+          <aside class="reader-insights" aria-label="Message summary">
+            <div class="insights-heading">Summary</div>
             {summary() && <p class="reader-ai-summary">{summary()}</p>}
-            <RankingReason message={props.message} open />
+            <RankingReason message={props.message} />
           </aside>
         );
       })()}

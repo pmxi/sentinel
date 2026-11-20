@@ -5,7 +5,20 @@ import {
   measureElement,
   type Virtualizer,
 } from "@tanstack/solid-virtual";
-import { Archive, Flag, Mail, MailOpen, Paperclip, Trash2 } from "lucide-solid";
+import {
+  Archive,
+  ChevronDown,
+  ChevronLeft,
+  Flag,
+  Forward,
+  Mail,
+  MailOpen,
+  Paperclip,
+  Reply,
+  ReplyAll,
+  Trash2,
+  X,
+} from "lucide-solid";
 import {
   type Accessor,
   createEffect,
@@ -27,6 +40,7 @@ import { MessagePreview, ReaderInsights } from "./MessageInsights";
 import { optimistic, quietUntil } from "./mail-cache";
 import { useMailbox } from "./mailbox";
 import { cachedRow, headerData, usePrefetch } from "./prefetch";
+import { ReaderMenu } from "./ReaderMenu";
 import { ReaderText } from "./ReaderText";
 import { localBodyPending, messageRead, replicaFor, replicaReady, threadRead } from "./replica";
 import { useLocation, useNavigate, useParams, useSearchParams } from "./router";
@@ -617,12 +631,10 @@ function Reader(props: {
   const [params] = useSearchParams();
   const triage = useTriage();
   const [bodyView, setBodyView] = createSignal<"plain" | "original">("plain");
+  const [summaryOpen, setSummaryOpen] = createSignal(false);
+  const [detailsOpen, setDetailsOpen] = createSignal(false);
   const [hasShownFallback, setHasShownFallback] = createSignal(false);
-  const newestRef = { current: null } as {
-    current: HTMLElement | null;
-  };
   const openedMessages = { current: new Set<string>() };
-  const scrolledToNewest = { current: false };
   const detail = createQuery<MessageDetail>(() => ({
     queryKey: ["message", props.messageId],
     networkMode: "always",
@@ -815,15 +827,6 @@ function Reader(props: {
     });
     if (typeof cleanup === "function") onCleanup(cleanup);
   });
-  createEffect(() => {
-    [thread.data];
-    const cleanup = untrack(() => {
-      if (!thread.data || scrolledToNewest.current || !newestRef.current) return;
-      scrolledToNewest.current = true;
-      newestRef.current.scrollIntoView({ block: "nearest" });
-    });
-    if (typeof cleanup === "function") onCleanup(cleanup);
-  });
   const hasPlainText = createMemo(() =>
     [message(), ...conversation()].some((item) => Boolean(item?.plainText?.trim())),
   );
@@ -850,15 +853,15 @@ function Reader(props: {
         {(current) => (
           <section class="reader">
             <header class="reader-toolbar">
-              <button class="back-button" onClick={props.close}>
-                <span>Back</span>
+              <button
+                class="icon-button back-button"
+                aria-label="Back to mail"
+                title="Back to mail"
+                onClick={props.close}
+              >
+                <ChevronLeft size={20} aria-hidden="true" />
               </button>
               <div class="toolbar-actions">
-                <TierPicker
-                  disabled={unavailable()}
-                  tier={current().tier}
-                  onChange={(value) => tier.mutate({ id: current().id, tier: value })}
-                />
                 <button
                   class="icon-button"
                   title="Archive conversation"
@@ -880,6 +883,7 @@ function Reader(props: {
                 <button
                   class="icon-button"
                   title={current().read ? "Mark unread" : "Mark read"}
+                  aria-label={current().read ? "Mark unread" : "Mark read"}
                   disabled={unavailable()}
                   onClick={() => doAction(current().read ? "mark_unread" : "mark_read")}
                 >
@@ -887,12 +891,31 @@ function Reader(props: {
                 </button>
                 <button
                   class={`icon-button ${current().flagged ? "active" : ""}`}
-                  title="Flag"
+                  title={current().flagged ? "Unflag" : "Flag"}
+                  aria-label={current().flagged ? "Unflag" : "Flag"}
+                  aria-pressed={current().flagged}
                   disabled={unavailable()}
                   onClick={() => doAction(current().flagged ? "unflag" : "flag")}
                 >
                   <Flag size={18} fill={current().flagged ? "currentColor" : "none"} />
                 </button>
+                <ReaderMenu
+                  disabled={unavailable()}
+                  tier={current().tier}
+                  onTier={(value) => tier.mutate({ id: current().id, tier: value })}
+                  hasInsights={Boolean(
+                    current().aiSummary?.trim() ||
+                      (current().reasoning?.trim() && current().modelTier !== null),
+                  )}
+                  summaryOpen={summaryOpen()}
+                  onSummary={() => setSummaryOpen((open) => !open)}
+                  hasPlainText={hasPlainText()}
+                  bodyView={bodyView()}
+                  onBodyView={() =>
+                    setBodyView((view) => (view === "plain" ? "original" : "plain"))
+                  }
+                  onDetails={() => setDetailsOpen(true)}
+                />
               </div>
             </header>
             {action.error && (
@@ -900,104 +923,167 @@ function Reader(props: {
                 {action.error.message}
               </p>
             )}
+            {tier.error && (
+              <p class="compose-error" role="alert">
+                Couldn't move the message. {tier.error.message}
+              </p>
+            )}
             <article class="message-reader">
-              <header class="conversation-heading">
-                <h2>
-                  {current().subject.replace(/^(?:(?:re|fw|fwd):\s*)+/i, "") || "(No subject)"}
-                </h2>
-                <p>
-                  {orderedMessages().length}{" "}
-                  {orderedMessages().length === 1 ? "message" : "messages"} ·{" "}
-                  {current().account.email}
-                </p>
-              </header>
-              {thread.isError && (
-                <p role="status">
-                  {thread.data
-                    ? "Couldn’t refresh the conversation. Showing saved messages."
-                    : "Couldn’t load the conversation. Showing the selected message."}
-                </p>
-              )}
-              {hasPlainText() && (
-                <nav class="body-view-picker" aria-label="Message body view">
-                  <button
-                    class={bodyView() === "plain" ? "active" : ""}
-                    onClick={() => setBodyView("plain")}
-                  >
-                    Plain text
-                  </button>
-                  <button
-                    class={bodyView() === "original" ? "active" : ""}
-                    onClick={() => setBodyView("original")}
-                  >
-                    Original
-                  </button>
-                </nav>
-              )}
-              {conversation().length > 0 && (
-                <div class="thread-history">
-                  <span class="section-label">Earlier in this conversation</span>
-                  {conversation().map((item) => (
-                    <details class="thread-message">
-                      <summary>
-                        <span>
-                          <strong>
-                            {item.from[0]?.name || item.from[0]?.address || "Unknown"}
-                          </strong>
-                          <small>{item.snippet}</small>
+              <div class="reading-column">
+                <header class="conversation-heading">
+                  <h2>
+                    {current().subject.replace(/^(?:(?:re|fw|fwd):\s*)+/i, "") || "(No subject)"}
+                  </h2>
+                </header>
+                {thread.isError && (
+                  <p role="status">
+                    {thread.data
+                      ? "Couldn’t refresh the conversation. Showing saved messages."
+                      : "Couldn’t load the conversation. Showing the selected message."}
+                  </p>
+                )}
+                {conversation().length > 0 && (
+                  <details class="thread-history">
+                    <summary>
+                      {conversation().length} earlier{" "}
+                      {conversation().length === 1 ? "message" : "messages"}
+                      <ChevronDown size={13} aria-hidden="true" />
+                    </summary>
+                    <div class="thread-history-messages">
+                      {conversation().map((item) => (
+                        <details class="thread-message">
+                          <summary>
+                            <span>
+                              <strong>
+                                {item.from[0]?.name || item.from[0]?.address || "Unknown"}
+                              </strong>
+                              <small>{item.snippet}</small>
+                            </span>
+                            <time>{formatListDate(item.receivedAt)}</time>
+                          </summary>
+                          <MessageBody
+                            message={item}
+                            view={bodyView()}
+                            title={`Message from ${item.from[0]?.name || item.from[0]?.address || "sender"}`}
+                          />
+                          <MessageAttachments message={item} />
+                        </details>
+                      ))}
+                    </div>
+                  </details>
+                )}
+                <section class="latest-message" aria-label="Latest message">
+                  <div class="latest-message-heading">
+                    <details
+                      class="message-details"
+                      open={detailsOpen()}
+                      onToggle={(event) => setDetailsOpen(event.currentTarget.open)}
+                    >
+                      <summary aria-label="Message details">
+                        <span class="sender-avatar" aria-hidden="true">
+                          {senderInitials(current())}
                         </span>
-                        <time>{formatListDate(item.receivedAt)}</time>
+                        <span class="sender-identity">
+                          <strong title={current().from[0]?.address}>
+                            {current().from[0]?.name ||
+                              current().from[0]?.address ||
+                              "Unknown sender"}
+                          </strong>
+                          <span>
+                            {recipientLabel(current())}
+                            <ChevronDown size={11} aria-hidden="true" />
+                          </span>
+                        </span>
                       </summary>
-                      <MessageBody
-                        message={item}
-                        view={bodyView()}
-                        title={`Message from ${item.from[0]?.name || item.from[0]?.address || "sender"}`}
-                      />
-                      <MessageAttachments message={item} />
+                      <dl>
+                        <div>
+                          <dt>From</dt>
+                          <dd>
+                            {current().from.map(formatAddress).join(", ") || "Unknown sender"}
+                          </dd>
+                        </div>
+                        <div>
+                          <dt>To</dt>
+                          <dd>
+                            {current().to.map(formatAddress).join(", ") || "Undisclosed recipients"}
+                          </dd>
+                        </div>
+                        <Show when={current().cc.length}>
+                          <div>
+                            <dt>Cc</dt>
+                            <dd>{current().cc.map(formatAddress).join(", ")}</dd>
+                          </div>
+                        </Show>
+                        <Show when={current().bcc.length}>
+                          <div>
+                            <dt>Bcc</dt>
+                            <dd>{current().bcc.map(formatAddress).join(", ")}</dd>
+                          </div>
+                        </Show>
+                        <div>
+                          <dt>Account</dt>
+                          <dd>{current().account.email}</dd>
+                        </div>
+                        <div>
+                          <dt>Date</dt>
+                          <dd>{new Date(current().receivedAt).toLocaleString()}</dd>
+                        </div>
+                      </dl>
                     </details>
-                  ))}
-                </div>
-              )}
-              <section
-                class="latest-message"
-                ref={(element) => {
-                  newestRef.current = element;
-                }}
-                aria-label="Latest message"
-              >
-                <div class="latest-message-heading">
-                  <strong>
-                    {current().from[0] ? formatAddress(current().from[0]) : "Unknown sender"}
-                  </strong>
-                  <time dateTime={current().receivedAt}>
-                    {new Date(current().receivedAt).toLocaleString()}
-                  </time>
-                </div>
-                <p class="latest-recipients">
-                  To: {current().to.map(formatAddress).join(", ") || "me"}
-                </p>
-                {conversation().length > 0 && <span class="latest-label">Latest message</span>}
-                <ReaderInsights message={current()} />
-                <Show
-                  when={thread.data || !detail.isPlaceholderData}
-                  fallback={<div class="reader-skeleton" />}
-                >
-                  <div class="email-body">
-                    <MessageBody message={current()} view={bodyView()} title="Email content" />
+                    <time
+                      dateTime={current().receivedAt}
+                      title={new Date(current().receivedAt).toLocaleString()}
+                    >
+                      {formatReaderDate(current().receivedAt)}
+                    </time>
                   </div>
-                </Show>
-                <MessageAttachments message={current()} />
-              </section>
-              <div class="reply-actions">
-                <button disabled={cannotQuote()} onClick={() => reply()}>
-                  Reply
-                </button>
-                <button disabled={cannotQuote()} onClick={() => reply(true)}>
-                  Reply all
-                </button>
-                <button disabled={cannotQuote()} onClick={forward}>
-                  Forward
-                </button>
+                  <Show when={summaryOpen()}>
+                    <div class="reader-summary">
+                      <button
+                        class="icon-button"
+                        title="Close summary"
+                        aria-label="Close summary"
+                        onClick={() => setSummaryOpen(false)}
+                      >
+                        <X size={14} />
+                      </button>
+                      <ReaderInsights message={current()} />
+                    </div>
+                  </Show>
+                  <Show
+                    when={thread.data || !detail.isPlaceholderData}
+                    fallback={<div class="reader-skeleton" />}
+                  >
+                    <div class="email-body">
+                      <MessageBody message={current()} view={bodyView()} title="Email content" />
+                    </div>
+                  </Show>
+                  <MessageAttachments message={current()} />
+                </section>
+                <div class="reply-actions">
+                  <button disabled={cannotQuote()} onClick={() => reply()}>
+                    <Reply size={17} aria-hidden="true" />
+                    Reply
+                  </button>
+                  <button
+                    class="icon-button"
+                    title="Reply all"
+                    aria-label="Reply all"
+                    disabled={cannotQuote()}
+                    onClick={() => reply(true)}
+                  >
+                    <ReplyAll size={18} aria-hidden="true" />
+                  </button>
+                  <button
+                    class="icon-button"
+                    title="Forward"
+                    aria-label="Forward"
+                    disabled={cannotQuote()}
+                    onClick={forward}
+                  >
+                    <Forward size={18} aria-hidden="true" />
+                  </button>
+                </div>
               </div>
             </article>
           </section>
@@ -1049,28 +1135,6 @@ function MessageBody(props: { message: MessageDetail; view: "plain" | "original"
           return <EmailFrame title={props.title} html={props.message.htmlBody} />;
         return <div class="plain-body">{props.message.textBody}</div>;
       })()}
-    </>
-  );
-}
-function TierPicker(props: { tier: Tier | null; disabled?: boolean; onChange(value: Tier): void }) {
-  return (
-    <>
-      {
-        <label class="tier-picker">
-          <span>Tier:</span>
-          <select
-            aria-label="Email tier"
-            disabled={props.disabled}
-            value={props.tier ?? ""}
-            onInput={(event) => props.onChange(Number(event.currentTarget.value) as Tier)}
-          >
-            {props.tier === null && <option value="">Unsorted</option>}
-            <option value="1">L1</option>
-            <option value="2">L2</option>
-            <option value="3">L3</option>
-          </select>
-        </label>
-      }
     </>
   );
 }
@@ -1147,6 +1211,36 @@ function formatAddress(value: MessageSummary["from"][number]) {
   return value.name && value.name.toLowerCase() !== value.address.toLowerCase()
     ? `${value.name} <${value.address}>`
     : value.address;
+}
+function senderInitials(message: MessageSummary) {
+  const sender = message.from[0];
+  const name = sender?.name.trim();
+  if (!name) return sender?.address.slice(0, 2).toUpperCase() || "?";
+  const words = name.split(/\s+/);
+  return (words[0]?.[0] ?? "") + (words.length > 1 ? (words.at(-1)?.[0] ?? "") : "");
+}
+function recipientLabel(message: MessageDetail) {
+  const first = message.to[0];
+  if (!first) return "to undisclosed recipients";
+  const name =
+    first.address.toLowerCase() === message.account.email.toLowerCase()
+      ? "me"
+      : first.name || first.address;
+  return `to ${name}${message.to.length > 1 ? ` and ${message.to.length - 1} more` : ""}`;
+}
+function formatReaderDate(value: string) {
+  const date = new Date(value);
+  const time = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const now = new Date();
+  const day =
+    date.toDateString() === now.toDateString()
+      ? "Today"
+      : date.toLocaleDateString([], {
+          month: "short",
+          day: "numeric",
+          ...(date.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}),
+        });
+  return `${day}, ${time}`;
 }
 function formatListDate(value: string) {
   const date = new Date(value);
