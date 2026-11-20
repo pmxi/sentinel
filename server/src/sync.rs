@@ -865,7 +865,7 @@ mod tests {
         use sent_core::{
             db,
             normalize::gmail_message,
-            repository::{BodyVersionCache, Repository},
+            repository::{BodyVersionCache, Classification, ListInput, Repository},
         };
 
         let directory = tempfile::tempdir()?;
@@ -892,24 +892,44 @@ mod tests {
         let mut mark = initial.mark;
         let mut feed = Feed::default();
         let mut cursor = feed.apply(initial);
-        for (provider_id, scheduled) in [
-            ("ordinary", false),
-            ("inserted-scheduled", true),
-            ("ordinary", true),
-            ("inserted-scheduled", false),
-            ("inserted-scheduled", true),
+        let mut replica = BTreeMap::new();
+        for (provider_id, labels, tier) in [
+            ("ordinary", json!(["INBOX"]), None),
+            ("tier-three", json!(["INBOX"]), Some(3)),
+            ("archived", json!([]), Some(1)),
+            ("sent", json!(["SENT"]), Some(2)),
+            ("trashed", json!(["INBOX", "TRASH"]), None),
+            ("inserted-scheduled", json!(["INBOX", "SCHEDULED"]), None),
+            ("ordinary", json!(["INBOX", "SCHEDULED"]), None),
+            ("inserted-scheduled", json!(["INBOX"]), None),
+            ("tier-three", json!(["INBOX", "SCHEDULED"]), Some(3)),
+            ("inserted-scheduled", json!(["INBOX", "SCHEDULED"]), None),
         ] {
-            let labels = if scheduled {
-                json!(["INBOX", "SCHEDULED"])
-            } else {
-                json!(["INBOX"])
-            };
+            let scheduled = labels
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|label| label == "SCHEDULED");
             let message = gmail_message(
-                &json!({"id":provider_id,"threadId":"thread","internalDate":"1893456000000","labelIds":labels,
-                "payload":{"headers":[{"name":"From","value":"sender@example.test"},{"name":"Subject","value":"Visibility"}]}}),
+                &json!({"id":provider_id,"threadId":provider_id,"internalDate":"1893456000000","labelIds":labels,
+                "payload":{"headers":[{"name":"From","value":if provider_id == "sent" { "owner@example.test" } else { "sender@example.test" }},{"name":"Subject","value":"Visibility"}]}}),
                 "owner@example.test",
             )?;
             let (id, _) = repo.upsert_message(account, &message).await?;
+            if let Some(tier) = tier {
+                repo.save_classification(
+                    id,
+                    Classification {
+                        tier,
+                        reasoning: "Fixture",
+                        summary: "Fixture",
+                        plain_text: "Fixture",
+                        model: "fixture",
+                        prompt_version: "fixture",
+                    },
+                )
+                .await?;
+            }
             repo.heartbeat("scheduled-test", json!({})).await?;
             let change = repo.replica_update(Some(mark), &mut cache).await?.unwrap();
             assert!(!change.full);
@@ -937,6 +957,37 @@ mod tests {
                     .live_delta(&previous, &cursor, &feed.published_inventory())
                     .unwrap(),
             )?;
+            for id in frame["delta"]["deletions"].as_array().unwrap() {
+                replica.remove(id.as_str().unwrap());
+            }
+            for row in frame["delta"]["upserts"].as_array().unwrap() {
+                replica.insert(row["id"].as_str().unwrap().to_owned(), row.clone());
+            }
+            assert_eq!(replica, rebuilt.rows);
+            let inbox_ids: Vec<_> = replica
+                .values()
+                .filter(|row| {
+                    row["archived"] == false
+                        && row["deleted"] == false
+                        && row["direction"] == "inbound"
+                })
+                .map(|row| row["id"].as_str().unwrap().to_owned())
+                .collect();
+            let inbox = repo
+                .list_messages(ListInput {
+                    view: Some("inbox".into()),
+                    limit: Some(100),
+                    ..Default::default()
+                })
+                .await?;
+            let mut listed: Vec<_> = inbox["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["id"].as_str().unwrap().to_owned())
+                .collect();
+            listed.sort();
+            assert_eq!(inbox_ids, listed);
             if scheduled {
                 assert_eq!(frame["delta"]["upserts"], json!([]));
                 assert_eq!(
