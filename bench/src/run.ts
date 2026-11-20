@@ -3,6 +3,7 @@ import { cpus, platform, release, totalmem } from "node:os";
 import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { type BrowserContext, chromium, type Page } from "playwright";
+import { ensureArchiveCapacity, sampleRowIndex } from "./archive.ts";
 import { SEARCH_TERMS } from "./data.ts";
 import { installDiagnostics } from "./diagnostics.ts";
 import {
@@ -77,6 +78,14 @@ try {
       timeout,
     });
     if (!response.ok()) throw new Error(`Login HTTP ${response.status()}`);
+    if (actions.includes("archive"))
+      await ensureArchiveCapacity(
+        auth.request,
+        url,
+        iterations,
+        profiles.length,
+        actions.includes("next_email"),
+      );
     storageState = await auth.storageState();
   } finally {
     await auth.close();
@@ -177,7 +186,7 @@ try {
           const network = trackNetwork(page);
           await page.goto(url.href, { waitUntil: "domcontentloaded" });
           const initial = await waitPaint(page);
-          const index = ((iteration + 2) * 7) % 50;
+          const index = sampleRowIndex(iteration);
           if (action === "cold_start") sample.ms = initial;
           else if (action === "inbox_load") {
             await page.reload({ waitUntil: "domcontentloaded" });

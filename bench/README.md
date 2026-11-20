@@ -60,6 +60,15 @@ to 15, limited to 1–100, plus exactly two discarded warmups for each action/pr
 Archive is therefore bounded to 102 mutations per profile. Each failure is recorded
 and later actions continue; the process exits nonzero if any sample failed.
 
+When archive is selected, an untimed authenticated HTTP preflight paginates
+`GET /api/messages?view=l1&limit=75` using `cursor` / `nextCursor`, counting distinct
+`messages[].threadId` values. It rejects runs whose aggregate archive attempts
+across all selected profiles (including warmups), plus rows reserved for varied
+selection and next-email, exceed the available Important inbox. Lower iterations,
+select fewer profiles, or reseed if rejected. Other builds must implement this
+read-only pagination contract as well as login; non-archive runs skip the check.
+Counting stops once sufficient inventory is proven; it never archives during setup.
+
 `results.json` contains metadata (URL, label, date, browser, host CPU/RAM/OS,
 network conditions, selectors, timeout), individual samples, warmups, and failures.
 Each sample also records HTTP request count and transferred bytes during its exact
