@@ -608,9 +608,7 @@ impl Repository {
             messages.push(value);
         }
         drop(rows);
-        let accounts = sqlx::query("select id,provider,email,display_name,status,last_synced_at from accounts order by created_at").fetch_all(&mut *connection).await?.iter().map(|row| json!({
-            "id":row.get::<Uuid,_>("id"),"provider":row.get::<String,_>("provider"),"email":row.get::<String,_>("email"),"displayName":row.get::<String,_>("display_name"),"status":row.get::<String,_>("status"),"lastSyncedAt":date(row,"last_synced_at")
-        })).collect();
+        let accounts = account_values(&mut *connection).await?;
         if ids.is_none() {
             cache.entries.clear();
         }

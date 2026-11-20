@@ -394,6 +394,7 @@ impl Providers {
             .bind(row.get::<Uuid, _>("id"))
             .execute(&mut *tx)
             .await?;
+        crate::live::notify_changed(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }

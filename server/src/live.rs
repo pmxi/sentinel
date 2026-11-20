@@ -564,10 +564,7 @@ mod tests {
             matches!(&*updates.borrow_and_update(), Update::Changed { inventory, .. } if inventory.accounts.len() == 1)
         );
         let mut tx = worker.0.begin().await.unwrap();
-        sqlx::query("update accounts set display_name='Rolled back'")
-            .execute(&mut *tx)
-            .await
-            .unwrap();
+        sent_core::live::notify_changed(&mut *tx).await.unwrap();
         tx.rollback().await.unwrap();
         assert!(
             tokio::time::timeout(Duration::from_millis(350), updates.changed())

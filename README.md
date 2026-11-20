@@ -556,8 +556,9 @@ subsequent API request. Logout revocations are kept in memory until JWT expiry
 and shared through an expiry-pruned SQLite revocation table. Only opaque session
 keys and expiry times are stored, not cookies or credentials.
 
-Rust ingest/sync, classification, outbox results and API writes are observed
-directly through their committed transactions. Each server holds a dedicated SQLite
+Rust ingest/sync, classification, outbox results and API writes record incremental
+changes in `sent_live_changes` within their mutation transactions. Account changes
+can request a full inventory through `live::notify_changed`. Each server holds a dedicated SQLite
 connection and polls `PRAGMA data_version` every 150 ms, so commits by the separate
 worker process also wake connected clients. Rolled-back transactions do not
 signal. The server reconnects on database errors, coalesces bursts for
