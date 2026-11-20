@@ -368,13 +368,9 @@ function Reader({
   // Do not expose actions for the selected fallback while the newest reply is loading.
   const message = readerLoading ? undefined : orderedMessages.at(-1);
   const conversation = orderedMessages.slice(0, -1);
-  const {
-    mutate: performAction,
-    isPending: actionPending,
-    error: actionError,
-  } = useMutation({
+  const actionOptions = {
     mutationFn: ({ id, action }: { id: string; action: string }) => sentApi.action(id, action),
-    onSuccess: (_result, { id, action }) => {
+    onSuccess: (_result: unknown, { id, action }: { id: string; action: string }) => {
       const updateMessage = (item: MessageDetail): MessageDetail => {
         if (item.id !== id) return item;
         if (action === "mark_read" || action === "mark_unread")
@@ -397,7 +393,13 @@ function Reader({
       void queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
       void queryClient.invalidateQueries({ queryKey: ["search"] });
     },
-  });
+  };
+  const {
+    mutate: performAction,
+    isPending: actionPending,
+    error: actionError,
+  } = useMutation(actionOptions);
+  const { mutate: markRead } = useMutation(actionOptions);
   const tier = useMutation({
     mutationFn: (value: Tier) => sentApi.tier(message?.id ?? messageId, value),
     onSuccess: () => {
@@ -505,9 +507,9 @@ function Reader({
     for (const item of visible) {
       if (openedMessages.current.has(item.id)) continue;
       openedMessages.current.add(item.id);
-      if (!item.read) performAction({ id: item.id, action: "mark_read" });
+      if (!item.read) markRead({ id: item.id, action: "mark_read" });
     }
-  }, [thread.data, thread.isError, detail.data, performAction]);
+  }, [thread.data, thread.isError, detail.data, markRead]);
   useEffect(() => {
     if (!thread.data || scrolledToNewest.current || !newestRef.current) return;
     scrolledToNewest.current = true;
