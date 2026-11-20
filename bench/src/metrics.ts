@@ -37,6 +37,7 @@ export type Sample = {
   requests?: number | null;
   transferredBytes?: number | null;
   error?: string;
+  evidence?: string;
 };
 export type Results = {
   metadata: {
@@ -50,6 +51,8 @@ export type Results = {
     warmups: number;
     selectors: Selectors;
     timeoutMs: number;
+    actions?: string[];
+    diagnostics?: boolean;
   };
   samples: Sample[];
   failures: Sample[];

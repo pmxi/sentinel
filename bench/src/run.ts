@@ -4,6 +4,7 @@ import { resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { type BrowserContext, chromium, type Page } from "playwright";
 import { SEARCH_TERMS } from "./data.ts";
+import { installDiagnostics } from "./diagnostics.ts";
 import {
   ACTIONS,
   DEFAULT_SELECTORS,
@@ -25,6 +26,8 @@ const { values } = parseArgs({
     iterations: { type: "string", default: "15" },
     selectors: { type: "string" },
     out: { type: "string" },
+    actions: { type: "string", default: ACTIONS.join(",") },
+    diagnostics: { type: "boolean", default: false },
   },
 });
 if (!values.url) throw new Error("--url is required");
@@ -36,6 +39,9 @@ const iterations = Number(values.iterations);
 if (!Number.isInteger(iterations) || iterations < 1 || iterations > 100)
   throw new Error("--iterations must be 1..100 (archive safety bound)");
 const profiles = [...new Set(values.profiles.split(","))];
+const actions = [...new Set(values.actions.split(","))];
+if (actions.some((action) => !ACTIONS.some((known) => known === action)))
+  throw new Error("Unknown action");
 if (!profiles.length || profiles.some((p) => !(p in PROFILES)))
   throw new Error("Unknown network profile");
 const selectors = { ...DEFAULT_SELECTORS };
@@ -96,6 +102,8 @@ const results: Results = {
     warmups: 2,
     selectors,
     timeoutMs: timeout,
+    actions,
+    diagnostics: values.diagnostics,
   },
   samples: [],
   failures: [],
@@ -145,7 +153,7 @@ const newPage = async (context: BrowserContext, profile: Profile) => {
 };
 try {
   for (const profile of profiles as Profile[]) {
-    for (const action of ACTIONS) {
+    for (const action of ACTIONS.filter((action) => actions.includes(action))) {
       for (let iteration = -2; iteration < iterations; iteration++) {
         const sample: Sample = {
           profile,
@@ -157,6 +165,7 @@ try {
           transferredBytes: null,
         };
         let context: BrowserContext | undefined;
+        let capture: ((prefix: string) => Promise<void>) | undefined;
         try {
           context = await browser.newContext({
             storageState,
@@ -164,6 +173,7 @@ try {
             serviceWorkers: "block",
           });
           const page = await newPage(context, profile);
+          if (values.diagnostics) capture = await installDiagnostics(page, selectors);
           const network = trackNetwork(page);
           await page.goto(url.href, { waitUntil: "domcontentloaded" });
           const initial = await waitPaint(page);
@@ -201,6 +211,15 @@ try {
             "[redacted]",
           );
           results.failures.push(sample);
+          if (capture) {
+            const prefix = resolve(out, `${profile}-${action}-${iteration}`);
+            try {
+              await capture(prefix);
+              sample.evidence = `${profile}-${action}-${iteration}`;
+            } catch (captureError) {
+              console.error(`Diagnostic capture failed: ${String(captureError)}`);
+            }
+          }
           console.error(`${profile}/${action}/${iteration}: ${sample.error}`);
         } finally {
           await context?.close();

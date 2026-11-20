@@ -72,6 +72,18 @@ packet-level wire meter, and cache/header accounting follows Chromium/Playwright
 `summary.md` reports successful measured samples as median (p95), in milliseconds,
 using linearly interpolated percentiles. Compare prints B/A ratios; below 1 is faster.
 
+For focused reproduction, `--actions archive --profiles far,mobile --iterations 10`
+runs only archive samples. `--diagnostics` saves a screenshot and JSON evidence
+for each failed sample (including warmups), linked by its `evidence` field. JSON
+includes reader/body readiness, selected row, focus, visible row subjects and DOM
+transitions, plus timestamped HTTP requests/responses and mail state. Evidence
+contains the target build's mail data: use fake benchmark data only. Diagnostic
+collection adds overhead; leave it off for comparison baselines.
+
+Tracked baselines live under `bench/baselines/`; transient `bench/results/` remains
+ignored. The Node+React baseline and archive-timeout diagnosis are in
+[`baselines/node-react-2026-11-20/`](baselines/node-react-2026-11-20/).
+
 ## What is measured
 
 A capturing in-page listener records the triggering keydown/click/submit's
