@@ -1,0 +1,27 @@
+{
+  "name": "@sent/bench",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.21.0",
+  "scripts": {
+    "seed": "cd .. && tsx bench/src/seed-sqlite.ts",
+    "run": "cd .. && tsx bench/src/run.ts",
+    "compare": "cd .. && tsx bench/src/compare.ts",
+    "lint": "biome check src test",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "dotenv": "17.4.2",
+    "pg": "8.23.1",
+    "playwright": "1.58.2"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.7",
+    "@types/node": "^26.2.0",
+    "@types/pg": "^8.15.0",
+    "tsx": "^4.20.0",
+    "typescript": "~6.0.2",
+    "vitest": "5.1.1"
+  }
+}
