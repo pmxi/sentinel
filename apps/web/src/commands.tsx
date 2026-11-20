@@ -176,6 +176,14 @@ function CommandPalette({ commands, close }: { commands: Command[]; close(): voi
   );
   const available = results.filter((command) => !command.disabled);
   const selected = available[active] ?? available[0];
+  const restoreFocus = useCallback(() => {
+    // Restore the editing caret only after removal from the modal top layer.
+    window.requestAnimationFrame(() => {
+      if (dialog.current?.open || !origin.current?.isConnected) return;
+      origin.current.blur();
+      origin.current.focus();
+    });
+  }, []);
   useEffect(() => {
     const element = dialog.current;
     origin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -185,23 +193,23 @@ function CommandPalette({ commands, close }: { commands: Command[]; close(): voi
     return () => {
       if (element?.open) {
         element.close();
-        origin.current?.focus();
+        restoreFocus();
       }
     };
-  }, []);
+  }, [restoreFocus]);
   useEffect(() => {
     if (selected)
       document.getElementById(`command-${selected.id}`)?.scrollIntoView({ block: "nearest" });
   }, [selected]);
-  const dismiss = () => {
+  const dismiss = (restore = true) => {
     dialog.current?.close();
-    origin.current?.focus();
     close();
+    if (restore) restoreFocus();
   };
   const execute = (command: Command) => {
     if (command.disabled) return;
     // Restore focus before an action deliberately focuses search/composer.
-    dismiss();
+    dismiss(false);
     command.run();
   };
   return (
@@ -244,7 +252,7 @@ function CommandPalette({ commands, close }: { commands: Command[]; close(): voi
         <header className="command-heading">
           <CommandIcon size={16} />
           <h2 id="command-title">Commands & shortcuts</h2>
-          <button onClick={dismiss} aria-label="Close command palette">
+          <button onClick={() => dismiss()} aria-label="Close command palette">
             <kbd>Esc</kbd>
           </button>
         </header>
