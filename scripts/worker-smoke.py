@@ -15,13 +15,12 @@ import urllib.request
 import urllib.parse
 
 ROOT = Path(__file__).resolve().parents[1]
-RUST = ROOT
 DIRECTORY = tempfile.TemporaryDirectory(prefix="sent-worker-smoke-")
 DATABASE = str(Path(DIRECTORY.name) / "sent.sqlite")
 SECRET = "sent-worker-smoke-local-session-secret-only"
 ENV = {**os.environ, "SENT_DATABASE_PATH": DATABASE, "SENT_FAKE_PROVIDERS": "true", "OPENAI_API_KEY": "",
        "SESSION_SECRET": SECRET, "SENT_PASSWORD_HASH": "unused-with-test-bearer", "HOST": "127.0.0.1", "PORT": "3199"}
-LOGS = RUST / "parity-logs"
+LOGS = ROOT / "parity-logs"
 LOGS.mkdir(exist_ok=True)
 
 
@@ -62,14 +61,14 @@ def until(check, seconds=45):
     raise AssertionError("Timed out waiting for worker state")
 
 
-subprocess.run([str(RUST / "target/release/sent-seed"), "--reset"], cwd=ROOT, env=ENV, check=True)
+subprocess.run([str(ROOT / "target/release/sent-seed"), "--reset"], cwd=ROOT, env=ENV, check=True)
 processes = []
 handles = []
 try:
     for binary in ("sent-server", "sent-worker"):
         handle = (LOGS / (binary + "-smoke.log")).open("w")
         handles.append(handle)
-        processes.append(subprocess.Popen([str(RUST / "target/release" / binary)], cwd=ROOT, env=ENV, stdout=handle, stderr=handle))
+        processes.append(subprocess.Popen([str(ROOT / "target/release" / binary)], cwd=ROOT, env=ENV, stdout=handle, stderr=handle))
     health = until(lambda: (value if (value := request("/api/health"))["status"] == "ok" and value["sync"]["fresh"] else None))
     age = time.time() - __import__("datetime").datetime.fromisoformat(health["workerHeartbeat"].replace("Z", "+00:00")).timestamp()
     assert age < 35

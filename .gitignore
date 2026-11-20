@@ -10,6 +10,5 @@ playwright-report
 test-results
 *.log
 data
-apps/web/src/assets/
 /target/
 /parity-logs/
