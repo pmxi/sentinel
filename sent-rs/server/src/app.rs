@@ -246,9 +246,7 @@ pub fn router(state: Shared) -> Router {
         )
         .route("/api/oauth/{provider}/start", get(oauth_start))
         .route("/api/oauth/{provider}/callback", get(oauth_callback))
-        .fallback_service(
-            ServeDir::new(&root).not_found_service(ServeFile::new(root.join("index.html"))),
-        )
+        .fallback_service(ServeDir::new(&root).fallback(ServeFile::new(root.join("index.html"))))
         .layer(DefaultBodyLimit::max(25 * 1024 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), protect))
         .with_state(state)
@@ -730,6 +728,64 @@ async fn oauth_callback(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn spa_routes_return_index_with_ok_status_and_preserve_api_boundaries() {
+        let root = std::env::temp_dir().join(format!("sent-spa-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("assets")).unwrap();
+        std::fs::write(root.join("index.html"), "<main>Sent</main>").unwrap();
+        std::fs::write(root.join("assets/app.css"), "body { color: black; }").unwrap();
+        let mut config = Config::from_env().unwrap();
+        config.web_dist_path = root.clone();
+        config.session_secret = Some("test-session-secret-at-least-32-characters".into());
+        let token = auth::session(config.session_secret.as_deref().unwrap()).unwrap();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/sent_test_unused")
+            .unwrap();
+        let app = router(Arc::new(State::new(config, Repository(pool))));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let http = reqwest::Client::new();
+        for path in ["/", "/settings", "/inbox/l1", "/search?q=hello"] {
+            let response = http.get(format!("{base}{path}")).send().await.unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            assert_eq!(response.headers()[header::CONTENT_TYPE], "text/html");
+            assert_eq!(response.text().await.unwrap(), "<main>Sent</main>");
+        }
+        let response = http.head(format!("{base}/settings")).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(response.bytes().await.unwrap().is_empty());
+        let response = http
+            .get(format!("{base}/assets/app.css"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.text().await.unwrap(), "body { color: black; }");
+        let response = http
+            .get(format!("{base}/api/missing"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let response = http
+            .get(format!("{base}/api/missing"))
+            .bearer_auth(&token)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(
+            response.json::<Value>().await.unwrap(),
+            json!({"error":"Not found"})
+        );
+        std::fs::remove_file(root.join("index.html")).unwrap();
+        let response = http.get(format!("{base}/settings")).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        server.abort();
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[tokio::test]
     async fn middleware_preserves_api_html_and_auth_boundaries() {
