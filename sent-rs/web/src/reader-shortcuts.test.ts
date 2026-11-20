@@ -91,6 +91,7 @@ async function reader(
   accountId?: string,
   pending?: { detail: Promise<MessageDetail>; thread: Promise<{ messages: MessageDetail[] }> },
   configure?: (client: QueryClient) => void,
+  readySelector?: string,
 ) {
   const item = { ...message, read };
   vi.spyOn(sentApi, "session").mockResolvedValue({ authenticated: true });
@@ -124,7 +125,8 @@ async function reader(
   await vi.waitFor(() =>
     expect(
       container.querySelector(
-        empty ? ".empty-list" : pending ? ".conversation-heading h2" : ".email-body",
+        readySelector ??
+          (empty ? ".empty-list" : pending ? ".conversation-heading h2" : ".email-body"),
       ),
     ).not.toBeNull(),
   );
@@ -137,6 +139,53 @@ function press(key: string) {
 }
 
 describe("reader triage shortcuts", () => {
+  it.each([404, 500])(
+    "ends loading when an uncached message fails with %s and has no thread ID",
+    async (status) => {
+      const request = deferred<MessageDetail>();
+      const container = await reader(
+        true,
+        false,
+        "l1",
+        undefined,
+        undefined,
+        () => {
+          vi.mocked(sentApi.messages).mockResolvedValue({ messages: [], nextCursor: null });
+          vi.mocked(sentApi.message).mockReturnValue(request.promise);
+        },
+        ".reader",
+      );
+      expect(container.querySelector(".reader-skeleton")).not.toBeNull();
+      request.reject(new Error(status === 404 ? "Message not found" : "Request failed"));
+      await vi.waitFor(() => expect(container.textContent).toContain("Message unavailable."));
+      expect(container.querySelector(".reader-skeleton")).toBeNull();
+      expect(sentApi.thread).not.toHaveBeenCalled();
+      expect(press("e").defaultPrevented).toBe(false);
+    },
+  );
+  it("keeps an uncached message loading until detail supplies its thread ID", async () => {
+    const request = deferred<MessageDetail>();
+    const container = await reader(
+      true,
+      false,
+      "l1",
+      undefined,
+      undefined,
+      () => {
+        vi.mocked(sentApi.messages).mockResolvedValue({ messages: [], nextCursor: null });
+        vi.mocked(sentApi.message).mockReturnValue(request.promise);
+      },
+      ".reader",
+    );
+    expect(container.querySelector(".reader-skeleton")).not.toBeNull();
+    expect(container.textContent).not.toContain("Message unavailable.");
+    expect(sentApi.thread).not.toHaveBeenCalled();
+    request.resolve({ ...message, read: true });
+    await vi.waitFor(() =>
+      expect(container.querySelector(".email-body")?.textContent).toContain(message.textBody),
+    );
+    expect(sentApi.thread).toHaveBeenCalledWith(message.threadId, false, expect.any(AbortSignal));
+  });
   it("resumes polling an untouched prefetched read conversation after the quiet window", async () => {
     vi.useFakeTimers();
     const item = { ...message, read: true };

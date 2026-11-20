@@ -454,7 +454,13 @@ function Reader(props: {
   const orderedMessages = createMemo(
     () => thread.data?.messages ?? (detail.data ? [detail.data] : []),
   );
-  const readerLoading = createMemo(() => !thread.data && !detail.data && !hasShownFallback());
+  const readerLoading = createMemo(
+    () =>
+      !thread.data &&
+      !detail.data &&
+      !hasShownFallback() &&
+      (detail.isPending || (Boolean(threadId()) && thread.isPending)),
+  );
   const headerOnly = createMemo(() => detail.isPlaceholderData && !thread.data);
   // Do not expose actions for the selected fallback while the newest reply is loading.
   const message = createMemo(() => (readerLoading() ? undefined : orderedMessages().at(-1)));
