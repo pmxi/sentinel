@@ -230,7 +230,9 @@ Production builds include a hand-written service worker (HTTPS or localhost only
 It verifies and precaches `index.html` and hashed assets, serves only this static
 shell cache-first, and never intercepts `/api/*`. Build-content hashes version the
 cache; activation deletes older shell caches and claims clients. Controlled tabs
-reload once when a new worker activates. Startup and returning to a visible tab
+reload once when a new worker activates, unless a composer is open. Updates flush
+pending draft text and wait until the composer closes, retaining in-memory
+attachments; failed saves leave it open for retry. Startup and returning to a visible tab
 check for updates with the worker HTTP cache bypassed. HTML network responses
 remain `no-cache`; `sw.js` is `no-store` and ignores conditional validators so
 even equal-sized builds published within one filesystem timestamp activate.

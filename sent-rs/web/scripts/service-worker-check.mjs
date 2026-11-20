@@ -157,9 +157,21 @@ try {
   console.log("PASS offline reload renders the shell; APIs remain network-only");
   await context.setOffline(false);
   await page.locator("button.message-row").first().waitFor();
+  await page.getByRole("button", { name: "Compose", exact: true }).click();
+  const composer = page.getByRole("dialog", { name: "Compose message" });
+  await composer.getByPlaceholder("Subject", { exact: true }).fill("Update-safe composition");
+  await composer.getByPlaceholder("Message", { exact: true }).fill("Pending draft text");
+  await composer.locator('input[type="file"]').setInputFiles({
+    name: "keep.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("keep this attachment"),
+  });
+  await composer.locator(".file-chips").getByText("keep.txt").waitFor();
+  await page.evaluate(() => {
+    window.__beforeUpdateController = navigator.serviceWorker.controller;
+  });
   await rename(active, join(output, "previous"));
   await rename(next, active);
-  const navigation = page.waitForEvent("framenavigated", (frame) => frame === page.mainFrame());
   await page
     .evaluate(async () => {
       await (await navigator.serviceWorker.getRegistration()).update();
@@ -167,6 +179,15 @@ try {
     .catch((error) => {
       if (!error.message.includes("Execution context was destroyed")) throw error;
     });
+  await page.waitForFunction(
+    () => navigator.serviceWorker.controller !== window.__beforeUpdateController,
+  );
+  assert(await composer.isVisible());
+  assert(await composer.locator(".file-chips").getByText("keep.txt").isVisible());
+  assert.equal(await page.locator('meta[name="sent-build-check"]').count(), 0);
+  await composer.getByPlaceholder("Message", { exact: true }).fill("Latest text just before close");
+  const navigation = page.waitForEvent("framenavigated", (frame) => frame === page.mainFrame());
+  await composer.getByRole("button", { name: "Close composer" }).click();
   await navigation;
   await page.locator('meta[name="sent-build-check"][content="b"]').waitFor({ state: "attached" });
   await page.locator("button.message-row").first().waitFor();
@@ -174,6 +195,15 @@ try {
   assert.equal(second.length, 1);
   assert.notEqual(second[0], first[0]);
   console.log("PASS new build activates, reloads the controlled tab and removes the old cache");
+  const restored = await context.request.get(`${url}/api/drafts`);
+  const savedDraft = (await restored.json()).drafts.find(
+    (draft) => draft.subject === "Update-safe composition",
+  );
+  assert(savedDraft);
+  assert.equal(savedDraft.body, "Latest text just before close");
+  console.log(
+    "PASS update retains open composer attachments and flushes pending text before deferred reload",
+  );
   await context.clearCookies();
   await page.locator('a[href="/inbox/l2"]').click();
   await page.getByLabel("Password").waitFor();
