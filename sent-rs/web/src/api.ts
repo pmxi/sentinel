@@ -7,6 +7,7 @@ import type {
   SearchResponse,
   Tier,
 } from "@sent/shared";
+import { forgetShellMetadata, UNAUTHORIZED_EVENT } from "./shell-metadata";
 
 export class ApiError extends Error {
   readonly status: number;
@@ -32,6 +33,10 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.set("content-type", "application/json");
   const response = await fetch(path, { ...init, headers, credentials: "same-origin" });
   if (!response.ok) {
+    if (response.status === 401 && path !== "/api/auth/login") {
+      forgetShellMetadata();
+      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+    }
     const payload = (await response.json().catch(() => ({ error: response.statusText }))) as {
       error?: string;
     };

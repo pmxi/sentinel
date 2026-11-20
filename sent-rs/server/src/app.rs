@@ -282,15 +282,22 @@ pub fn router(state: Shared) -> Router {
         .with_state(state)
 }
 
-async fn static_headers(request: Request, next: Next) -> Response {
+async fn static_headers(mut request: Request, next: Next) -> Response {
     let api = request.uri().path().starts_with("/api/");
     let asset = request.uri().path().starts_with("/assets/");
+    let worker = request.uri().path() == "/sw.js";
+    if worker {
+        request.headers_mut().remove(header::IF_MODIFIED_SINCE);
+        request.headers_mut().remove(header::IF_NONE_MATCH);
+    }
     let mut response = next.run(request).await;
     if !api && (response.status().is_success() || response.status() == StatusCode::NOT_MODIFIED) {
         response
             .headers_mut()
             .entry(header::CACHE_CONTROL)
-            .or_insert(if asset {
+            .or_insert(if worker {
+                "no-store".parse().unwrap()
+            } else if asset {
                 "public, max-age=31536000, immutable".parse().unwrap()
             } else {
                 "no-cache".parse().unwrap()
@@ -865,6 +872,7 @@ mod tests {
         }
         std::fs::write(root.join("assets/raw-abcdefgh.js"), CONTENT).unwrap();
         std::fs::write(root.join("assets/empty-abcdefgh.js"), b"").unwrap();
+        std::fs::write(root.join("sw.js"), "old worker generation").unwrap();
         let mut config = Config::from_env().unwrap();
         config.web_dist_path = root.clone();
         config.session_secret = Some("test-session-secret-at-least-32-characters".into());
@@ -876,6 +884,31 @@ mod tests {
         let base = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let http = reqwest::Client::new();
+        let modified = std::fs::metadata(root.join("sw.js"))
+            .unwrap()
+            .modified()
+            .unwrap();
+        let previous = http
+            .get(format!("{base}/sw.js"))
+            .send()
+            .await
+            .unwrap()
+            .headers()[header::LAST_MODIFIED]
+            .clone();
+        std::fs::write(root.join("sw.js"), "new worker generation").unwrap();
+        std::fs::File::open(root.join("sw.js"))
+            .unwrap()
+            .set_modified(modified)
+            .unwrap();
+        let worker = http
+            .get(format!("{base}/sw.js"))
+            .header(header::IF_MODIFIED_SINCE, previous)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(worker.status(), StatusCode::OK);
+        assert_eq!(worker.headers()[header::CACHE_CONTROL], "no-store");
+        assert_eq!(worker.text().await.unwrap(), "new worker generation");
         for (accept, encoding, bytes) in [
             ("br, gzip", Some("br"), BROTLI),
             ("gzip", Some("gzip"), GZIP),

@@ -2,6 +2,7 @@ import { Navigate, Route, Router } from "@solidjs/router";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { render } from "solid-js/web";
 import App, { DraftsPage, InboxRoute, SearchRoute, SettingsRoute } from "./App";
+import { registerShellWorker } from "./service-worker";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -26,3 +27,7 @@ render(
   ),
   root,
 );
+if (import.meta.env.PROD) {
+  if (document.readyState === "complete") void registerShellWorker();
+  else window.addEventListener("load", () => void registerShellWorker(), { once: true });
+}
