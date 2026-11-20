@@ -162,18 +162,19 @@ if [[ "$release" != "$saved_previous" ]]; then
   (
     trap - ERR
     cd "$release"
-    rs=sent-rs
-    [[ -f "$rs/Cargo.toml" ]] || rs=.
-    migrations=$rs/migrations
+    # Commits from before the move to the repository root kept the Rust build in sent-rs/.
+    rs=
+    if [[ -f sent-rs/Cargo.toml ]]; then rs=sent-rs/; fi
+    migrations=migrations
     [[ -d "$migrations" ]] || migrations=packages/core/src/db/migrations
-    cargo build --release --locked --manifest-path "$rs/Cargo.toml" --target-dir "$ROOT/cargo-target" --bin sent-server --bin sent-worker
+    cargo build --release --locked --manifest-path "${rs}Cargo.toml" --target-dir "$ROOT/cargo-target" --bin sent-server --bin sent-worker
     mkdir -p bin
     cp "$ROOT/cargo-target/release/sent-server" "$ROOT/cargo-target/release/sent-worker" bin/
-    if [[ -f pnpm-workspace.yaml && "$rs" != . ]]; then pnpm install --frozen-lockfile; fi
-    pnpm --dir "$rs/web" install --frozen-lockfile
-    NODE_ENV=production pnpm --dir "$rs/web" build
-    [[ -f "$rs/web/dist/index.html" && -d "$migrations" ]]
-    printf 'WEB_DIST_PATH=%s\nMIGRATIONS_PATH=%s\n' "$release/$rs/web/dist" "$release/$migrations" >runtime.env
+    if [[ -n "$rs" ]]; then pnpm install --frozen-lockfile; fi
+    pnpm --dir "${rs}web" install --frozen-lockfile
+    NODE_ENV=production pnpm --dir "${rs}web" build
+    [[ -f "${rs}web/dist/index.html" && -d "$migrations" ]]
+    printf 'WEB_DIST_PATH=%s\nMIGRATIONS_PATH=%s\n' "$release/${rs}web/dist" "$release/$migrations" >runtime.env
   )
 fi
 for unit in sent-server.service sent-worker.service sent-deploy.service sent-deploy.timer; do

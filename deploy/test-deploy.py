@@ -38,15 +38,14 @@ def main():
         shutil.copy(SOURCE.parent / "sent-run", work / "deploy" / "sent-run")
         (work / "deploy" / "systemd").mkdir()
         (work / "deploy" / "systemd" / "sent-server.service").write_text("[Service]\n")
-        (work / "sent-rs" / "web").mkdir(parents=True)
-        (work / "sent-rs" / "Cargo.toml").write_text("[workspace]\n")
-        (work / "packages" / "core" / "src" / "db" / "migrations").mkdir(parents=True)
-        (work / "packages" / "core" / "src" / "db" / "migrations" / "0001.sql").write_text("select 1;\n")
-        (work / "pnpm-workspace.yaml").write_text("packages: []\n")
+        (work / "web").mkdir()
+        (work / "Cargo.toml").write_text("[workspace]\n")
+        (work / "migrations").mkdir()
+        (work / "migrations" / "0001.sql").write_text("select 1;\n")
         units = base / "units"
         calls = base / "calls"
         for name, body in {
-            "pnpm": 'printf "pnpm %s\\n" "$*" >> "$TEST_CALLS"\nif [[ "$*" == "--dir sent-rs/web build" ]]; then\n  [[ "$NODE_ENV" == production ]]\n  mkdir -p sent-rs/web/dist && printf ok > sent-rs/web/dist/index.html\nfi\n',
+            "pnpm": 'printf "pnpm %s\\n" "$*" >> "$TEST_CALLS"\nif [[ "$*" == "--dir web build" ]]; then\n  [[ "$NODE_ENV" == production ]]\n  mkdir -p web/dist && printf ok > web/dist/index.html\nfi\n',
             "cargo": 'printf "cargo %s\\n" "$*" >> "$TEST_CALLS"\n[[ "$CARGO_HOME" == "$SENT_DEPLOY_TOOLS/cargo" ]]\nfor arg; do case "$arg" in */cargo-target) target=$arg;; esac; done\nmkdir -p "$target/release"\nfor bin in sent-server sent-worker; do printf "#!/bin/sh\\n" > "$target/release/$bin"; chmod 700 "$target/release/$bin"; done\n',
             "pg_dump": '[[ "$PGPASSWORD" == "fake@password" && "$PGSSLMODE" == verify-full && "$PGSSLROOTCERT" == /fake/root.crt && "$PGSSLCERT" == /fake/client.crt && "$PGSSLKEY" == /fake/client.key ]]\nprintf "dump\\n" >> "$TEST_CALLS"\nfor arg; do case "$arg" in --file=*) printf fake > "${arg#--file=}";; esac; done\n',
             "systemctl": 'printf "systemctl %s\\n" "$*" >> "$TEST_CALLS"\n',
@@ -130,7 +129,7 @@ def main():
             release = root / "releases" / first
             assert (release / "bin" / "sent-server").exists() and (release / "bin" / "sent-worker").exists()
             assert (release / "runtime.env").read_text() == (
-                f"WEB_DIST_PATH={release}/sent-rs/web/dist\nMIGRATIONS_PATH={release}/packages/core/src/db/migrations\n")
+                f"WEB_DIST_PATH={release}/web/dist\nMIGRATIONS_PATH={release}/migrations\n")
             assert (root / "bin" / "sent-run").exists() and (units / "sent-server.service").exists()
             print("PASS success deploy (legacy bootstrap, Rust build, dump before migrating restart, degraded health, self-update)")
             state["sync"] = True

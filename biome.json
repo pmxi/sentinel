@@ -2,7 +2,7 @@
   "$schema": "https://biomejs.dev/schemas/2.5.7/schema.json",
   "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "files": {
-    "includes": ["**", "!**/dist", "!**/node_modules", "!apps/web/public"]
+    "includes": ["**", "!**/dist", "!**/node_modules", "!target", "!parity-logs", "!web/public"]
   },
   "formatter": {
     "enabled": true,
