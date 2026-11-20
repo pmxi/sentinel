@@ -182,7 +182,7 @@ function MessageList({
     list.current
       ?.querySelectorAll<HTMLButtonElement>(".message-row")
       [index]?.scrollIntoView({ block: "nearest" });
-    if (selectedId) onSelect(message);
+    if (selectedId && selectedId !== message.id) onSelect(message);
   };
   useCommands("list", [
     {
