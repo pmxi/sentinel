@@ -100,7 +100,6 @@ const viewDetails: Record<
   }
 > = {
   inbox: { title: "Inbox" },
-  unclassified: { title: "Awaiting sorting" },
   all: { title: "All mail" },
   sent: { title: "Sent" },
   trash: { title: "Trash" },
@@ -168,19 +167,11 @@ export function InboxPage(props: { accounts: Account[] }) {
               error={messages.error?.message}
               selectedId={selectedId()}
               onSelect={select}
-              emptyTitle={
-                route.view === "unclassified"
-                  ? "Everything is sorted"
-                  : route.view === "trash"
-                    ? "Nothing in Trash"
-                    : "No conversations here"
-              }
+              emptyTitle={route.view === "trash" ? "Nothing in Trash" : "No conversations here"}
               emptyDescription={
-                route.view === "unclassified"
-                  ? "New mail will appear here while Sent finds its place."
-                  : route.view === "trash"
-                    ? "Deleted conversations will appear here."
-                    : "You're up to date. New mail will appear here."
+                route.view === "trash"
+                  ? "Deleted conversations will appear here."
+                  : "You're up to date. New mail will appear here."
               }
             />
           </section>

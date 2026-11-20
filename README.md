@@ -9,7 +9,7 @@ The repository contains a SolidJS client (`web/`), a Rust Axum API (`server/`), 
 - Gmail and Microsoft OAuth connection
 - Full mailbox backfill followed by 30-second incremental polling
 - Provider-native conversation IDs without cross-account thread merging
-- Inbox, Unclassified, All Mail, Sent, Drafts, and Trash views
+- Inbox, All Mail, Sent, Drafts, and Trash views
 - Read/unread, flag, archive, delete, send, reply, reply all, and forward
 - Sent-owned drafts and ordinary file attachments
 - Versioned OpenAI classification, one-line inbox summaries, and clean reader text with Markdown hyperlinks and strict `{ reasoning, summary, tier, plainText }` output
@@ -329,7 +329,7 @@ Sent supports up to 10 outgoing attachments totaling 20 MB per message. Microsof
 
 ## First import
 
-After connecting each account in Settings, the worker pages through the entire archive. Unarchived inbound messages remain visible in Inbox/Unclassified until classification completes, so an AI failure cannot hide mail. The worker classifies, generates reader text, and embeds newly synchronized messages once `OPENAI_API_KEY` is configured. The manual historical classify/embed commands belonged to the TypeScript build and have not been ported yet.
+After connecting each account in Settings, the worker pages through the entire archive. Unclassified mail remains visible without importance tint in Inbox and All Mail, so an AI failure cannot hide mail. The worker classifies, generates reader text, and embeds newly synchronized messages once `OPENAI_API_KEY` is configured. The manual historical classify/embed commands belonged to the TypeScript build and have not been ported yet.
 
 ## Production deployment
 
