@@ -1,5 +1,12 @@
 # Browser speed benchmark
 
+`warm_search_rare` and `warm_search_common` wait for replica rows and recent bodies
+outside timing. Within each action/profile they retain a browser context (OPFS and
+shell cache), but open and close a fresh document for each sample: application query
+caches therefore do not answer repeated searches. They measure the same submit-to-paint
+boundary as `search_*`. Original `search_*` still uses fresh contexts and blocks service
+workers. Reseed separately for matched baseline and candidate runs.
+
 Fake mail only. **Never run against production.** The seeder refuses database names
 that do not start with `sent_bench`; the browser runner can target any URL and does
 not have that protection. Archive changes data: reseed before every full run.
