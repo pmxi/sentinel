@@ -54,6 +54,49 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 const cleanups: (() => void)[] = [];
+it("disables reply and forward for local headers until the quoted body arrives", async () => {
+  const body = deferred<MessageDetail>(),
+    thread = deferred<{ messages: MessageDetail[] }>();
+  let client!: QueryClient;
+  const container = await reader(
+    true,
+    false,
+    "l1",
+    undefined,
+    { detail: body.promise, thread: thread.promise },
+    (value) => {
+      client = value;
+    },
+    ".conversation-heading h2",
+  );
+  thread.resolve({
+    messages: [
+      {
+        ...message,
+        read: true,
+        textBody: "",
+        plainText: null,
+        localBodyPending: true,
+      } as MessageDetail,
+    ],
+  });
+  await vi.waitFor(() =>
+    expect(
+      client.getQueryData<{ messages: (MessageDetail & { localBodyPending?: boolean })[] }>([
+        "thread",
+        "first-thread",
+        false,
+      ])?.messages[0]?.localBodyPending,
+    ).toBe(true),
+  );
+  const buttons = () => [...container.querySelectorAll<HTMLButtonElement>(".reply-actions button")];
+  expect(buttons().every((button) => button.disabled)).toBe(true);
+  client.setQueryData(["thread", "first-thread", false], {
+    messages: [{ ...message, read: true }],
+  });
+  body.resolve({ ...message, read: true });
+  await vi.waitFor(() => expect(buttons().every((button) => !button.disabled)).toBe(true));
+});
 afterEach(() => {
   localStorage.clear();
   for (const cleanup of cleanups.splice(0).reverse()) cleanup();

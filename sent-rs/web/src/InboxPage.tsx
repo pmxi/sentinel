@@ -645,7 +645,7 @@ function Reader(props: {
   const reply = (all = false) => {
     const item = message();
     const owner = account();
-    if (item && owner)
+    if (item && owner && !localBodyPending(item))
       compose.openCompose({
         ...replySeed(item, owner, all),
         onSent: props.advance,
@@ -654,7 +654,7 @@ function Reader(props: {
   };
   const forward = () => {
     const item = message();
-    if (!item) return;
+    if (!item || localBodyPending(item)) return;
     compose.openCompose({
       accountId: item.account.id,
       subject: item.subject.toLowerCase().startsWith("fwd:")
@@ -672,6 +672,7 @@ function Reader(props: {
       tier.isPending ||
       (!thread.data && !thread.isError),
   );
+  const cannotQuote = createMemo(() => unavailable() || localBodyPending(message()));
   useCommands("reader", () => [
     {
       id: "archive",
@@ -695,7 +696,7 @@ function Reader(props: {
       group: "Message",
       keys: ["r"],
       run: () => reply(),
-      disabled: unavailable() || !account(),
+      disabled: cannotQuote() || !account(),
     },
     {
       id: "reply-all",
@@ -703,7 +704,7 @@ function Reader(props: {
       group: "Message",
       keys: ["a"],
       run: () => reply(true),
-      disabled: unavailable() || !account(),
+      disabled: cannotQuote() || !account(),
     },
     {
       id: "forward",
@@ -711,7 +712,7 @@ function Reader(props: {
       group: "Message",
       keys: ["f"],
       run: forward,
-      disabled: unavailable(),
+      disabled: cannotQuote(),
     },
     {
       id: "read",
@@ -924,13 +925,13 @@ function Reader(props: {
                 <MessageAttachments message={current()} />
               </section>
               <div class="reply-actions">
-                <button disabled={unavailable()} onClick={() => reply()}>
+                <button disabled={cannotQuote()} onClick={() => reply()}>
                   Reply
                 </button>
-                <button disabled={unavailable()} onClick={() => reply(true)}>
+                <button disabled={cannotQuote()} onClick={() => reply(true)}>
                   Reply all
                 </button>
-                <button disabled={unavailable()} onClick={forward}>
+                <button disabled={cannotQuote()} onClick={forward}>
                   Forward
                 </button>
               </div>
