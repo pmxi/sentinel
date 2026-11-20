@@ -1,7 +1,7 @@
-# Sent Rust rewrite — stage 1
+# Sent Rust rewrite — stages 1–2
 
 This workspace is local-only. It does not change or start the existing TypeScript
-applications. The sync worker and Solid frontend are not part of this stage.
+applications. The Solid frontend is not part of these stages.
 
 ## Local setup
 
@@ -16,12 +16,15 @@ export SENT_PASSWORD_HASH="$(printf '%s' 'sent-local-dev-password' | pnpm -s sen
 cargo build --release --manifest-path sent-rs/Cargo.toml
 sent-rs/target/release/sent-seed --reset
 sent-rs/target/release/sent-server
+# In a second terminal with the same environment:
+sent-rs/target/release/sent-worker
 ```
 
 The API defaults to port 3000. Configuration uses the names in `.env.example`;
 `.env` is loaded without replacing exported variables. `WEB_DIST_PATH` can point
 to any built SPA, with `index.html` fallback. Its default is the existing web
-build, until the Solid application arrives. The server never starts a worker.
+build, until the Solid application arrives. The server never starts a worker;
+the worker is a separate process.
 `MIGRATIONS_PATH` optionally selects a directory of SQL migrations.
 
 The migration runner uses the original SQL files (not copies), advisory lock
@@ -44,7 +47,7 @@ decrypt the marker, so they fail before making authenticated provider requests;
 do not start the TS worker on the benchmark database. Fake mode returns local
 attachment bytes and disables OAuth connections. Sending still enqueues exactly
 the same durable mutation and removes the draft, as the TS API does; provider
-dispatch belongs to the later worker stage, not an inline HTTP request.
+dispatch is performed by the separate Rust worker, not an inline HTTP request.
 
 ## Checks
 
@@ -86,3 +89,45 @@ The validation port returns Zod-shaped errors for the original request schemas.
 Parity includes invalid UUIDs, enum values, pagination limits, search filters,
 tier/action bodies and draft addresses/lengths. It is not an exhaustive proof of
 all JavaScript coercion edge cases or every malformed HTTP transport input.
+
+## Rust worker
+
+`sent-worker` replaces pg-boss with a Tokio scheduler: account discovery every
+25 seconds (two syncs concurrently, one per account), backfill continuation after
+5 seconds, outbox processing every 10 seconds, and heartbeat `main` every 30
+seconds. Classification and embedding each have concurrency three and only get
+queued for changed messages when backfill was already complete and an OpenAI key
+is configured. Sync failures retry six times starting at 15 seconds; AI failures
+retry five times starting at 30 seconds, both exponentially. Each sync attempt
+expires after 30 minutes. Account status and classification failures are persisted.
+
+Pending jobs and retry deadlines are checkpointed in the existing
+`worker_state.metadata` JSON and restored on restart. A session advisory lock
+89372413 enforces a single Rust scheduler per database. Do not run a TS worker
+against that same mailbox concurrently. SIGINT/SIGTERM stop scheduling, drain
+active work for up to 30 seconds, and checkpoint remaining work. Outbox delivery
+continues to use the existing lease, retry and durable pre-send checkpoint: an
+ambiguous dispatch or lost completion must not cause an automatic resend.
+
+Fake mode never authenticates or calls either mail provider. Sync records success
+and backfill completion without importing messages; local sends create an
+outbound normalized message in the shared schema so it immediately appears in
+Sent. Actions retain the API's optimistic changes and complete their outbox rows.
+Completed rows are retained with status `complete`, exactly as in the TS outbox.
+
+Provider, normalization, strict OpenAI response/link validation, attachment upload
+and send-checkpoint tests use local wiremock HTTP servers, not real credentials.
+`worker_outbox` additionally exercises delivery recovery using the isolated test
+database. Run the reproducible server/worker smoke check on a fresh local DB:
+
+```sh
+docker exec sent-postgres-1 psql -U sent -d sent -c 'create database sent_test_worker'
+cargo build --release --manifest-path sent-rs/Cargo.toml
+SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_worker python3 sent-rs/scripts/worker-smoke.py
+```
+
+The smoke check resets only fixture accounts, starts both Rust binaries, checks
+healthy sync/heartbeat, waits for an undoable archive to complete, verifies a
+draft send appears in Sent, and shuts down the worker via SIGTERM. Logs are in
+the ignored `sent-rs/parity-logs/` directory. It needs Node and the existing TS
+workspace's `pg` dependency solely to inspect the outbox rows.

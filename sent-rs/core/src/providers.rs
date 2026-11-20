@@ -12,11 +12,46 @@ use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
+mod delivery;
+mod gmail;
+mod microsoft;
+pub use delivery::{OutgoingAttachment, OutgoingMessage};
+use gmail::response_json;
+
+#[derive(Clone)]
+pub struct Endpoints {
+    pub gmail: String,
+    pub graph: String,
+    pub google_token: String,
+    pub microsoft_token: String,
+}
+
+impl Endpoints {
+    pub fn production(tenant: &str) -> Self {
+        Self {
+            gmail: "https://gmail.googleapis.com/gmail/v1".into(),
+            graph: "https://graph.microsoft.com/v1.0".into(),
+            google_token: "https://oauth2.googleapis.com/token".into(),
+            microsoft_token: format!(
+                "https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token"
+            ),
+        }
+    }
+}
+
+pub struct SyncPage {
+    pub messages: Vec<crate::ingest::NormalizedMessage>,
+    pub deleted_provider_message_ids: Vec<String>,
+    pub next_cursor: Option<String>,
+    pub backfill_complete: bool,
+}
+
 #[derive(Clone)]
 pub struct Providers {
     config: Config,
     pool: PgPool,
     http: reqwest::Client,
+    endpoints: Endpoints,
 }
 
 pub struct Attachment {
@@ -27,10 +62,19 @@ pub struct Attachment {
 
 impl Providers {
     pub fn new(config: Config, pool: PgPool) -> Self {
+        let endpoints = Endpoints::production(&config.microsoft_tenant_id);
+        Self::with_endpoints(config, pool, endpoints)
+    }
+
+    pub fn with_endpoints(config: Config, pool: PgPool, endpoints: Endpoints) -> Self {
         Self {
             config,
             pool,
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(60))
+                .build()
+                .expect("HTTP client"),
+            endpoints,
         }
     }
 
@@ -47,7 +91,7 @@ impl Providers {
         let (email, display_name, credentials) = if provider == "gmail" {
             let mut tokens = self
                 .http
-                .post("https://oauth2.googleapis.com/token")
+                .post(&self.endpoints.google_token)
                 .form(&[
                     ("code", code),
                     ("grant_type", "authorization_code"),
@@ -98,10 +142,7 @@ impl Providers {
             let client = Config::required(&self.config.microsoft_client_id, "MICROSOFT_CLIENT_ID")?;
             let tokens = self
                 .http
-                .post(format!(
-                    "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
-                    self.config.microsoft_tenant_id
-                ))
+                .post(&self.endpoints.microsoft_token)
                 .form(&[
                     ("code", code),
                     ("grant_type", "authorization_code"),
@@ -223,9 +264,9 @@ impl Providers {
                     .context("Missing Gmail access token")?
                     .into());
             }
-            let tokens = self
+            let response = self
                 .http
-                .post("https://oauth2.googleapis.com/token")
+                .post(&self.endpoints.google_token)
                 .form(&[
                     ("grant_type", "refresh_token"),
                     (
@@ -247,10 +288,8 @@ impl Providers {
                     ),
                 ])
                 .send()
-                .await?
-                .error_for_status()?
-                .json::<Value>()
                 .await?;
+            let tokens = response_json(response).await?;
             let access = tokens["access_token"]
                 .as_str()
                 .context("Missing Gmail access token")?
@@ -290,12 +329,9 @@ impl Providers {
                 .as_object()
                 .and_then(|o| o.values().find(|r| r["home_account_id"] == home))
                 .context("Missing MSAL refresh token")?;
-            let tokens = self
+            let response = self
                 .http
-                .post(format!(
-                    "https://login.microsoftonline.com/{}/oauth2/v2.0/token",
-                    self.config.microsoft_tenant_id
-                ))
+                .post(&self.endpoints.microsoft_token)
                 .form(&[
                     ("grant_type", "refresh_token"),
                     (
@@ -317,10 +353,8 @@ impl Providers {
                     ),
                 ])
                 .send()
-                .await?
-                .error_for_status()?
-                .json::<Value>()
                 .await?;
+            let tokens = response_json(response).await?;
             let access = tokens["access_token"]
                 .as_str()
                 .context("Missing Graph access token")?

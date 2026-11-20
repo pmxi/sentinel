@@ -17,3 +17,12 @@ serde_json.workspace = true
 sqlx.workspace = true
 tokio.workspace = true
 uuid.workspace = true
+ammonia = "4"
+html2text = "0.14"
+mailparse = "0.16"
+regex = "1"
+sha2 = "0.10"
+lettre = { version = "0.11", default-features = false, features = ["builder"] }
+
+[dev-dependencies]
+wiremock = "0.6"
