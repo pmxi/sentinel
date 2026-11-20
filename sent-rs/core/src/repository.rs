@@ -18,6 +18,32 @@ pub struct ListInput {
     pub limit: Option<i64>,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ThreadActionInput {
+    pub action: String,
+    pub view: String,
+    pub account_id: Option<Uuid>,
+    pub undoable: bool,
+}
+
+fn message_view_condition(view: &str) -> &'static str {
+    match view {
+        "l1" => {
+            "not m.archived and m.direction='inbound' and (coalesce(c.manual_tier,c.model_tier)=1 or c.message_id is null)"
+        }
+        "l2" => {
+            "not m.archived and m.direction='inbound' and coalesce(c.manual_tier,c.model_tier)=2"
+        }
+        "l3" => {
+            "not m.archived and m.direction='inbound' and coalesce(c.manual_tier,c.model_tier)=3"
+        }
+        "unclassified" => "not m.archived and m.direction='inbound' and c.message_id is null",
+        "sent" => "m.direction='outbound' and not m.deleted",
+        _ => "true",
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 struct Cursor {
@@ -249,20 +275,7 @@ impl Repository {
         {
             bail!("Invalid request");
         }
-        let condition = match view {
-            "l1" => {
-                "not m.archived and m.direction='inbound' and (coalesce(c.manual_tier,c.model_tier)=1 or c.message_id is null)"
-            }
-            "l2" => {
-                "not m.archived and m.direction='inbound' and coalesce(c.manual_tier,c.model_tier)=2"
-            }
-            "l3" => {
-                "not m.archived and m.direction='inbound' and coalesce(c.manual_tier,c.model_tier)=3"
-            }
-            "unclassified" => "not m.archived and m.direction='inbound' and c.message_id is null",
-            "sent" => "m.direction='outbound'",
-            _ => "true",
-        };
+        let condition = message_view_condition(view);
         let cursor: Option<Value> = input
             .cursor
             .map(|s| -> Result<_> { Ok(serde_json::from_slice(&URL_SAFE_NO_PAD.decode(s)?)?) })
@@ -499,6 +512,59 @@ impl Repository {
         Ok(id)
     }
 
+    pub async fn enqueue_thread_action(
+        &self,
+        thread_id: Uuid,
+        input: &ThreadActionInput,
+        undo: Option<DateTime<Utc>>,
+    ) -> Result<Uuid> {
+        let field = match input.action.as_str() {
+            "archive" => "archived",
+            "delete" => "deleted",
+            _ => bail!("Invalid request"),
+        };
+        if !["l1", "l2", "l3", "unclassified", "all", "sent", "trash"]
+            .contains(&input.view.as_str())
+        {
+            bail!("Invalid request");
+        }
+        let mut tx = self.0.begin().await?;
+        let rows = sqlx::query(&format!("select m.id,m.account_id,m.archived,m.deleted from messages m left join classifications c on c.message_id=m.id where m.thread_id=$1 and not m.tombstone and m.deleted={} and {} and ($2::uuid is null or m.account_id=$2) order by m.id for update of m", input.view == "trash", message_view_condition(&input.view)))
+            .bind(thread_id).bind(input.account_id).fetch_all(&mut *tx).await?;
+        if rows.is_empty() {
+            bail!("Message not found");
+        }
+        let group_id = Uuid::new_v4();
+        let mut inserted = 0;
+        for row in rows {
+            let message_id: Uuid = row.get("id");
+            if sqlx::query("select id from mutation_outbox where message_id=$1 and action=$2 and status='pending'")
+                .bind(message_id).bind(&input.action).fetch_optional(&mut *tx).await?.is_some() {
+                continue;
+            }
+            let id = if inserted == 0 {
+                group_id
+            } else {
+                Uuid::new_v4()
+            };
+            let payload = json!({"groupId":group_id,"undoUntil":undo.map(timestamp),"previous":{"archived":row.get::<bool,_>("archived"),"deleted":row.get::<bool,_>("deleted")}});
+            sqlx::query("insert into mutation_outbox(id,idempotency_key,account_id,message_id,action,payload,next_attempt_at) values($1,$2,$3,$4,$5,$6,coalesce($7,now()))")
+                .bind(id).bind(id.to_string()).bind(row.get::<Uuid,_>("account_id")).bind(message_id).bind(&input.action).bind(payload).bind(undo).execute(&mut *tx).await?;
+            sqlx::query(&format!(
+                "update messages set {field}=true,updated_at=now() where id=$1"
+            ))
+            .bind(message_id)
+            .execute(&mut *tx)
+            .await?;
+            inserted += 1;
+        }
+        if inserted == 0 {
+            bail!("This action is already pending");
+        }
+        tx.commit().await?;
+        Ok(group_id)
+    }
+
     pub async fn enqueue_send(
         &self,
         draft_id: Uuid,
@@ -525,35 +591,40 @@ impl Repository {
 
     pub async fn undo(&self, id: Uuid) -> Result<Value> {
         let mut tx = self.0.begin().await?;
-        let row = sqlx::query("select * from mutation_outbox where id=$1 and status='pending' and (payload->>'undoUntil')::timestamptz>clock_timestamp() for update").bind(id).fetch_optional(&mut *tx).await?.context("Undo window expired")?;
-        let action: String = row.get("action");
-        let payload: Value = row.get("payload");
-        let result = if action == "send" {
-            let input: DraftInput = serde_json::from_value(payload["draft"].clone())?;
-            sqlx::query("insert into drafts(id,account_id,to_addresses,cc_addresses,bcc_addresses,subject,body,reply_to_message_id,forward_of_message_id) values($1,$2,$3,$4,$5,$6,$7,$8,$9)")
-                .bind(input.id).bind(input.account_id).bind(json!(input.to)).bind(json!(input.cc)).bind(json!(input.bcc)).bind(input.subject).bind(input.body).bind(input.reply_to_message_id).bind(input.forward_of_message_id).execute(&mut *tx).await?;
-            payload["draft"].clone()
-        } else if action == "archive" || action == "delete" {
-            let field = if action == "archive" {
-                "archived"
-            } else {
-                "deleted"
-            };
-            sqlx::query(&format!(
-                "update messages set {field}=$2,updated_at=now() where id=$1"
-            ))
-            .bind(row.get::<Option<Uuid>, _>("message_id"))
-            .bind(payload["previous"][field].as_bool())
-            .execute(&mut *tx)
-            .await?;
-            Value::Null
-        } else {
+        let rows = sqlx::query("select * from mutation_outbox where (id=$1 or payload->>'groupId'=$1::text) and status='pending' and (payload->>'undoUntil')::timestamptz>clock_timestamp() for update").bind(id).fetch_all(&mut *tx).await?;
+        if rows.is_empty() {
             bail!("Undo window expired");
-        };
-        sqlx::query("delete from mutation_outbox where id=$1")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?;
+        }
+        let mut result = Value::Null;
+        for row in rows {
+            let action: String = row.get("action");
+            let payload: Value = row.get("payload");
+            if action == "send" {
+                let input: DraftInput = serde_json::from_value(payload["draft"].clone())?;
+                sqlx::query("insert into drafts(id,account_id,to_addresses,cc_addresses,bcc_addresses,subject,body,reply_to_message_id,forward_of_message_id) values($1,$2,$3,$4,$5,$6,$7,$8,$9)")
+                .bind(input.id).bind(input.account_id).bind(json!(input.to)).bind(json!(input.cc)).bind(json!(input.bcc)).bind(input.subject).bind(input.body).bind(input.reply_to_message_id).bind(input.forward_of_message_id).execute(&mut *tx).await?;
+                result = payload["draft"].clone();
+            } else if action == "archive" || action == "delete" {
+                let field = if action == "archive" {
+                    "archived"
+                } else {
+                    "deleted"
+                };
+                sqlx::query(&format!(
+                    "update messages set {field}=$2,updated_at=now() where id=$1"
+                ))
+                .bind(row.get::<Option<Uuid>, _>("message_id"))
+                .bind(payload["previous"][field].as_bool())
+                .execute(&mut *tx)
+                .await?;
+            } else {
+                bail!("Undo window expired");
+            }
+            sqlx::query("delete from mutation_outbox where id=$1")
+                .bind(row.get::<Uuid, _>("id"))
+                .execute(&mut *tx)
+                .await?;
+        }
         tx.commit().await?;
         Ok(result)
     }

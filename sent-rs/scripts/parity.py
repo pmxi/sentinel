@@ -93,6 +93,31 @@ def snapshot(port):
         check("search-" + query, "/api/search?" + urllib.parse.urlencode({"q": query, "limit": 37}))
     check("drafts-empty", "/api/drafts")
     selected = all_messages[0]["id"]
+    for view in ["l1", "l2", "l3", "unclassified", "all", "sent", "trash"]:
+        page = check("group-source-" + view, f"/api/messages?view={view}&limit=100")["messages"]
+        if not page:
+            for action in ("archive", "delete"):
+                check(f"group-empty-{view}-{action}", f'/api/threads/{all_messages[0]["threadId"]}/action', "POST",
+                      {"action": action, "view": view, "undoable": True})
+            continue
+        sample = next((item for item in page if item["messageCount"] > 1), page[0])
+        thread_id = sample["threadId"]
+        for action in ("archive", "delete"):
+            name = f"group-{view}-{action}"
+            body = {"action": action, "view": view, "accountId": sample["account"]["id"], "undoable": True}
+            receipt = check(name, f"/api/threads/{thread_id}/action", "POST", body)
+            check(name + "-pending", f"/api/threads/{thread_id}?trash={'true' if view == 'trash' else 'false'}")
+            check(name + "-view", f"/api/messages?view={view}&limit=100")
+            check(name + "-duplicate", f"/api/threads/{thread_id}/action", "POST", body)
+            check(name + "-undo", f'/api/mutations/{receipt["mutationId"]}/undo', "POST")
+            check(name + "-restored", f"/api/threads/{thread_id}?trash={'true' if view == 'trash' else 'false'}")
+            check(name + "-undo-again", f'/api/mutations/{receipt["mutationId"]}/undo', "POST")
+        other_account = next(account["id"] for account in accounts if account["id"] != sample["account"]["id"])
+        check("group-wrong-account-" + view, f"/api/threads/{thread_id}/action", "POST",
+              {"action": "archive", "view": view, "accountId": other_account})
+    check("group-missing", "/api/threads/00000000-0000-4000-8000-000000000000/action", "POST", {"action": "archive"})
+    for index, body in enumerate([{}, {"action": "flag"}, {"action": "archive", "view": "bad"}, {"action": "delete", "accountId": "bad"}, {"action": "archive", "undoable": "yes"}]):
+        check(f"invalid-thread-action-{index}", f'/api/threads/{all_messages[0]["threadId"]}/action', "POST", body)
     for action in ("archive", "delete"):
         receipt = check("action-" + action, f"/api/messages/{selected}/action", "POST", {"action": action, "undoable": True})
         check("pending-" + action, "/api/messages/" + selected)

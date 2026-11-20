@@ -18,7 +18,7 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::{Duration, Utc};
 use sent_core::{
     config::Config,
-    repository::{DraftInput, ListInput, Repository, SearchInput, timestamp},
+    repository::{DraftInput, ListInput, Repository, SearchInput, ThreadActionInput, timestamp},
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -100,6 +100,22 @@ impl Validated for Action {
 impl Validated for Tier {
     fn schema() -> Schema {
         Schema::Object(vec![("tier", nullable(Schema::Tier))])
+    }
+}
+impl Validated for ThreadActionInput {
+    fn schema() -> Schema {
+        Schema::Object(vec![
+            (
+                "view",
+                default(
+                    Schema::Enum(&["l1", "l2", "l3", "unclassified", "all", "sent", "trash"]),
+                    json!("l1"),
+                ),
+            ),
+            ("accountId", optional(uuid())),
+            ("action", Schema::Enum(&["archive", "delete"])),
+            ("undoable", default(Schema::Bool, json!(false))),
+        ])
     }
 }
 impl Validated for ThreadQuery {
@@ -218,6 +234,13 @@ fn error(status: StatusCode, message: &str) -> Response {
 
 pub fn router(state: Shared) -> Router {
     let root = state.config.web_dist_path.clone();
+    let index = Router::new()
+        .fallback_service(
+            ServeFile::new(root.join("index.html"))
+                .precompressed_br()
+                .precompressed_gzip(),
+        )
+        .layer(middleware::from_fn(index_headers));
     Router::new()
         .route("/api/health", get(health))
         .route("/api/auth/login", post(login))
@@ -230,6 +253,7 @@ pub fn router(state: Shared) -> Router {
         .route("/api/messages", get(messages))
         .route("/api/messages/{id}", get(message))
         .route("/api/threads/{id}", get(thread))
+        .route("/api/threads/{id}/action", post(thread_action))
         .route("/api/messages/{id}/action", post(action))
         .route("/api/mutations/{id}/undo", post(undo))
         .route("/api/messages/{id}/tier", put(tier))
@@ -246,10 +270,44 @@ pub fn router(state: Shared) -> Router {
         )
         .route("/api/oauth/{provider}/start", get(oauth_start))
         .route("/api/oauth/{provider}/callback", get(oauth_callback))
-        .fallback_service(ServeDir::new(&root).fallback(ServeFile::new(root.join("index.html"))))
+        .fallback_service(
+            ServeDir::new(&root)
+                .precompressed_br()
+                .precompressed_gzip()
+                .fallback(index),
+        )
+        .layer(middleware::from_fn(static_headers))
         .layer(DefaultBodyLimit::max(25 * 1024 * 1024))
         .layer(middleware::from_fn_with_state(state.clone(), protect))
         .with_state(state)
+}
+
+async fn static_headers(request: Request, next: Next) -> Response {
+    let api = request.uri().path().starts_with("/api/");
+    let asset = request.uri().path().starts_with("/assets/");
+    let mut response = next.run(request).await;
+    if !api && (response.status().is_success() || response.status() == StatusCode::NOT_MODIFIED) {
+        response
+            .headers_mut()
+            .entry(header::CACHE_CONTROL)
+            .or_insert(if asset {
+                "public, max-age=31536000, immutable".parse().unwrap()
+            } else {
+                "no-cache".parse().unwrap()
+            });
+        response
+            .headers_mut()
+            .append(header::VARY, "Accept-Encoding".parse().unwrap());
+    }
+    response
+}
+
+async fn index_headers(request: Request, next: Next) -> Response {
+    let mut response = next.run(request).await;
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, "no-cache".parse().unwrap());
+    response
 }
 
 async fn protect(
@@ -445,6 +503,18 @@ struct Action {
     action: String,
     #[serde(default)]
     undoable: bool,
+}
+async fn thread_action(
+    ExtractState(state): ExtractState<Shared>,
+    Path(id): Path<Uuid>,
+    ZodJson(input): ZodJson<ThreadActionInput>,
+) -> ApiResult<Response> {
+    let until = input.undoable.then(|| Utc::now() + Duration::seconds(5));
+    let mutation = state
+        .repository
+        .enqueue_thread_action(id, &input, until)
+        .await?;
+    Ok(receipt(mutation, until))
 }
 async fn action(
     ExtractState(state): ExtractState<Shared>,
@@ -728,6 +798,122 @@ async fn oauth_callback(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn precompressed_assets_and_spa_cache_headers_match_typescript() {
+        const CONTENT: &[u8] = b"hello compressed asset";
+        const GZIP: &[u8] = &[
+            31, 139, 8, 0, 0, 0, 0, 0, 0, 3, 203, 72, 205, 201, 201, 87, 72, 206, 207, 45, 40, 74,
+            45, 46, 78, 77, 81, 72, 44, 46, 78, 45, 1, 0, 190, 102, 76, 107, 22, 0, 0, 0,
+        ];
+        const BROTLI: &[u8] = &[
+            27, 21, 0, 248, 37, 65, 200, 202, 114, 16, 78, 128, 201, 115, 56, 26, 9, 231, 129, 222,
+            185, 3,
+        ];
+        let root = std::env::temp_dir().join(format!("sent-compressed-{}", Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("assets")).unwrap();
+        for file in ["index.html", "assets/index-abcdefgh.js"] {
+            for (suffix, bytes) in [("", CONTENT), (".br", BROTLI), (".gz", GZIP)] {
+                std::fs::write(root.join(format!("{file}{suffix}")), bytes).unwrap();
+            }
+        }
+        std::fs::write(root.join("assets/raw-abcdefgh.js"), CONTENT).unwrap();
+        std::fs::write(root.join("assets/empty-abcdefgh.js"), b"").unwrap();
+        let mut config = Config::from_env().unwrap();
+        config.web_dist_path = root.clone();
+        config.session_secret = Some("test-session-secret-at-least-32-characters".into());
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://localhost/sent_test_unused")
+            .unwrap();
+        let app = router(Arc::new(State::new(config, Repository(pool))));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let http = reqwest::Client::new();
+        for (accept, encoding, bytes) in [
+            ("br, gzip", Some("br"), BROTLI),
+            ("gzip", Some("gzip"), GZIP),
+            ("", None, CONTENT),
+            ("identity", None, CONTENT),
+            ("br;q=0, gzip;q=0", None, CONTENT),
+        ] {
+            let response = http
+                .get(format!("{base}/assets/index-abcdefgh.js"))
+                .header(header::ACCEPT_ENCODING, accept)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(
+                response
+                    .headers()
+                    .get(header::CONTENT_ENCODING)
+                    .map(|v| v.to_str().unwrap()),
+                encoding
+            );
+            assert_eq!(
+                response.headers()[header::CACHE_CONTROL],
+                "public, max-age=31536000, immutable"
+            );
+            assert!(
+                response.headers()[header::VARY]
+                    .to_str()
+                    .unwrap()
+                    .to_lowercase()
+                    .contains("accept-encoding")
+            );
+            assert!(
+                response.headers()[header::CONTENT_TYPE]
+                    .to_str()
+                    .unwrap()
+                    .contains("javascript")
+            );
+            assert_eq!(response.bytes().await.unwrap().as_ref(), bytes);
+        }
+        for path in ["/", "/index.html", "/inbox/thread", "/assets/missing.js"] {
+            let response = http
+                .get(format!("{base}{path}"))
+                .header(header::ACCEPT_ENCODING, "br, gzip")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-cache");
+            assert_eq!(response.headers()[header::CONTENT_ENCODING], "br");
+            assert!(
+                response.headers()[header::CONTENT_TYPE]
+                    .to_str()
+                    .unwrap()
+                    .starts_with("text/html")
+            );
+            assert_eq!(response.bytes().await.unwrap().as_ref(), BROTLI);
+        }
+        for path in ["raw", "empty"] {
+            let response = http
+                .get(format!("{base}/assets/{path}-abcdefgh.js"))
+                .header(header::ACCEPT_ENCODING, "br, gzip")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(response.headers().get(header::CONTENT_ENCODING).is_none());
+            assert_eq!(
+                response.bytes().await.unwrap().as_ref(),
+                if path == "raw" { CONTENT } else { b"" }
+            );
+        }
+        let response = http
+            .get(format!("{base}/api/private"))
+            .header(header::ACCEPT_ENCODING, "br, gzip")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert!(response.headers().get(header::CONTENT_ENCODING).is_none());
+        assert!(response.headers().get(header::CACHE_CONTROL).is_none());
+        server.abort();
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[tokio::test]
     async fn spa_routes_return_index_with_ok_status_and_preserve_api_boundaries() {

@@ -78,7 +78,7 @@ function mount(children: () => ReturnType<typeof createComponent>) {
   });
   return container;
 }
-async function reader(read = false, empty = false) {
+async function reader(read = false, empty = false, view = "l1", accountId?: string) {
   const item = { ...message, read };
   vi.spyOn(sentApi, "session").mockResolvedValue({ authenticated: true });
   vi.spyOn(sentApi, "accounts").mockResolvedValue({ accounts: [account] });
@@ -91,7 +91,7 @@ async function reader(read = false, empty = false) {
   vi.spyOn(sentApi, "message").mockResolvedValue(item);
   vi.spyOn(sentApi, "thread").mockResolvedValue({ messages: [item] });
   vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
-  const path = `/inbox/l1${empty ? "" : "?message=first"}`;
+  const path = `/inbox/${view}${empty ? "" : `?message=first${accountId ? `&account=${accountId}` : ""}`}`;
   window.history.replaceState(null, "", path);
   const history = createMemoryHistory();
   history.set({ value: path, replace: true, scroll: false });
@@ -122,22 +122,25 @@ describe("reader triage shortcuts", () => {
   ])("keeps %s available during automatic mark-read", async (key, action) => {
     const pending = deferred<MutationReceipt>();
     const request = vi.spyOn(sentApi, "action").mockReturnValue(pending.promise);
+    const threadRequest = vi.spyOn(sentApi, "threadAction").mockReturnValue(pending.promise);
     const container = await reader();
     await vi.waitFor(() => expect(request).toHaveBeenCalledWith("first", "mark_read"));
     expect(press(key).defaultPrevented).toBe(true);
-    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("first", action, true));
+    await vi.waitFor(() =>
+      expect(threadRequest).toHaveBeenCalledWith("first-thread", action, "l1", undefined),
+    );
     expect(container.querySelector("button.message-row")).toBeNull();
   });
 
-  it("keeps archive available during mark-unread", async () => {
+  it("blocks archive during a manual mark-unread, matching React", async () => {
     const request = vi
       .spyOn(sentApi, "action")
       .mockReturnValue(deferred<MutationReceipt>().promise);
     await reader(true);
     press("u");
     await vi.waitFor(() => expect(request).toHaveBeenCalledWith("first", "mark_unread"));
-    expect(press("e").defaultPrevented).toBe(true);
-    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("first", "archive", true));
+    expect(press("e").defaultPrevented).toBe(false);
+    expect(request).toHaveBeenCalledTimes(1);
   });
 
   it("still blocks triage during other pending mutations", async () => {
@@ -153,10 +156,12 @@ describe("reader triage shortcuts", () => {
 
   it("does not triage an empty reader", async () => {
     const request = vi.spyOn(sentApi, "action");
+    const threadRequest = vi.spyOn(sentApi, "threadAction");
     await reader(true, true);
     expect(press("e").defaultPrevented).toBe(false);
     expect(press("#").defaultPrevented).toBe(false);
     expect(request).not.toHaveBeenCalled();
+    expect(threadRequest).not.toHaveBeenCalled();
   });
 
   it("allows triage after automatic mark-read fails", async () => {
@@ -168,11 +173,34 @@ describe("reader triage shortcuts", () => {
     const container = await reader();
     await vi.waitFor(() => expect(request).toHaveBeenCalledWith("first", "mark_read"));
     pending.reject(new Error("Mark-read failed"));
-    await vi.waitFor(() =>
-      expect(container.querySelector('[role="alert"]')?.textContent).toBe("Mark-read failed"),
-    );
+    const threadRequest = vi
+      .spyOn(sentApi, "threadAction")
+      .mockReturnValue(deferred<MutationReceipt>().promise);
     press("e");
-    await vi.waitFor(() => expect(request).toHaveBeenCalledWith("first", "archive", true));
+    await vi.waitFor(() =>
+      expect(threadRequest).toHaveBeenCalledWith("first-thread", "archive", "l1", undefined),
+    );
+    expect(container.querySelector("button.message-row")).toBeNull();
+  });
+
+  it("sends conversation delete with the current view and account scope", async () => {
+    const request = vi
+      .spyOn(sentApi, "threadAction")
+      .mockReturnValue(deferred<MutationReceipt>().promise);
+    const container = await reader(true, false, "l2", "account");
+    (container.querySelector('[aria-label="Delete conversation"]') as HTMLButtonElement).click();
+    await vi.waitFor(() =>
+      expect(request).toHaveBeenCalledWith("first-thread", "delete", "l2", "account"),
+    );
+    expect(container.querySelector("button.message-row")).toBeNull();
+  });
+
+  it("restores the conversation when its grouped request fails", async () => {
+    vi.spyOn(sentApi, "threadAction").mockRejectedValue(new Error("Thread action failed"));
+    const container = await reader(true);
+    (container.querySelector('[aria-label="Archive conversation"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(container.textContent).toContain("Thread action failed"));
+    expect(container.querySelector("button.message-row")).not.toBeNull();
   });
 });
 
@@ -180,7 +208,7 @@ describe("triage submission protection", () => {
   it("prevents duplicate archive/delete and permits retry after failure", async () => {
     const pending = deferred<MutationReceipt>();
     const request = vi
-      .spyOn(sentApi, "action")
+      .spyOn(sentApi, "threadAction")
       .mockReturnValueOnce(pending.promise)
       .mockReturnValue(deferred<MutationReceipt>().promise);
     let triage!: ReturnType<typeof useTriage>;
@@ -194,9 +222,9 @@ describe("triage submission protection", () => {
         },
       }),
     );
-    triage.perform("first", "archive", advance, restore, "first-thread");
-    triage.perform("first", "archive", advance, restore, "first-thread");
-    triage.perform("first", "delete", advance, restore, "first-thread");
+    triage.perform("first-thread", "archive", advance, restore, "l1");
+    triage.perform("first-thread", "archive", advance, restore, "l1");
+    triage.perform("first-thread", "delete", advance, restore, "l1");
     expect(request).toHaveBeenCalledTimes(1);
     expect(advance).toHaveBeenCalledTimes(1);
     expect(triage.hiddenThreadIds.has("first-thread")).toBe(true);
@@ -204,7 +232,7 @@ describe("triage submission protection", () => {
     await vi.waitFor(() => expect(container.textContent).toContain("Archive failed"));
     expect(restore).toHaveBeenCalledTimes(1);
     expect(triage.hiddenThreadIds.has("first-thread")).toBe(false);
-    triage.perform("first", "delete", advance, restore, "first-thread");
+    triage.perform("first-thread", "delete", advance, restore, "l1");
     expect(request).toHaveBeenCalledTimes(2);
   });
 });

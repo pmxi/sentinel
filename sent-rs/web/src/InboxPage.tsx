@@ -395,6 +395,7 @@ function Reader(props: {
   const compose = useCompose();
   const route = useParams();
   const trash = createMemo(() => route.view === "trash");
+  const [params] = useSearchParams();
   const triage = useTriage();
   const [bodyView, setBodyView] = createSignal<"plain" | "original">("plain");
   const [hasShownFallback, setHasShownFallback] = createSignal(false);
@@ -423,9 +424,9 @@ function Reader(props: {
   // Do not expose actions for the selected fallback while the newest reply is loading.
   const message = createMemo(() => (readerLoading() ? undefined : orderedMessages().at(-1)));
   const conversation = createMemo(() => orderedMessages().slice(0, -1));
-  const action = createMutation(() => ({
+  const actionOptions = () => ({
     mutationFn: ({ id, action }: { id: string; action: string }) => sentApi.action(id, action),
-    onSuccess: (_result, { id, action }) => {
+    onSuccess: (_result: unknown, { id, action }: { id: string; action: string }) => {
       const updateMessage = (item: MessageDetail): MessageDetail => {
         if (item.id !== id) return item;
         if (action === "mark_read" || action === "mark_unread")
@@ -449,7 +450,9 @@ function Reader(props: {
       void queryClient.invalidateQueries({ queryKey: ["thread", threadId()] });
       void queryClient.invalidateQueries({ queryKey: ["search"] });
     },
-  }));
+  });
+  const action = createMutation(actionOptions);
+  const markRead = createMutation(actionOptions);
   const tier = createMutation(() => ({
     mutationFn: (value: Tier) => sentApi.tier(message()?.id ?? props.messageId, value),
     onSuccess: () => {
@@ -472,7 +475,15 @@ function Reader(props: {
   };
   const triageAction = (action: "archive" | "delete") => {
     const item = message();
-    if (item) triage.perform(item.id, action, props.advance, props.restore, item.threadId);
+    if (item)
+      triage.perform(
+        item.threadId,
+        action,
+        props.advance,
+        props.restore,
+        route.view ?? "all",
+        params().get("account") ?? undefined,
+      );
   };
   const reply = (all = false) => {
     const item = message();
@@ -497,13 +508,6 @@ function Reader(props: {
     });
   };
   const unavailable = createMemo(() => !message() || action.isPending);
-  const triageUnavailable = createMemo(
-    () =>
-      !message() ||
-      (action.isPending &&
-        action.variables?.action !== "mark_read" &&
-        action.variables?.action !== "mark_unread"),
-  );
   useCommands("reader", () => [
     {
       id: "archive",
@@ -511,7 +515,7 @@ function Reader(props: {
       group: "Message",
       keys: ["e"],
       run: () => triageAction("archive"),
-      disabled: triageUnavailable(),
+      disabled: unavailable(),
     },
     {
       id: "delete",
@@ -519,7 +523,7 @@ function Reader(props: {
       group: "Message",
       keys: ["#"],
       run: () => triageAction("delete"),
-      disabled: triageUnavailable(),
+      disabled: unavailable(),
     },
     {
       id: "reply",
@@ -577,7 +581,7 @@ function Reader(props: {
       for (const item of visible) {
         if (openedMessages.current.has(item.id)) continue;
         openedMessages.current.add(item.id);
-        if (!item.read) action.mutate({ id: item.id, action: "mark_read" });
+        if (!item.read) markRead.mutate({ id: item.id, action: "mark_read" });
       }
     });
     if (typeof cleanup === "function") onCleanup(cleanup);
@@ -624,16 +628,16 @@ function Reader(props: {
                 <TierPicker tier={current().tier} onChange={(value) => tier.mutate(value)} />
                 <button
                   class="icon-button"
-                  title="Archive latest message"
-                  aria-label="Archive latest message"
+                  title="Archive conversation"
+                  aria-label="Archive conversation"
                   onClick={() => triageAction("archive")}
                 >
                   <Archive size={18} />
                 </button>
                 <button
                   class="icon-button"
-                  title="Delete latest message"
-                  aria-label="Delete latest message"
+                  title="Delete conversation"
+                  aria-label="Delete conversation"
                   onClick={() => triageAction("delete")}
                 >
                   <Trash2 size={18} />

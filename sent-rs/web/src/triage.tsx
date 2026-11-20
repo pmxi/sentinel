@@ -25,11 +25,12 @@ type Notice = {
 type TriageContextValue = {
   hiddenThreadIds: Set<string>;
   perform(
-    messageId: string,
+    threadId: string,
     action: "archive" | "delete",
     advance: () => void,
     restore: () => void,
-    threadId: string,
+    view: string,
+    accountId?: string,
   ): void;
   sent(receipt: MutationReceipt, onUndo: () => void): void;
 };
@@ -53,11 +54,12 @@ export function TriageProvider(props: { children: JSX.Element }) {
   const update = (id: string, changes: Partial<Notice>) =>
     setNotices((items) => items.map((item) => (item.id === id ? { ...item, ...changes } : item)));
   const perform: TriageContextValue["perform"] = async (
-    messageId,
+    threadId,
     action,
     advance,
     restore,
-    threadId,
+    view,
+    accountId,
   ) => {
     if (notices().some((notice) => notice.threadId === threadId)) return;
     const id = crypto.randomUUID();
@@ -73,7 +75,7 @@ export function TriageProvider(props: { children: JSX.Element }) {
     ]);
     advance();
     try {
-      const receipt = await sentApi.action(messageId, action, true);
+      const receipt = await sentApi.threadAction(threadId, action, view, accountId);
       update(id, { receipt, label: action === "archive" ? "Archived" : "Moved to Trash" });
       void refresh();
     } catch (error) {

@@ -2,7 +2,9 @@ use anyhow::Result;
 use chrono::{Duration, TimeZone, Utc};
 use sent_core::{
     db,
-    repository::{Classification, DraftInput, ListInput, Repository, SearchInput},
+    repository::{
+        Classification, DraftInput, ListInput, Repository, SearchInput, ThreadActionInput,
+    },
 };
 use serde_json::{Value, json};
 use sqlx::Row;
@@ -116,6 +118,10 @@ impl Fixture {
                 .get("status"),
         )
     }
+    async fn state(&self, id: Uuid) -> Result<Value> {
+        Ok(sqlx::query_scalar("select jsonb_build_object('archived',archived,'deleted',deleted) from messages where id=$1")
+            .bind(id).fetch_one(&self.repo.0).await?)
+    }
 }
 
 fn uuid(value: &Value) -> Uuid {
@@ -149,6 +155,98 @@ async fn mail_views_and_send_checkpoints() -> Result<()> {
         owner: Uuid::new_v4(),
         other: Uuid::new_v4(),
     };
+
+    for action in ["archive", "delete"] {
+        f.reset().await?;
+        let mut members = Vec::new();
+        for hour in 8..11 {
+            members.push(f.message("group", hour, json!({})).await?);
+        }
+        let archived = f.message("group", 11, json!({"archived":true})).await?;
+        let deleted = f.message("group", 12, json!({"deleted":true})).await?;
+        let tier3 = f.message("group", 13, json!({})).await?;
+        f.repo.set_tier(tier3, Some(3)).await?;
+        f.message("group", 14, json!({"direction":"outbound"}))
+            .await?;
+        let thread = uuid(&f.repo.get_message(members[0]).await?.unwrap()["threadId"]);
+        let input = ThreadActionInput {
+            action: action.into(),
+            view: "l1".into(),
+            account_id: Some(f.owner),
+            undoable: true,
+        };
+        let receipt = f
+            .repo
+            .enqueue_thread_action(thread, &input, Some(Utc::now() + Duration::seconds(5)))
+            .await?;
+        let rows = sqlx::query("select payload from mutation_outbox")
+            .fetch_all(&f.repo.0)
+            .await?;
+        assert_eq!(rows.len(), 3);
+        assert!(
+            rows.iter()
+                .all(|row| row.get::<Value, _>("payload")["groupId"] == receipt.to_string())
+        );
+        assert!(f.repo.claim_mutations(50).await?.is_empty());
+        assert!(ids(&f.list("l1", 50, None, None).await?).is_empty());
+        for (id, column) in [(archived, "archived"), (deleted, "deleted")] {
+            let row = sqlx::query(&format!("select {column} from messages where id=$1"))
+                .bind(id)
+                .fetch_one(&f.repo.0)
+                .await?;
+            assert!(row.get::<bool, _>(column));
+        }
+        assert_eq!(
+            f.state(tier3).await?,
+            json!({"archived":false,"deleted":false})
+        );
+        f.repo.undo(receipt).await?;
+        assert_eq!(ids(&f.list("l1", 50, None, None).await?).len(), 1);
+        for member in members {
+            let message = f.state(member).await?;
+            assert_eq!(message["archived"], false);
+            assert_eq!(message["deleted"], false);
+        }
+        assert!(f.repo.claim_mutations(50).await?.is_empty());
+        assert!(f.repo.undo(receipt).await.is_err());
+    }
+    f.reset().await?;
+    let source = f.message("trash-group", 8, json!({"deleted":true})).await?;
+    f.message("trash-group", 9, json!({"deleted":true})).await?;
+    let thread = uuid(&f.repo.get_message(source).await?.unwrap()["threadId"]);
+    let input = ThreadActionInput {
+        action: "delete".into(),
+        view: "trash".into(),
+        account_id: None,
+        undoable: true,
+    };
+    let receipt = f
+        .repo
+        .enqueue_thread_action(thread, &input, Some(Utc::now() + Duration::seconds(5)))
+        .await?;
+    assert!(
+        f.repo
+            .enqueue_thread_action(thread, &input, None)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("already pending")
+    );
+    f.repo.undo(receipt).await?;
+    assert_eq!(f.state(source).await?["deleted"], true);
+    let expired = f
+        .repo
+        .enqueue_thread_action(thread, &input, Some(Utc::now() - Duration::seconds(1)))
+        .await?;
+    assert!(f.repo.undo(expired).await.is_err());
+    assert!(
+        f.repo
+            .enqueue_thread_action(Uuid::new_v4(), &input, None)
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("Message not found")
+    );
 
     for action in ["archive", "delete"] {
         f.reset().await?;
