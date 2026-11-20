@@ -41,7 +41,9 @@ export function useSearchParams(): [
     read,
     (value, options) => {
       const next = typeof value === "function" ? value(read()) : value;
-      navigate(`${location.pathname}?${next}`, options);
+      // Query-only transitions retain the current surface. In particular,
+      // don't overwrite the mailbox's mobile reader/back scroll restoration.
+      navigate(`${location.pathname}?${next}`, { ...options, scroll: false });
     },
   ];
 }
