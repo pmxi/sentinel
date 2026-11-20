@@ -273,7 +273,24 @@ function Reader({
   const conversation = orderedMessages.slice(0, -1);
   const { mutate: performAction } = useMutation({
     mutationFn: ({ id, action }: { id: string; action: string }) => sentApi.action(id, action),
-    onSuccess: () => {
+    onSuccess: (_result, { id, action }) => {
+      const updateMessage = (item: MessageDetail): MessageDetail => {
+        if (item.id !== id) return item;
+        if (action === "mark_read" || action === "mark_unread")
+          return { ...item, read: action === "mark_read" };
+        if (action === "flag" || action === "unflag")
+          return { ...item, flagged: action === "flag" };
+        return item;
+      };
+      // A successful write must remain visible even when refreshing the thread
+      // fails. Otherwise cached toolbar controls keep acting on stale state.
+      queryClient.setQueriesData<{ messages: MessageDetail[] }>(
+        { queryKey: ["thread", threadId] },
+        (cached) => (cached ? { ...cached, messages: cached.messages.map(updateMessage) } : cached),
+      );
+      queryClient.setQueryData<MessageDetail>(["message", id], (cached) =>
+        cached ? updateMessage(cached) : cached,
+      );
       void queryClient.invalidateQueries({ queryKey: ["messages"] });
       void queryClient.invalidateQueries({ queryKey: ["message"] });
       void queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
