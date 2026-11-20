@@ -41,7 +41,7 @@ async function dispatch(method: string, args: unknown[]) {
     case "list":
       return store.list(args[0] as Parameters<ReplicaStore["list"]>[0]);
     case "search":
-      return store.search(String(args[0]));
+      return store.search(String(args[0]), Number(args[1] ?? 75));
     case "detail":
       return unpackDetail(store.detail(String(args[0]), Boolean(args[1])));
     case "thread":
@@ -69,6 +69,8 @@ async function dispatch(method: string, args: unknown[]) {
       return store.storageDetails();
     case "plans":
       return store.queryPlans(args[0] as Parameters<ReplicaStore["list"]>[0]);
+    case "searchPlans":
+      return store.searchPlans(String(args[0]), Number(args[1] ?? 75));
     case "opened":
       return store.opened(args[0] as string[]);
     case "begin":
@@ -94,11 +96,12 @@ self.onmessage = (
   const receivedAt = performance.timeOrigin + performance.now();
   sequence = sequence.then(async () => {
     try {
-      if (event.data.profile && method === "list" && store) {
+      if (event.data.profile && (method === "list" || method === "search") && store) {
         const startedAt = performance.timeOrigin + performance.now();
-        const { result, profile } = store.profileList(
-          args[0] as Parameters<ReplicaStore["list"]>[0],
-        );
+        const { result, profile } =
+          method === "search"
+            ? store.profileSearch(String(args[0]), Number(args[1] ?? 75))
+            : store.profileList(args[0] as Parameters<ReplicaStore["list"]>[0]);
         self.postMessage({
           id,
           result,
@@ -111,7 +114,9 @@ self.onmessage = (
         });
         return;
       }
-      self.postMessage({ id, result: await dispatch(method, args) });
+      const result = await dispatch(method, args);
+      await store?.restoreSearch();
+      self.postMessage({ id, result });
     } catch (cause) {
       self.postMessage({ id, error: cause instanceof Error ? cause.message : String(cause) });
     }

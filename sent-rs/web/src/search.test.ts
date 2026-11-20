@@ -43,6 +43,7 @@ function scope() {
       return result;
     },
     setQuery,
+    dispose,
     client,
   };
 }
@@ -122,5 +123,83 @@ describe("local-first search queries", () => {
     const state = scope();
     await vi.waitFor(() => expect(state.result.data).toEqual(local));
     expect(remote).toHaveBeenCalledOnce();
+  });
+  it("fills the full local page only after two frames and preserves first-page order offline", async () => {
+    vi.stubGlobal("navigator", { onLine: false });
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    const first = Array.from({ length: 20 }, (_, index) => row(`local-${index}`));
+    const full = [...first, ...Array.from({ length: 55 }, (_, index) => row(`rest-${index}`))];
+    const search = ready(
+      vi
+        .fn()
+        .mockResolvedValueOnce({ mode: "lexical", messages: first })
+        .mockResolvedValue({ mode: "lexical", messages: full }),
+    );
+    const state = scope();
+    await vi.waitFor(() => expect(state.result.data?.messages).toEqual(first));
+    expect(search).toHaveBeenCalledTimes(1);
+    frames.shift()?.(0);
+    expect(search).toHaveBeenCalledTimes(1);
+    frames.shift()?.(16);
+    await vi.waitFor(() => expect(state.result.data?.messages).toEqual(full));
+    expect(search).toHaveBeenLastCalledWith("needle", 75);
+  });
+  it("ignores an in-flight local fill after unmount", async () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    const first = Array.from({ length: 20 }, (_, index) => row(`local-${index}`));
+    let finish!: (value: SearchResponse) => void;
+    const search = ready(
+      vi
+        .fn()
+        .mockResolvedValueOnce({ mode: "lexical", messages: first })
+        .mockImplementation(
+          () =>
+            new Promise((resolve) => {
+              finish = resolve;
+            }),
+        ),
+    );
+    const state = scope();
+    await vi.waitFor(() => expect(state.result.data?.messages).toEqual(first));
+    frames.shift()?.(0);
+    frames.shift()?.(16);
+    await vi.waitFor(() => expect(search).toHaveBeenCalledTimes(2));
+    state.dispose();
+    state.client.clear();
+    finish({ mode: "lexical", messages: [row("private-late")] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(state.client.getQueryData(["search", "needle"])).toBeUndefined();
+  });
+  it("retains the initial page when a local fill fails", async () => {
+    vi.stubGlobal("navigator", { onLine: false });
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
+    const first = Array.from({ length: 20 }, (_, index) => row(`local-${index}`));
+    const search = ready(
+      vi
+        .fn()
+        .mockResolvedValueOnce({ mode: "lexical", messages: first })
+        .mockRejectedValue(Error("worker closed")),
+    );
+    const state = scope();
+    await vi.waitFor(() => expect(state.result.data?.messages).toEqual(first));
+    frames.shift()?.(0);
+    frames.shift()?.(16);
+    await vi.waitFor(() => expect(search).toHaveBeenCalledTimes(2));
+    expect(state.result.data?.messages).toEqual(first);
   });
 });

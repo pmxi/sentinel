@@ -2,20 +2,26 @@
 
 ## On-device search
 
-Schema 4 rebuilds the browser cache once and maintains two contentless-delete FTS5
-indexes: weighted subject/sender/recipients/snippet headers and locally cached body
-text. No second text-content table is stored. BM25 favors subject and sender matches,
+Schema 5 rebuilds the browser cache once and maintains one contentless-delete FTS5
+index over subject/sender/recipients/snippet headers and locally cached body text.
+Only message/thread IDs and ordering timestamps are retained as unindexed content;
+searchable text is not stored twice. BM25 favors subject and sender matches,
 with recency/ID tie-breaks; the final literal token is a prefix. Operators, quotes and
 punctuation in user queries cannot become FTS syntax. Queries are bounded to 32 tokens.
 
 The search page and Cmd+K share the existing debounced query cache. Once the replica
-is ready they publish local lexical results without a request. Online hybrid search
+is ready they publish a viewport-sized local lexical page without a request, then
+append the rest of the 75-result page after paint. Native FTS rank limits candidates;
+ties and duplicate conversations expand the bound before recency/ID tie-breaking.
+Background initialization warms the search index into SQLite's bounded 16 MiB page
+cache; this uses RAM, not another persistent copy or a search-result cache.
+Online hybrid search
 refines asynchronously after that paint; existing rows and selected message identities
 stay fixed while semantic-only conversations append. Offline no refinement is sent.
 Embeddings and attachment contents remain server-side. Mail older than 90 days whose
 body has not been opened locally is searchable by headers/snippet, **not its body**.
 Body arrival, eviction, version changes, snapshots, deltas and tombstones update the
-indexes; archived mail stays searchable, deleted mail does not.
+index; archived mail stays searchable, deleted mail does not.
 
 ## One-command local benchmark
 

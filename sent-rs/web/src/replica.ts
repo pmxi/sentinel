@@ -261,8 +261,8 @@ export class MailboxReplica {
       limit: Number(params.get("limit") ?? 75),
     });
   }
-  async search(text: string) {
-    return this.call<SearchResponse>("search", text);
+  async search(text: string, limit = 75) {
+    return this.call<SearchResponse>("search", text, limit);
   }
   private async syncRecentBodies() {
     if (
