@@ -75,7 +75,7 @@ impl Config {
             fake_providers: boolean("SENT_FAKE_PROVIDERS")?,
             web_dist_path: optional("WEB_DIST_PATH")
                 .map(PathBuf::from)
-                .unwrap_or_else(|| root.join("apps/web/dist")),
+                .unwrap_or_else(|| root.join("sent-rs/web/dist")),
             migrations_path: optional("MIGRATIONS_PATH")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| root.join("packages/core/src/db/migrations")),

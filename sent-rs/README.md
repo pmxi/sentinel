@@ -1,7 +1,7 @@
-# Sent Rust rewrite — stages 1–2
+# Sent Rust/Solid rewrite — stages 1–3
 
 This workspace is local-only. It does not change or start the existing TypeScript
-applications. The Solid frontend is not part of these stages.
+applications. The Solid frontend is a standalone package in `sent-rs/web`.
 
 ## Local setup
 
@@ -14,6 +14,8 @@ export SENT_FAKE_PROVIDERS=true
 export SESSION_SECRET=sent-local-session-secret-at-least-32-characters
 export SENT_PASSWORD_HASH="$(printf '%s' 'sent-local-dev-password' | pnpm -s sent:hash-password | tail -1)"
 cargo build --release --manifest-path sent-rs/Cargo.toml
+pnpm --dir sent-rs/web install --frozen-lockfile
+pnpm --dir sent-rs/web build
 sent-rs/target/release/sent-seed --reset
 sent-rs/target/release/sent-server
 # In a second terminal with the same environment:
@@ -22,8 +24,8 @@ sent-rs/target/release/sent-worker
 
 The API defaults to port 3000. Configuration uses the names in `.env.example`;
 `.env` is loaded without replacing exported variables. `WEB_DIST_PATH` can point
-to any built SPA, with `index.html` fallback. Its default is the existing web
-build, until the Solid application arrives. The server never starts a worker;
+to any built SPA, with `index.html` fallback. Its default is `sent-rs/web/dist`.
+The server never starts a worker;
 the worker is a separate process.
 `MIGRATIONS_PATH` optionally selects a directory of SQL migrations.
 
@@ -131,3 +133,44 @@ healthy sync/heartbeat, waits for an undoable archive to complete, verifies a
 draft send appears in Sent, and shuts down the worker via SIGTERM. Logs are in
 the ignored `sent-rs/parity-logs/` directory. It needs Node and the existing TS
 workspace's `pg` dependency solely to inspect the outbox rows.
+
+## Solid frontend
+
+`sent-rs/web` ports the React UI without changing `apps/web`. It uses Solid Router,
+Solid Query with the same query keys, 15-second stale time, retry counts, 4-second
+mail/thread polling, and mutation invalidations as React. Router preloading is
+disabled; ordinary attachment links retain native browser navigation. Solid's
+data reconciliation and keyed rows retain DOM identity across polling (the
+equivalent of React's normal reconciliation, not another API cache). Triage
+captures the visible order before Solid's synchronous updates hide a thread.
+
+The package has its own pnpm workspace/lockfile so the existing TS application
+workspace and its runtime dependencies are untouched. Its tests are the six
+ported web test files, rendered with Solid in a browser-like DOM. Root Vitest
+continues to run the original TS tests; run the Solid checks separately:
+
+```sh
+pnpm --dir sent-rs/web typecheck
+pnpm --dir sent-rs/web lint
+pnpm --dir sent-rs/web test
+pnpm --dir sent-rs/web build
+# Development: /api proxies to the Rust server on port 3000.
+pnpm --dir sent-rs/web dev
+```
+
+For the reproducible real-browser comparison, build both frontends and the Rust
+binaries first. Start Chrome with CDP on `http://localhost:29229`, then run:
+
+```sh
+pnpm --filter @sent/web build
+SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_solid pnpm --dir sent-rs/web browser:check
+```
+
+The browser check only accepts local `sent_test_*` databases. It creates the DB
+if needed, resets fake accounts, starts the Rust server/worker in fake mode and
+a React build preview, tests both logins, compares inbox/conversation copy,
+and checks keyboard triage/undo, the palette, navigation, search, reply/forward,
+draft autosave, attachments and send-to-Sent. Screenshots are saved outside the
+repository at `~/screens/{react,solid}-{inbox,conversation}.png`; logs are saved
+under `~/sent-stage3-*.log`. The processes and browser contexts it created are
+closed afterward. No real provider credentials or external API calls are used.
