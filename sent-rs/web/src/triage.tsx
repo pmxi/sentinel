@@ -59,6 +59,7 @@ export function TriageProvider(props: { children: JSX.Element }) {
     restore,
     threadId,
   ) => {
+    if (notices().some((notice) => notice.threadId === threadId)) return;
     const id = crypto.randomUUID();
     setNotices((items) => [
       ...items,

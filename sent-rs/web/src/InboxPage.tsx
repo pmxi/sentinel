@@ -497,6 +497,13 @@ function Reader(props: {
     });
   };
   const unavailable = createMemo(() => !message() || action.isPending);
+  const triageUnavailable = createMemo(
+    () =>
+      !message() ||
+      (action.isPending &&
+        action.variables?.action !== "mark_read" &&
+        action.variables?.action !== "mark_unread"),
+  );
   useCommands("reader", () => [
     {
       id: "archive",
@@ -504,7 +511,7 @@ function Reader(props: {
       group: "Message",
       keys: ["e"],
       run: () => triageAction("archive"),
-      disabled: unavailable(),
+      disabled: triageUnavailable(),
     },
     {
       id: "delete",
@@ -512,7 +519,7 @@ function Reader(props: {
       group: "Message",
       keys: ["#"],
       run: () => triageAction("delete"),
-      disabled: unavailable(),
+      disabled: triageUnavailable(),
     },
     {
       id: "reply",
