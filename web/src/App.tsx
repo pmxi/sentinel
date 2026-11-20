@@ -9,7 +9,6 @@ import {
   Search,
   Send,
   Settings2,
-  Sparkles,
   Trash2,
   X,
 } from "lucide-solid";
@@ -312,11 +311,6 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
             </button>
             <nav>
               <NavItem href="/inbox" label="Inbox" icon={<Inbox size={17} />} />
-              <NavItem
-                href="/inbox/unclassified"
-                label="Awaiting sorting"
-                icon={<Sparkles size={17} />}
-              />
               <NavItem href="/inbox/all" label="All mail" icon={<Mail size={17} />} />
               <NavItem href="/inbox/sent" label="Sent" icon={<Send size={17} />} />
               <NavItem href="/drafts" label="Drafts" icon={<FilePenLine size={17} />} />

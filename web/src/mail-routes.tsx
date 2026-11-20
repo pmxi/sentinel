@@ -9,13 +9,13 @@ function InboxRedirect() {
 export const inboxRoutes: RouteDefinition[] = [
   { path: "/", component: InboxRedirect },
   { path: "/inbox", component: InboxRoute },
-  ...["l1", "l2", "l3"].map((view) => ({
+  ...["l1", "l2", "l3", "unclassified"].map((view) => ({
     path: `/inbox/${view}`,
     component: InboxRedirect,
   })),
   {
     path: "/inbox/:view",
-    matchFilters: { view: ["all", "sent", "trash", "unclassified"] },
+    matchFilters: { view: ["all", "sent", "trash"] },
     component: InboxRoute,
   },
   { path: "*", component: InboxRedirect },

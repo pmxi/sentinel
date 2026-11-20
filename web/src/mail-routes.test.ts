@@ -13,44 +13,54 @@ vi.mock("./App", () => ({
 }));
 
 describe("mail routes", () => {
-  it.each(["/", "/missing", "/inbox/unknown", "/inbox/l1", "/inbox/l2", "/inbox/l3"])(
-    "redirects %s to Inbox",
-    async (path) => {
-      const history = createMemoryHistory();
-      history.set({ value: path, replace: true, scroll: false });
-      const container = document.createElement("div");
-      const dispose = render(
-        () => createComponent(MemoryRouter, { history, children: inboxRoutes }),
-        container,
-      );
-      try {
-        await vi.waitFor(() => expect(container.textContent).toBe("/inbox|inbox"));
-      } finally {
-        dispose();
-      }
-    },
-  );
+  it.each([
+    "/",
+    "/missing",
+    "/inbox/unknown",
+    "/inbox/l1",
+    "/inbox/l2",
+    "/inbox/l3",
+    "/inbox/unclassified",
+  ])("redirects %s to Inbox", async (path) => {
+    const history = createMemoryHistory();
+    history.set({ value: path, replace: true, scroll: false });
+    const container = document.createElement("div");
+    const dispose = render(
+      () => createComponent(MemoryRouter, { history, children: inboxRoutes }),
+      container,
+    );
+    try {
+      await vi.waitFor(() => expect(container.textContent).toBe("/inbox|inbox"));
+    } finally {
+      dispose();
+    }
+  });
 
-  it.each(["/", "/missing", "/inbox/unknown", "/inbox/l1", "/inbox/l2", "/inbox/l3"])(
-    "preserves search parameters and hash when redirecting %s",
-    async (path) => {
-      const suffix = "?message=thread%2F123&account=account%2B1#conversation";
-      const history = createMemoryHistory();
-      history.set({ value: path + suffix, replace: true, scroll: false });
-      const container = document.createElement("div");
-      const dispose = render(
-        () => createComponent(MemoryRouter, { history, children: inboxRoutes }),
-        container,
-      );
-      try {
-        await vi.waitFor(() => expect(container.textContent).toBe(`/inbox${suffix}|inbox`));
-      } finally {
-        dispose();
-      }
-    },
-  );
+  it.each([
+    "/",
+    "/missing",
+    "/inbox/unknown",
+    "/inbox/l1",
+    "/inbox/l2",
+    "/inbox/l3",
+    "/inbox/unclassified",
+  ])("preserves search parameters and hash when redirecting %s", async (path) => {
+    const suffix = "?message=thread%2F123&account=account%2B1#conversation";
+    const history = createMemoryHistory();
+    history.set({ value: path + suffix, replace: true, scroll: false });
+    const container = document.createElement("div");
+    const dispose = render(
+      () => createComponent(MemoryRouter, { history, children: inboxRoutes }),
+      container,
+    );
+    try {
+      await vi.waitFor(() => expect(container.textContent).toBe(`/inbox${suffix}|inbox`));
+    } finally {
+      dispose();
+    }
+  });
 
-  it.each(["/inbox", "/inbox/all", "/inbox/sent", "/inbox/trash", "/inbox/unclassified"])(
+  it.each(["/inbox", "/inbox/all", "/inbox/sent", "/inbox/trash"])(
     "keeps %s directly accessible",
     async (path) => {
       const history = createMemoryHistory();

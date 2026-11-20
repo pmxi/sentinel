@@ -277,7 +277,7 @@ describe("mail list presentation", () => {
     expect(row?.querySelector(".message-time")?.textContent).toContain("Sorting…");
   });
 
-  it.each(["inbox", "all", "sent", "trash", "unclassified"])(
+  it.each(["inbox", "all", "sent", "trash"])(
     "uses mixed-tier highlights in Inbox and All mail (%s)",
     async (view) => {
       const container = await reader(true, false, view);
@@ -299,7 +299,7 @@ describe("mail list presentation", () => {
         expect(container.querySelector('a[href="/inbox/l3"]')).toBeNull();
         expect(
           [...container.querySelectorAll(".sidebar nav > *")].map((item) => item.textContent),
-        ).toEqual(["Inbox", "Awaiting sorting", "All mail", "Sent", "Drafts", "Trash"]);
+        ).toEqual(["Inbox", "All mail", "Sent", "Drafts", "Trash"]);
       }
     },
   );
