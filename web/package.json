@@ -1,0 +1,40 @@
+{
+  "name": "@sent/solid-web",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "packageManager": "pnpm@11.21.0",
+  "scripts": {
+    "dev": "vite",
+    "typecheck": "tsc --noEmit",
+    "lint": "biome check src",
+    "test": "vitest run",
+    "sw:check": "node scripts/service-worker-check.mjs",
+    "build": "tsc --noEmit && vite build"
+  },
+  "dependencies": {
+    "@solidjs/router": "^0.15.3",
+    "@sqlite.org/sqlite-wasm": "3.54.1-build1",
+    "@tanstack/solid-query": "latest",
+    "@tanstack/solid-virtual": "^3.13.53",
+    "hast-util-to-html": "^9.0.5",
+    "lucide-solid": "latest",
+    "remark-parse": "^11.0.0",
+    "remark-rehype": "^11.1.2",
+    "solid-js": "^1.9.9",
+    "unified": "^11.0.5",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.7",
+    "@types/hast": "^3.0.5",
+    "@types/node": "latest",
+    "happy-dom": "latest",
+    "pg": "latest",
+    "playwright-core": "^1.65.1",
+    "typescript": "~6.0.2",
+    "vite": "latest",
+    "vite-plugin-solid": "latest",
+    "vitest": "latest"
+  }
+}

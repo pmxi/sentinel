@@ -7,10 +7,11 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=%h/sent/current
 EnvironmentFile=/opt/sent/app/.env
-ExecStart=/usr/local/bin/node24 %h/sent/current/apps/server/dist/index.js
+ExecStart=%h/sent/bin/sent-run server
 Restart=always
 RestartSec=3
 TimeoutStopSec=30
+KillSignal=SIGINT
 UMask=0077
 NoNewPrivileges=true
 

@@ -2,7 +2,7 @@
 
 Sent is a private, single-user web email client that unifies Gmail and Microsoft mail, puts important messages in an L1 attention queue, and searches the complete synchronized archive by words and meaning.
 
-The repository contains a responsive React client, a Fastify API, a separate PostgreSQL-backed worker, Gmail and Microsoft Graph adapters, and a PostgreSQL/pgvector database. See [`plan.md`](./plan.md) for the product decisions and [`roadmap.md`](./roadmap.md) for intentionally deferred work.
+The repository contains a SolidJS client (`web/`), a Rust Axum API (`server/`), a separate Rust Tokio worker (`worker/`), shared Rust code with the Gmail and Microsoft Graph adapters (`core/`), a fake-mail seeder (`seed/`), and PostgreSQL/pgvector SQL migrations (`migrations/`). The earlier TypeScript/React implementation is in git history before the Rust build replaced it. See [`plan.md`](./plan.md) for the product decisions and [`roadmap.md`](./roadmap.md) for intentionally deferred work.
 
 ## What works
 
@@ -19,69 +19,284 @@ The repository contains a responsive React client, a Fastify API, a separate Pos
 
 ## Local development
 
-### Keyboard workflow
+### One-command local run
 
-Open **Commands** in the sidebar, press **⌘K / Ctrl+K**, or press **?** to browse
-and search commands. Use ↑ / ↓ and Enter to run a command; Escape dismisses the palette.
+Prerequisites: a local default Docker context with Compose v2, Rust stable, Node 24, pnpm 11, Bash 4.3+
+and curl. From the repository root (no `.env` setup required):
 
-| Keys | Action |
-| --- | --- |
-| `j` / `k` | Focus next / previous message; switch messages if the reader is open |
-| Enter / Escape | Open focused message / return to the list |
-| `e` / `#` | Archive / move the open message to Trash |
-| `r` / `a` / `f` | Reply / reply all / forward |
-| `u` / `s` | Toggle read state / flag; marking unread returns to the list |
-| `c` / `/` | Compose / focus mail search |
-| `g` then `i` / `u` / `l` | Important / Updates / Low priority |
-| `g` then `a` / `s` / `d` / `t` | All mail / Sent / Drafts / Trash |
+```sh
+scripts/run-local.sh
+# Optional: --messages 10000 --port 4001
+# Or: SENT_LOCAL_DB=sent_benchmark_large SENT_LOCAL_PORT=4001 scripts/run-local.sh --messages 10000
+```
 
-Single-key shortcuts pause in text fields and selects. All shortcuts pause while
-composing so typing cannot trigger mail actions. Navigation stays within the currently
-loaded messages, including filtered inboxes and search results.
+The URL is **http://127.0.0.1:4000** and the local-only login password is
+**`sent-local-dev-password`**. The runner prints both after the API, fake sync and
+worker heartbeat are healthy. It starts only Compose's Postgres service on
+loopback port **5433**, creates/uses **`sent_benchmark`** (never `sent`), installs
+dependencies, builds Solid and the release binaries, applies the shared migrations
+via the seeder, and replaces fake fixture accounts with a fresh deterministic
+mailbox (3000 messages by default; `--messages 0` creates an empty mailbox).
+Only names `sent_benchmark` or `sent_benchmark_*` are accepted as DB overrides.
 
-### Setup
+The runner ignores `.env` for Compose and overrides DB/auth/provider settings for
+the Rust processes: it binds to loopback, forces fake providers, disables AI/live
+credentials, and uses disposable local auth/encryption values. Do not use these
+values outside local development. No deployment services are started.
 
-Requirements: Node.js 24+, pnpm through Corepack, and Docker.
+**Ctrl+C stops both Rust processes**; if either exits, the other is stopped too.
+Postgres is deliberately left running, since other local databases may use it.
+Rerunning the launcher resets the fake mailbox.
 
-1. Install dependencies.
+### Manual setup
 
-   ```sh
-   corepack pnpm install
-   ```
+From the repository root:
 
-2. Start PostgreSQL only.
+```sh
+POSTGRES_PORT=5433 docker compose up -d postgres
+export DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent
+export SENT_FAKE_PROVIDERS=true
+export SESSION_SECRET=sent-local-session-secret-at-least-32-characters
+export SENT_PASSWORD_HASH="$(target/release/sent-hash-password sent-local-dev-password)"
+cargo build --release
+pnpm --dir web install --frozen-lockfile
+pnpm --dir web build
+target/release/sent-seed --reset
+target/release/sent-server
+# In a second terminal with the same environment:
+target/release/sent-worker
+```
 
-   ```sh
-   docker compose up -d postgres
-   ```
+The API defaults to port 3000. Configuration uses the names in `.env.example`;
+`.env` is loaded without replacing exported variables. `WEB_DIST_PATH` can point
+to any built SPA, with `index.html` fallback. Its default is `web/dist`.
+The server never starts a worker;
+the worker is a separate process.
+`MIGRATIONS_PATH` optionally selects a directory of SQL migrations.
 
-   If port 5432 is already occupied, run this with `POSTGRES_PORT=5433` and use port 5433 in the local `DATABASE_URL` below.
+The migration runner uses the original SQL files (not copies), advisory lock
+89372411, and `sent_migrations(filename, applied_at)`,, the same history the TypeScript build used. SQLx uses runtime queries; no database is needed to
+build. The `v1` AES-256-GCM credential envelope is compatible with Node's format.
 
-3. Copy `.env.example` to `.env`, then set these local values:
+### Fixtures and provider safety
 
-   ```sh
-   SENT_PUBLIC_URL=http://localhost:3000
-   SENT_WEB_URL=http://localhost:5173
-   DATABASE_URL=postgres://sent:sent-local-only@localhost:5432/sent
-   SENT_PASSWORD_HASH='<output of the next command>'
-   SESSION_SECRET=<openssl rand -base64 32>
-   TOKEN_ENCRYPTION_KEY=<openssl rand -base64 32>
-   ```
+`sent-seed --messages N` defaults to 3000 messages in 1200 conversations, split
+between Gmail and Microsoft fixture accounts. IDs, timestamps and contents are
+deterministic. `--reset` deletes only the two deterministic fixture accounts and
+their dependent data, not other accounts. Seeding requires both a loopback
+database host and `SENT_FAKE_PROVIDERS=true`. It does not reset arbitrary databases.
 
-   Generate the login hash without storing the plaintext password:
+Fake accounts contain an explicit `sent-fake-provider:` credentials marker, **not
+real OAuth credentials**. The Rust provider boundary refuses to use that marker
+for live requests even when fake mode is off. Fake mode returns local
+attachment bytes and disables OAuth connections. Sending still enqueues exactly
+the same durable mutation and removes the draft; provider
+dispatch is performed by the separate worker, not an inline HTTP request.
 
-   ```sh
-   printf '%s' 'your long password' | pnpm sent:hash-password
-   ```
+### Checks
 
-4. Apply the database migration and run all three processes.
+CI (`.github/workflows/ci.yml`) runs the `rust` and `web` jobs on every push and PR;
+production deploys wait for both. Locally:
 
-   ```sh
-   pnpm db:migrate
-   pnpm dev
-   ```
+```sh
+docker exec sent-postgres-1 psql -U sent -d sent -c 'create database sent_test_rust'
+cargo fmt --all --check
+cargo clippy --locked --all-targets -- -D warnings
+SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_rust cargo test --locked
+bash -n scripts/run-local.sh && python3 scripts/test-run-local.py
+python3 deploy/test-deploy.py
+pnpm --dir web install --frozen-lockfile
+pnpm --dir web typecheck && pnpm --dir web lint && pnpm --dir web test && pnpm --dir web build
+```
 
-   The Vite client is at `http://localhost:5173`; it proxies API calls to `http://localhost:3000`.
+Integration tests skip without `SENT_TEST_DATABASE_URL` and refuse database names
+outside `sent_test_*`. They mutate/truncate their test database.
+
+Live OAuth, provider attachment downloads and OpenAI hybrid search are not exercised
+by these checks; no production service or credentials are required.
+
+### Worker
+
+`sent-worker` is a Tokio scheduler: account discovery every
+25 seconds (two syncs concurrently, one per account), backfill continuation after
+5 seconds, outbox processing every 10 seconds, and heartbeat `main` every 30
+seconds. Classification and embedding each have concurrency three and only get
+queued for changed messages when backfill was already complete and an OpenAI key
+is configured. Sync failures retry six times starting at 15 seconds; AI failures
+retry five times starting at 30 seconds, both exponentially. Each sync attempt
+expires after 30 minutes. Account status and classification failures are persisted.
+
+Pending jobs and retry deadlines are checkpointed in the existing
+`worker_state.metadata` JSON and restored on restart. A session advisory lock
+89372413 enforces a single scheduler per database. SIGINT/SIGTERM stop scheduling, drain
+active work for up to 30 seconds, and checkpoint remaining work. Outbox delivery
+continues to use the existing lease, retry and durable pre-send checkpoint: an
+ambiguous dispatch or lost completion must not cause an automatic resend.
+
+Fake mode never authenticates or calls either mail provider. Sync records success
+and backfill completion without importing messages; local sends create an
+outbound normalized message in the shared schema so it immediately appears in
+Sent. Actions retain the API's optimistic changes and complete their outbox rows.
+Completed rows are retained with status `complete`.
+
+Provider, normalization, strict OpenAI response/link validation, attachment upload
+and send-checkpoint tests use local wiremock HTTP servers, not real credentials.
+`worker_outbox` additionally exercises delivery recovery using the isolated test
+database. Run the reproducible server/worker smoke check on a fresh local DB:
+
+```sh
+docker exec sent-postgres-1 psql -U sent -d sent -c 'create database sent_test_worker'
+cargo build --release
+SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_worker python3 scripts/worker-smoke.py
+```
+
+The smoke check resets only fixture accounts, starts both Rust binaries, checks
+healthy sync/heartbeat, waits for an undoable archive to complete, verifies a
+draft send appears in Sent, and shuts down the worker via SIGTERM. Logs are in
+the ignored `parity-logs/` directory. It uses `psql` to inspect the outbox rows.
+
+### Web client
+
+`web` uses Solid Router, Solid Query with 15-second stale time, retry counts, 4-second
+mail/thread polling while the local replica is unavailable, and mutation invalidations. Router preloading is
+disabled; ordinary attachment links retain native browser navigation. Solid's
+data reconciliation and keyed rows retain DOM identity across polling. Triage
+captures the visible order before Solid's synchronous updates hide a thread.
+
+It is its own pnpm package with its own lockfile:
+
+```sh
+pnpm --dir web typecheck
+pnpm --dir web lint
+pnpm --dir web test
+pnpm --dir web build
+# Development: /api proxies to the Rust server on port 3000.
+pnpm --dir web dev
+```
+
+Production builds include a hand-written service worker (HTTPS or localhost only).
+It verifies and precaches `index.html` and hashed assets, serves only this static
+shell cache-first, and never intercepts `/api/*`. Build-content hashes version the
+cache; activation deletes older shell caches and claims clients. Controlled tabs
+reload once when a new worker activates, unless a composer is open. Updates flush
+pending draft text and wait until the composer closes, retaining in-memory
+attachments; failed saves leave it open for retry. Startup and returning to a visible tab
+check for updates with the worker HTTP cache bypassed. HTML network responses
+remain `no-cache`; `sw.js` is `no-store` and ignores conditional validators so
+even equal-sized builds published within one filesystem timestamp activate.
+
+`localStorage` holds a last-verified-session marker, account metadata and an opaque replica session ID, not
+mail or credentials. It can paint the shell before fresh API responses arrive,
+including offline. Every startup revalidates the session; an API 401, logout, or
+another tab clearing this metadata returns to login and clears private query data.
+
+#### Browser mailbox replica
+
+After first paint, a dedicated worker loads the official `@sqlite.org/sqlite-wasm`
+and opens a schema-versioned SQLite database through the OPFS SAH-pool VFS. This
+VFS does not require cross-origin isolation headers. The database belongs to one
+login and survives document reloads; another tab unable to acquire its OPFS lock
+uses an in-memory database. Unavailable OPFS or persistent session storage also
+uses memory; unavailable or failed workers retain the network query path.
+Initialization starts after two seconds and never gates rendering or login.
+
+The first snapshot downloads in the background. Until it is complete, queries
+continue using the existing API. Once ready, every mailbox view, cursor page,
+message and conversation reads SQLite first. One delta request every four seconds
+replaces mailbox/reader polling. Optimistic changes are journaled locally as well
+as sent through existing mutations; failed writes and undo restore local state
+without discarding newer overlapping actions. There is no offline mutation queue.
+Search remains server-side until the separate search step.
+
+New authenticated endpoints, without changing existing endpoint JSON:
+
+- `GET /api/sync/snapshot?limit=2000&cursor=...`: immutable paged headers, account
+  data and detail/thread metadata for all mailbox views, including archived/trash.
+- `GET /api/sync/delta?cursor=...`: upserts and deleted IDs from a consistent
+  inventory. Repeatable-read snapshots plus content fingerprints avoid missed
+  commits from timestamp ordering, catch classification/outbox-only changes and
+  detect hard-deleted records/accounts as well as tombstones. No PostgreSQL
+  migration is needed.
+- `GET /api/sync/bodies?ids=...`: background recent-body and on-open older-body reads, at most 16
+  messages and 256 KiB of combined body text per message. Oversized bodies use the
+  existing network reader without persistence. Cached bodies are versioned and
+  retained for the recent window; older, opened bodies use a 32 MiB LRU budget.
+
+Every message's row stays local regardless of age. `RECENT_BODY_DAYS` in
+`web/src/replica-policy.ts` is the single 90-day cutoff setting. Eligible full
+bodies sync in low-priority background batches after the row snapshot is ready.
+Older bodies are fetched only on open, then cached. Recent-body prefetch never
+downloads an older conversation member speculatively. Unopened background bodies
+expire when they age out; explicitly opened bodies can remain in the older LRU.
+Attachments (file contents) and embeddings are never stored in SQLite. Attachment
+metadata/counts remain available for the existing UI. The original per-message
+256 KiB body limit still applies; larger messages retain the network reader path.
+
+Replica schema version 3 stores compact metadata tuples and shares account records.
+Lists scan a chronological filter/order index with an early limit, then batch thread
+counts and senders through a second covering index. Only conversation-summary
+columns cross the worker boundary. Snapshot commit vacuums discarded staging and
+obsolete schema pages before advertising readiness. Full bodies retain all reader
+forms losslessly: the worker gzip-compresses them with `CompressionStream` when
+smaller and restores them before publishing reader data. Equal text/plain forms
+share one stored value; browsers without compression keep ordinary JSON bodies.
+The older-body LRU continues charging uncompressed bytes.
+
+Tradeoff: each delta scans the current header inventory on the server; it is not
+an indexed, durable event log. The server retains 16 bounded cursor generations,
+including at most two full snapshots, with a 15-minute idle lifetime. Restart or
+eviction returns `410 { reset: true }` and triggers a background resnapshot, never
+a silently skipped update. Snapshot and delta payloads contain no message bodies.
+
+Mail is stored in the browser's private OPFS storage, not encrypted by this
+application. Logout/401 revokes the local session, closes/wipes its database and
+notifies other tabs. LocalStorage contains no mail, passwords or bearer tokens.
+Pending shell activation waits for these private database wipes before reloading.
+Sign-out waits up to two seconds before navigating; unfinished cleanup keeps a
+durable revoked identifier. Startup retries orphaned/revoked database deletion
+before opening a replica. Query connectivity gating never blocks SQLite reads,
+and incomplete body placeholders cannot be quoted into reply/forward drafts.
+Pending-body readers refetch on reconnect even while their cached headers are fresh.
+The static-only service worker still never handles `/api/*`.
+
+After release/web builds, check against an isolated, existing local test database:
+
+```sh
+SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_sqlite node web/scripts/replica-check.mjs
+```
+
+After the production web and Rust release builds, run the isolated Playwright
+offline/update/auth check (it resets only the named local `sent_test_*` database):
+
+```sh
+SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_sw pnpm --dir web sw:check
+```
+
+#### On-device search
+
+Schema 6 rebuilds the browser cache once and maintains one contentless-delete FTS5
+index over subject/sender/recipients/snippet headers and locally cached body text.
+Only message/thread IDs and ordering timestamps are retained as unindexed content;
+searchable text is not stored twice. BM25 favors subject and sender matches,
+with recency/ID tie-breaks; the final literal token is a prefix. Operators, quotes and
+punctuation in user queries cannot become FTS syntax. Indexed text and queries share
+NFKC normalization. Queries are bounded to 32 tokens.
+
+The search page and Cmd+K share the existing debounced query cache. Once the replica
+is ready they publish a viewport-sized local lexical page without a request, then
+append the rest of the 75-result page after paint. Native FTS rank limits candidates;
+ties and duplicate conversations expand the bound before recency/ID tie-breaking.
+Background initialization warms the search index into SQLite's 64 MiB target page
+cache; this uses RAM, not another persistent copy or a search-result cache. When
+recent-body initialization completes, it reads the FTS payload pages and runs one
+representative header query to warm the SQLite/WASM search path before user input.
+Online hybrid search
+refines asynchronously after that paint; existing rows and selected message identities
+stay fixed while semantic-only conversations append. Offline no refinement is sent.
+Embeddings and attachment contents remain server-side. Mail older than 90 days whose
+body has not been opened locally is searchable by headers/snippet, **not its body**.
+Body arrival, eviction, version changes, snapshots, deltas and tombstones update the
+index; archived mail stays searchable, deleted mail does not.
 
 ## Required external credentials
 
@@ -125,39 +340,28 @@ Sent supports up to 10 outgoing attachments totaling 20 MB per message. Microsof
 
 ## First import
 
-After connecting each account in Settings, the worker pages through the entire archive. Imported messages remain visible in L1/Unclassified until classification completes, so an AI failure cannot hide mail.
-
-Once the archive has arrived, run the two deliberately manual historical jobs:
-
-```sh
-pnpm sent:classify-latest
-pnpm sent:classify-latest --account user@example.com
-pnpm sent:classify-latest --force --limit 200
-pnpm sent:embed-archive
-```
-
-The first classifies at most the newest 500 messages that do not already have a model result,
-optionally restricted to one account. `--force` reprocesses the requested number of newest inbound
-messages, replacing their model classification and clean Markdown reader rendition while preserving manual
-tier overrides. The embedding command processes every unembedded message. The live worker
-automatically classifies, generates reader text, and embeds newly synchronized messages after
-`OPENAI_API_KEY` is configured.
+After connecting each account in Settings, the worker pages through the entire archive. Imported messages remain visible in L1/Unclassified until classification completes, so an AI failure cannot hide mail. The worker classifies, generates reader text, and embeds newly synchronized messages once `OPENAI_API_KEY` is configured. The manual historical classify/embed commands belonged to the TypeScript build and have not been ported yet.
 
 ## Production deployment
 
 ### Native production: pull-based push-to-deploy
 
 The production box runs user systemd units as `sentinel` (linger must already
-be enabled). Every two minutes `sent-deploy.timer` checks GitHub's `master` SHA.
-Only a new SHA queries the GitHub check-runs API; the latest GitHub Actions
-`check` job must succeed. Pending checks retry next tick; rejected checks and
+be enabled). Every 30 seconds `sent-deploy.timer` checks GitHub's `master` SHA.
+Only a new SHA queries the GitHub check-runs API (with ETags, so unchanged answers are free);
+the latest GitHub Actions `rust` and `web` jobs must succeed. Pending checks retry next tick; rejected checks and
 failed deploys are remembered so they do not loop. No inbound webhook is needed.
 
-Releases are built from a cached mirror into `~/sent/releases/<sha>` with
-`pnpm install --frozen-lockfile` and `pnpm build`. The shared
-`/opt/sent/app/.env` is symlinked, never copied. A custom-format `pg_dump` is
-taken before migrations (last 10 retained), then `~/sent/current` switches
-atomically and both units restart. Health requires active units, database
+Releases are built from a cached mirror into `~/sent/releases/<sha>`: the Rust
+`sent-server` and `sent-worker` binaries (`cargo build --release --locked`, shared
+`~/sent/cargo-target` for incremental builds) are copied to the release's `bin/`, and the
+Solid app is built with pnpm. The release's `runtime.env` points `WEB_DIST_PATH` and
+`MIGRATIONS_PATH` at that release. The shared `/opt/sent/app/.env` is symlinked, never
+copied. Each release installs its systemd units and `~/sent/bin/sent-run`, which starts
+the Rust binaries or, for older TypeScript releases kept for rollback, their Node entry
+points. A custom-format `pg_dump` is taken (last 10 retained), then `~/sent/current`
+switches atomically and both units restart; the Rust services apply pending migrations at
+startup, after the dump. Health requires active units, database
 connectivity and a worker heartbeat after restart, not `status: "ok"`.
 If sync was fresh before deployment, its oldest successful sync must also be
 after restart. Old builds without `sync` do not impose that condition.
@@ -170,7 +374,8 @@ One-time bootstrap on the box, as `sentinel`, from a checkout of this repository
 
 ```sh
 mkdir -p ~/sent/{bin,tools,releases,dumps,state} ~/.config/systemd/user
-# Unpack a trusted Node 24 linux-arm64 tarball to ~/sent/tools/node first.
+# Unpack a trusted Node 24 linux-arm64 tarball to ~/sent/tools/node first, and install
+# stable Rust with rustup using RUSTUP_HOME=~/sent/tools/rustup CARGO_HOME=~/sent/tools/cargo.
 # That installation must include corepack; the runtime stays /usr/local/bin/node24.
 export PATH="$HOME/sent/tools/node/bin:$PATH"
 corepack enable
@@ -178,6 +383,7 @@ corepack prepare pnpm@11.21.0 --activate
 # Also required on PATH: git, curl, flock, tar, pg_dump (matching the DB major).
 # git ls-remote https://github.com/pmxi/sentinel.git must work non-interactively.
 install -m 700 deploy/deploy.sh ~/sent/bin/deploy.sh
+install -m 700 deploy/sent-run ~/sent/bin/sent-run
 install -m 644 deploy/systemd/sent-{server,worker,deploy}.service deploy/systemd/sent-deploy.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable sent-server.service sent-worker.service
@@ -189,8 +395,8 @@ Keep `/opt/sent/app` intact: the first run registers it as
 `~/sent/releases/legacy-328f56f` and uses it for rollback. Keep its `.env` in
 place, readable only by the owner. Bootstrap needs no sudo; PostgreSQL must be
 reachable using `DATABASE_URL` from that file. The user services keep the
-existing absolute runtime and EnvironmentFile paths. Unit changes in later
-releases must be installed manually; only the script self-updates.
+existing EnvironmentFile path. Successful releases install their own deploy script;
+every release installs its units and launcher before restarting.
 
 ```sh
 journalctl --user -u sent-deploy -u sent-server -u sent-worker -f
@@ -219,48 +425,9 @@ Paths/endpoints can be overridden with `SENT_DEPLOY_ROOT`, `SENT_DEPLOY_REPO`,
 `SENT_DEPLOY_LEGACY`, `SENT_DEPLOY_TOOLS`, and `SENT_DEPLOY_HEALTH`;
 `SENT_DEPLOY_TIMEOUT` and `SENT_DEPLOY_INTERVAL` control health polling seconds.
 
-### Docker deployment
-
-1. Point a DNS record for the desired hostname at the server.
-2. Set `SENT_DOMAIN=mail.example.com` and `SENT_PUBLIC_URL=https://mail.example.com` in `.env`.
-   Leave `SENT_WEB_URL` blank in production so OAuth returns to `SENT_PUBLIC_URL`.
-   Set `HOST=127.0.0.1` when nginx runs on the same host.
-3. Use long random values for `POSTGRES_PASSWORD`, `SESSION_SECRET`, and `TOKEN_ENCRYPTION_KEY`; keep the encryption key stable or existing OAuth tokens cannot be decrypted.
-4. Register the production callback URLs with Google and Microsoft.
-5. Start the stack:
-
-   ```sh
-   docker compose up -d --build
-   ```
-
-Caddy obtains and renews HTTPS certificates. The app and worker use the same image with different commands. PostgreSQL and Caddy state live in named Docker volumes.
-
-Check status with:
-
-```sh
-docker compose ps
-docker compose logs -f server worker
-curl -fsS --max-time 10 "https://$SENT_DOMAIN/api/health"
-```
-
-`GET /api/health` needs no credentials. For monitoring, require a JSON response with
-`database: true`, `status: "ok"`, and `sync.fresh: true`; both `"ok"` and
-`"degraded"` can return HTTP 200. `workerHeartbeat` reports when the worker last
-ran its poll tick, not when mail was last synced. For an API/DB and sync-only
-watch, check `database`, `workerHeartbeat` (at most 3 minutes old), and `sync.fresh`
-separately: failed outbound mutations can also make the overall status degraded.
-
-`sync` reports the number of connected `accounts`, how many `needsReauth`, and
-how many are `stale` (never synced successfully or last successful sync more than
-3 minutes ago). These counts can overlap. `oldestSuccessfulSyncAt` is the oldest
-recorded successful sync across accounts, or `null` if there isn't one. Sync is
-fresh when neither count is nonzero, including when there are no accounts to
-sync. If the database is unavailable, `database` and `sync.fresh` are false and
-the zero counts are placeholders, not evidence that no accounts exist.
-
 ## Backups
 
-For Docker, run `scripts/backup.sh` from cron or a systemd timer. It writes compressed PostgreSQL dumps to `./backups` by default and retains 14 days. Override the destination with `SENT_BACKUP_DIR`, ideally to encrypted storage copied off the host.
+`scripts/backup.sh` can run from cron or a systemd timer. It writes compressed PostgreSQL dumps to `./backups` by default and retains 14 days. Override the destination with `SENT_BACKUP_DIR`, ideally to encrypted storage copied off the host.
 
 On the native production host, `sent-backup.timer` is a **system** timer, separate
 from the user-level deploy timer. It runs a root-installed copy of
@@ -298,20 +465,20 @@ Scratch mode only accepts `sent_restore_*` names and does not create, drop, or
 clean the database. It restores atomically and skips source ownership, grants,
 and comments (the extension comments are owned by the administrator).
 
-For actual disaster recovery in Docker, stop the server and worker, then run
+For actual disaster recovery against the local Compose database, stop the server and worker, then run
 `scripts/restore.sh /path/to/sent.dump` **without** `--scratch`. That form requires
 an explicit `RESTORE` confirmation because it replaces the Compose database.
 
 ## Common commands
 
 ```sh
-pnpm check                 # format, lint, types, tests
-pnpm build                 # web, API, and worker production builds
-pnpm db:migrate            # apply idempotent SQL migrations
-pnpm sent:classify-latest  # classify newest 500 unclassified messages
-pnpm sent:embed-archive    # embed the complete unembedded archive
-pnpm sent:hash-password    # generate an Argon2id login hash
+scripts/run-local.sh                        # fake-mail local stack on http://127.0.0.1:4000
+cargo build --release                       # sent-server, sent-worker, sent-seed, sent-hash-password
+target/release/sent-hash-password 'pass'    # generate an Argon2id login hash
+pnpm --dir web build                        # production web build in web/dist
 ```
+
+The server and worker apply pending SQL migrations from `migrations/` at startup.
 
 ## Security notes
 
