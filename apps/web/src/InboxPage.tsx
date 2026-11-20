@@ -253,6 +253,7 @@ function Reader({
   const { view } = useParams();
   const trash = view === "trash";
   const [bodyView, setBodyView] = useState<"plain" | "original">("plain");
+  const [hasShownFallback, setHasShownFallback] = useState(false);
   const newestRef = useRef<HTMLElement>(null);
   const openedMessages = useRef(new Set<string>());
   const scrolledToNewest = useRef(false);
@@ -288,6 +289,7 @@ function Reader({
     },
   });
   useEffect(() => {
+    if (thread.isError) setHasShownFallback(true);
     // On a thread failure the selected message is still shown. Mark only what
     // was displayed, then handle any remaining messages if the thread recovers.
     const visible = thread.data?.messages ?? (thread.isError && detail.data ? [detail.data] : []);
@@ -302,7 +304,7 @@ function Reader({
     scrolledToNewest.current = true;
     newestRef.current.scrollIntoView({ block: "nearest" });
   }, [thread.data]);
-  if (detail.isLoading || thread.isLoading)
+  if (detail.isLoading || (thread.isLoading && !hasShownFallback))
     return (
       <section className="reader">
         <div className="reader-skeleton" />
@@ -370,7 +372,11 @@ function Reader({
           </p>
         </header>
         {thread.isError && (
-          <p role="status">Couldn’t load the conversation. Showing the selected message.</p>
+          <p role="status">
+            {thread.data
+              ? "Couldn’t refresh the conversation. Showing saved messages."
+              : "Couldn’t load the conversation. Showing the selected message."}
+          </p>
         )}
         {hasPlainText && (
           <nav className="body-view-picker" aria-label="Message body view">
