@@ -8,8 +8,8 @@ import {
   onCleanup,
   untrack,
 } from "solid-js";
-import { sentApi } from "./api";
 import { quietUntil } from "./mail-cache";
+import { mailboxRead, replicaReady } from "./replica";
 
 export type MailboxPage = MessageListResponse & { pageCount: number };
 export function distinctRows(rows: ConversationSummary[]) {
@@ -69,10 +69,11 @@ export function useMailbox(view: Accessor<string>, accountId: Accessor<string | 
       return refreshPages((cursor) => {
         const page = new URLSearchParams(input);
         if (cursor) page.set("cursor", cursor);
-        return sentApi.messages(page, signal);
+        return mailboxRead(client, page, signal);
       }, client.getQueryData<MailboxPage>(key())?.pageCount ?? 1);
     },
-    refetchInterval: loadingMore() || quietUntil(client) > Date.now() ? false : 4000,
+    refetchInterval:
+      replicaReady(client) || loadingMore() || quietUntil(client) > Date.now() ? false : 4000,
     reconcile: "threadId",
   }));
   const loadMore = (): Promise<void> => {
@@ -95,7 +96,7 @@ export function useMailbox(view: Accessor<string>, accountId: Accessor<string | 
       try {
         await client.cancelQueries({ queryKey, exact: true });
         if (request.controller.signal.aborted) return;
-        const page = await sentApi.messages(input, request.controller.signal);
+        const page = await mailboxRead(client, input, request.controller.signal);
         if (request.controller.signal.aborted) return;
         if (page.nextCursor === cursor) throw new Error("Mail pagination did not advance");
         client.setQueryData<MailboxPage>(queryKey, (previous) =>

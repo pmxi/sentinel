@@ -2,6 +2,7 @@ import type { ConversationSummary, MessageSummary, Tier } from "@sent/shared";
 import type { QueryClient, QueryKey } from "@tanstack/solid-query";
 import { createSignal, type Signal } from "solid-js";
 import type { CacheResponse, MessagePatch } from "./api";
+import { replicaFor } from "./replica";
 
 type Mail = MessageSummary & Partial<Pick<MessagePatch, "archived" | "deleted" | "classified">>;
 type Page = { messages: Mail[]; pageCount?: number };
@@ -372,6 +373,7 @@ export function serverPatches(client: QueryClient, response?: CacheResponse, ver
   return entries.map((entry) => entry.key);
 }
 export function optimistic(client: QueryClient, change: Change) {
+  const local = replicaFor(client)?.begin(change);
   const value = state(client);
   value.pending++;
   const revisions = versionState(client),
@@ -432,10 +434,12 @@ export function optimistic(client: QueryClient, change: Change) {
   };
   return {
     commit(response?: CacheResponse) {
+      local?.commit(response);
       if (readOperation) readOperation.pending = false;
       finish(serverPatches(client, response, version));
     },
     rollback(response?: CacheResponse) {
+      local?.rollback(response);
       if (change.id && readHistory && readOperation) {
         readOperation.pending = false;
         readOperation.failed = true;

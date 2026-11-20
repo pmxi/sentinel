@@ -17,6 +17,8 @@ import { CommandProvider, useCommandPalette, useCommands } from "./commands";
 import { ComposeProvider, useCompose } from "./compose";
 import { InboxPage, SearchResults } from "./InboxPage";
 import { LoginPage } from "./LoginPage";
+import { quietUntil } from "./mail-cache";
+import { MailboxReplica } from "./replica";
 import { Link, NavLink, useLocation, useNavigate } from "./router";
 import {
   forgetShellMetadata,
@@ -99,6 +101,27 @@ export default function App(props: { children?: JSX.Element }) {
   );
 }
 function AuthenticatedApp(props: { children?: JSX.Element }) {
+  const client = useQueryClient();
+  const replica = new MailboxReplica(
+    client,
+    () => quietUntil(client) <= Date.now(),
+    () => client.getQueryState(["session"])?.status === "success",
+  );
+  createEffect(() => {
+    document.documentElement.dataset.sentReplica = replica.status().ready ? "ready" : "loading";
+    document.documentElement.dataset.sentReplicaStorage = replica.status().persistent
+      ? "opfs"
+      : "memory";
+    document.documentElement.dataset.sentReplicaSession = replica.id;
+  });
+  onCleanup(() => {
+    void replica.close();
+    if (document.documentElement.dataset.sentReplicaSession === replica.id) {
+      delete document.documentElement.dataset.sentReplica;
+      delete document.documentElement.dataset.sentReplicaStorage;
+      delete document.documentElement.dataset.sentReplicaSession;
+    }
+  });
   const metadata = readShellMetadata();
   const accounts = createQuery(() => ({
     queryKey: ["accounts"],

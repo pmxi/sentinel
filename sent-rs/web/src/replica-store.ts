@@ -1,0 +1,324 @@
+import type { ConversationSummary, MailAddress } from "@sent/shared";
+import type { Database, SqlValue } from "@sqlite.org/sqlite-wasm";
+import type { CacheResponse } from "./api";
+import {
+  MAX_BODY_BYTES,
+  MAX_BODY_CACHE_BYTES,
+  type ReplicaChange,
+  type ReplicaDelta,
+  type ReplicaDetail,
+  type ReplicaList,
+  type ReplicaRow,
+} from "./replica-types";
+
+const columns =
+  "id text primary key, thread_id text not null, account_id text not null, received_at text not null, read integer not null, archived integer not null, deleted integer not null, classified integer not null, tier integer, direction text not null, body_version text not null, data text not null";
+function condition(view: string) {
+  const live = `deleted=${view === "trash" ? 1 : 0}`;
+  if (view === "sent") return `${live} and direction='outbound'`;
+  if (["l1", "l2", "l3", "unclassified"].includes(view)) {
+    const tier =
+      view === "unclassified"
+        ? "classified=0"
+        : view === "l1"
+          ? "(tier=1 or classified=0)"
+          : `tier=${Number(view.slice(1))}`;
+    return `${live} and archived=0 and direction='inbound' and ${tier}`;
+  }
+  return live;
+}
+export class ReplicaStore {
+  constructor(readonly db: Database) {
+    if (Number(db.selectValue("pragma user_version")) !== 1) {
+      this.run(
+        "drop table if exists messages; drop table if exists staging; drop table if exists bodies; drop table if exists meta; drop table if exists base; drop table if exists operations;",
+      );
+    }
+    this.run(`create table if not exists messages(${columns}); create table if not exists staging(${columns});
+      create index if not exists messages_thread on messages(thread_id,deleted,received_at);
+      create index if not exists messages_order on messages(received_at desc,id desc);
+      create index if not exists messages_mailbox on messages(deleted,direction,archived,tier,classified,account_id,thread_id,received_at desc,id desc);
+      create table if not exists bodies(id text primary key, version text not null, data text not null, bytes integer not null, touched integer not null);
+      create table if not exists meta(key text primary key,value text not null);
+      create table if not exists base(id text primary key,data text not null);
+      create table if not exists operations(seq integer primary key autoincrement,token text not null,id text not null,patch text not null,status text not null);
+      pragma user_version=1;`);
+    this.transaction(() => {
+      this.run("update operations set status='failed' where status='pending'");
+      for (const { id } of this.rows<{ id: string }>("select id from base")) this.recompute(id);
+    });
+  }
+  private run(sql: string, bind: SqlValue[] = []) {
+    this.db.exec({ sql, bind });
+  }
+  private rows<T>(sql: string, bind: SqlValue[] = []): T[] {
+    return this.db.exec({ sql, bind, rowMode: "object", returnValue: "resultRows" }) as T[];
+  }
+  private transaction<T>(operation: () => T): T {
+    this.run("begin immediate");
+    try {
+      const value = operation();
+      this.run("commit");
+      return value;
+    } catch (error) {
+      this.run("rollback");
+      throw error;
+    }
+  }
+  private put(row: ReplicaRow, table = "messages") {
+    const data = { ...row, textBody: "", htmlBody: null, plainText: null, bodyAvailable: false };
+    this.run(`insert or replace into ${table} values(?,?,?,?,?,?,?,?,?,?,?,?)`, [
+      row.id,
+      row.threadId,
+      row.account.id,
+      row.sortReceivedAt,
+      Number(row.read),
+      Number(Boolean(row.archived)),
+      Number(Boolean(row.deleted)),
+      Number(Boolean(row.classified)),
+      row.tier,
+      row.direction,
+      row.bodyVersion,
+      JSON.stringify(data),
+    ]);
+  }
+  cursor() {
+    return this.db.selectValue("select value from meta where key='cursor'") as string | undefined;
+  }
+  resetStage() {
+    this.run("delete from staging");
+  }
+  stage(rows: ReplicaRow[]) {
+    this.transaction(() => {
+      for (const row of rows) this.put(row, "staging");
+    });
+  }
+  commitStage(cursor: string) {
+    this.transaction(() => {
+      this.run(
+        "delete from messages; insert into messages select * from staging; delete from staging; delete from base; delete from operations;",
+      );
+      this.setCursor(cursor);
+      this.pruneBodies();
+    });
+  }
+  private setCursor(cursor: string) {
+    this.run("insert or replace into meta values('cursor',?)", [cursor]);
+  }
+  delta(delta: ReplicaDelta, staging = false) {
+    const table = staging ? "staging" : "messages";
+    this.transaction(() => {
+      for (const id of delta.deletions) {
+        this.run(`delete from ${table} where id=?`, [id]);
+        if (!staging) this.run("delete from bodies where id=?", [id]);
+      }
+      for (const row of delta.upserts) this.put(row, table);
+      if (!staging) {
+        this.run("delete from base; delete from operations;");
+        this.setCursor(delta.cursor);
+        this.pruneBodies();
+      }
+    });
+  }
+  private pruneBodies() {
+    this.run(
+      "delete from bodies where not exists(select 1 from messages m where m.id=bodies.id and m.body_version=bodies.version)",
+    );
+  }
+  private headers(sql: string, bind: SqlValue[] = []): ReplicaRow[] {
+    return this.rows<{ data: string }>(sql, bind).map((row) => JSON.parse(row.data));
+  }
+  private header(id: string) {
+    return this.headers("select data from messages where id=?", [id])[0];
+  }
+  private members(id: string, trash: boolean) {
+    return this.headers(
+      "select data from messages where thread_id=? and deleted=? order by received_at desc,id desc",
+      [id, Number(trash)],
+    );
+  }
+  list(input: { view: string; accountId?: string; cursor?: string; limit?: number }): ReplicaList {
+    let after: { receivedAt: string; id: string } | undefined;
+    if (input.cursor) {
+      if (!input.cursor.startsWith("local:")) throw new Error("Replica pagination must restart");
+      after = JSON.parse(atob(input.cursor.slice(6)));
+      if (typeof after?.receivedAt !== "string" || typeof after.id !== "string")
+        throw new Error("Invalid local cursor");
+    }
+    const limit = Math.max(1, Math.min(100, input.limit ?? 75));
+    const rows = this.headers(
+      `with ranked as(select id,thread_id,received_at,row_number() over(partition by thread_id order by received_at desc,id desc) rank from messages indexed by messages_mailbox where ${condition(input.view)} and (? is null or account_id=?)),page as materialized(select id,received_at from ranked where rank=1 and (? is null or (received_at,id)<(?,?)) order by received_at desc,id desc limit ?) select m.data from page join messages m on m.id=page.id order by page.received_at desc,page.id desc`,
+      [
+        input.accountId ?? null,
+        input.accountId ?? null,
+        after?.receivedAt ?? null,
+        after?.receivedAt ?? null,
+        after?.id ?? null,
+        limit + 1,
+      ],
+    );
+    const more = rows.length > limit;
+    rows.length = Math.min(rows.length, limit);
+    const messages = rows.map((row) => {
+      const members = this.members(row.threadId, input.view === "trash"),
+        people = new Map<string, MailAddress>();
+      for (const message of members)
+        for (const person of message.from)
+          if (!people.has(person.address.toLowerCase()))
+            people.set(person.address.toLowerCase(), person);
+      const unreadCount = members.filter((message) => !message.read).length;
+      const result: ConversationSummary = {
+        ...row,
+        read: unreadCount === 0,
+        messageCount: members.length,
+        unreadCount,
+        participants: [...people.values()].sort((a, b) =>
+          a.address < b.address ? -1 : a.address > b.address ? 1 : 0,
+        ),
+      };
+      return result;
+    });
+    const last = rows.at(-1);
+    return {
+      messages,
+      nextCursor:
+        more && last
+          ? `local:${btoa(JSON.stringify({ receivedAt: last.sortReceivedAt, id: last.id }))}`
+          : null,
+    };
+  }
+  detail(id: string): ReplicaDetail | undefined {
+    const row = this.header(id);
+    if (!row) return;
+    const body = this.rows<{ data: string }>("select data from bodies where id=? and version=?", [
+      id,
+      row.bodyVersion,
+    ])[0];
+    if (body)
+      this.run("update bodies set touched=? where id=? and touched<?", [
+        Date.now(),
+        id,
+        Date.now() - 60_000,
+      ]);
+    return { message: { ...row, ...(body ? JSON.parse(body.data) : {}) }, hasBody: Boolean(body) };
+  }
+  thread(id: string, trash: boolean) {
+    return this.members(id, trash)
+      .reverse()
+      .map((row) => this.detail(row.id) as ReplicaDetail);
+  }
+  bodies(rows: ReplicaRow[]) {
+    this.transaction(() => {
+      for (const row of rows) {
+        const existing = this.header(row.id);
+        if (!existing) this.put(row);
+        else if (existing.bodyVersion !== row.bodyVersion) {
+          this.put({ ...existing, bodyVersion: row.bodyVersion });
+          this.run("update base set data=json_set(data,'$.bodyVersion',?) where id=?", [
+            row.bodyVersion,
+            row.id,
+          ]);
+        }
+        if (!row.bodyAvailable) continue;
+        const fields = { textBody: row.textBody, htmlBody: row.htmlBody, plainText: row.plainText };
+        const bytes = new TextEncoder().encode(
+          row.textBody + (row.htmlBody ?? "") + (row.plainText ?? ""),
+        ).byteLength;
+        if (bytes > MAX_BODY_BYTES) continue;
+        this.run("insert or replace into bodies values(?,?,?,?,?)", [
+          row.id,
+          row.bodyVersion,
+          JSON.stringify(fields),
+          bytes,
+          Date.now(),
+        ]);
+      }
+      while (
+        Number(this.db.selectValue("select coalesce(sum(bytes),0) from bodies")) >
+        MAX_BODY_CACHE_BYTES
+      )
+        this.run("delete from bodies where id=(select id from bodies order by touched,id limit 1)");
+    });
+  }
+  begin(token: string, change: ReplicaChange) {
+    this.transaction(() => {
+      const rows = change.id
+        ? this.headers("select data from messages where id=?", [change.id])
+        : this.headers(
+            `select data from messages where thread_id=? and ${condition(change.view ?? "all")} and (? is null or account_id=?)`,
+            [change.threadId ?? "", change.accountId ?? null, change.accountId ?? null],
+          );
+      for (const row of rows) {
+        this.run("insert or ignore into base values(?,?)", [row.id, JSON.stringify(row)]);
+        const patch: Record<string, unknown> = { ...change.patch, syncPending: true };
+        if (["mark_read", "mark_unread"].includes(change.action ?? ""))
+          patch.read = change.action === "mark_read";
+        if (["flag", "unflag"].includes(change.action ?? ""))
+          patch.flagged = change.action === "flag";
+        if (change.action === "archive") patch.archived = true;
+        if (change.action === "delete") patch.deleted = true;
+        if ("tier" in change) {
+          patch.tier = change.tier ?? row.modelTier;
+          patch.classified = patch.tier !== null;
+          patch.modelTier = row.modelTier;
+          patch.reasoning = row.reasoning;
+        }
+        this.run("insert into operations(token,id,patch,status) values(?,?,?,'pending')", [
+          token,
+          row.id,
+          JSON.stringify(patch),
+        ]);
+        this.recompute(row.id);
+      }
+    });
+  }
+  settle(token: string, success: boolean, response?: CacheResponse) {
+    this.transaction(() => {
+      const entries = this.rows<{ seq: number; id: string; patch: string }>(
+        "select seq,id,patch from operations where token=?",
+        [token],
+      );
+      if (!success && response?.patches)
+        for (const patch of response.patches) {
+          const base = this.rows<{ data: string }>("select data from base where id=?", [
+            patch.id,
+          ])[0];
+          const row: ReplicaRow | undefined = base ? JSON.parse(base.data) : this.header(patch.id);
+          if (!row) continue;
+          const updated = { ...row, ...patch };
+          if (base)
+            this.run("update base set data=? where id=?", [JSON.stringify(updated), patch.id]);
+          this.put(updated);
+          this.recompute(patch.id);
+        }
+      for (const entry of entries) {
+        const patch = JSON.parse(entry.patch),
+          authoritative = response?.patches?.find((row) => row.id === entry.id);
+        if (success && authoritative)
+          for (const field of Object.keys(patch))
+            if (field in authoritative)
+              patch[field] = authoritative[field as keyof typeof authoritative];
+        this.run("update operations set status=?,patch=? where seq=?", [
+          success ? "success" : "failed",
+          JSON.stringify(patch),
+          entry.seq,
+        ]);
+        this.recompute(entry.id);
+      }
+    });
+  }
+  private recompute(id: string) {
+    const base = this.rows<{ data: string }>("select data from base where id=?", [id])[0];
+    if (!base) return;
+    let row: ReplicaRow = JSON.parse(base.data);
+    for (const operation of this.rows<{ patch: string }>(
+      "select patch from operations where id=? and status!='failed' order by seq",
+      [id],
+    ))
+      row = { ...row, ...JSON.parse(operation.patch) };
+    this.put(row);
+  }
+  count() {
+    return Number(this.db.selectValue("select count(*) from messages"));
+  }
+}

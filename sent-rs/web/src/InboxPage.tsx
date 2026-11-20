@@ -30,6 +30,7 @@ import { optimistic, quietUntil } from "./mail-cache";
 import { useMailbox } from "./mailbox";
 import { cachedRow, headerData, usePrefetch } from "./prefetch";
 import { ReaderText } from "./ReaderText";
+import { localBodyPending, messageRead, replicaReady, threadRead } from "./replica";
 import { useLocation, useNavigate, useParams, useSearchParams } from "./router";
 import { nextMessageId, useTriage, visibleConversations } from "./triage";
 
@@ -565,15 +566,16 @@ function Reader(props: {
   const scrolledToNewest = { current: false };
   const detail = createQuery<MessageDetail>(() => ({
     queryKey: ["message", props.messageId],
-    queryFn: ({ signal }) => sentApi.message(props.messageId, signal),
+    queryFn: ({ signal }) => messageRead(queryClient, props.messageId, signal),
     placeholderData: headerData(props.summary ?? cachedRow(queryClient, props.messageId)),
   }));
   const threadId = createMemo(() => props.summary?.threadId ?? detail.data?.threadId);
   const thread = createQuery(() => ({
     queryKey: ["thread", threadId(), trash()],
-    queryFn: ({ signal }) => sentApi.thread(threadId() ?? "", trash(), signal),
+    queryFn: ({ signal }) => threadRead(queryClient, threadId() ?? "", trash(), signal),
     enabled: Boolean(threadId()),
-    refetchInterval: quietUntil(queryClient) > Date.now() ? false : 4000,
+    refetchInterval:
+      replicaReady(queryClient) || quietUntil(queryClient) > Date.now() ? false : 4000,
   }));
   const orderedMessages = createMemo(
     () => thread.data?.messages ?? (detail.data ? [detail.data] : []),
@@ -964,6 +966,12 @@ function MessageBody(props: { message: MessageDetail; view: "plain" | "original"
   return (
     <>
       {(() => {
+        if (localBodyPending(props.message))
+          return (
+            <div class="plain-body" role="status">
+              Loading message…
+            </div>
+          );
         if (props.view === "plain" && props.message.plainText?.trim())
           return <ReaderText text={props.message.plainText} />;
         if (props.message.htmlBody)

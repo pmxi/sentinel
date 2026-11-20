@@ -6,6 +6,7 @@ use tokio::net::{TcpListener, TcpStream};
 
 mod app;
 mod auth;
+mod sync;
 mod validation;
 
 #[tokio::main]

@@ -1,8 +1,8 @@
 import type { ConversationSummary, MessageDetail, MessageSummary } from "@sent/shared";
 import type { QueryClient } from "@tanstack/solid-query";
 import { type Accessor, createEffect, onCleanup, untrack } from "solid-js";
-import { sentApi } from "./api";
 import { prefetchQuietUntil } from "./mail-cache";
+import { messageRead, threadRead } from "./replica";
 
 export function headerData(item?: MessageSummary): MessageDetail | undefined {
   return (
@@ -61,7 +61,7 @@ export function prefetchQueue(client: QueryClient, trash: boolean) {
       active = ["thread", item.threadId, trash];
       await client.prefetchQuery({
         queryKey: active,
-        queryFn: ({ signal }) => sentApi.thread(item.threadId, trash, signal),
+        queryFn: ({ signal }) => threadRead(client, item.threadId, trash, signal),
         staleTime: 15000,
       });
       if (task.cancelled || stopped) return;
@@ -71,7 +71,7 @@ export function prefetchQueue(client: QueryClient, trash: boolean) {
       active = ["message", item.id];
       await client.prefetchQuery({
         queryKey: active,
-        queryFn: ({ signal }) => sentApi.message(item.id, signal),
+        queryFn: ({ signal }) => messageRead(client, item.id, signal),
         staleTime: 15000,
       });
     } finally {

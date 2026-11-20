@@ -1,0 +1,421 @@
+import type { Account, MessageDetail } from "@sent/shared";
+import type { QueryClient, QueryKey } from "@tanstack/solid-query";
+import { createSignal } from "solid-js";
+import { ApiError, api, type CacheResponse, sentApi } from "./api";
+import { REPLICA_CHANNEL, REPLICA_RESET_EVENT } from "./replica-session";
+import {
+  REPLICA_SESSION_KEY,
+  type ReplicaChange,
+  type ReplicaDelta,
+  type ReplicaDetail,
+  type ReplicaList,
+  type ReplicaPage,
+  type ReplicaRow,
+} from "./replica-types";
+import { UNAUTHORIZED_EVENT } from "./shell-metadata";
+
+const replicas = new WeakMap<QueryClient, MailboxReplica>();
+type RpcReply = { id: number; result?: unknown; error?: string };
+type LocalMessage = MessageDetail & { localBodyPending?: boolean };
+export const localBodyPending = (message?: MessageDetail) =>
+  Boolean((message as LocalMessage | undefined)?.localBodyPending);
+export const replicaReady = (client: QueryClient) => replicas.get(client)?.ready() ?? false;
+export const replicaFor = (client: QueryClient) => replicas.get(client);
+function sessionId() {
+  try {
+    const old = localStorage.getItem(REPLICA_SESSION_KEY);
+    if (old && /^[a-f0-9-]{36}$/.test(old)) return { id: old, persistent: true };
+  } catch {}
+  const id = crypto.randomUUID();
+  try {
+    localStorage.setItem(REPLICA_SESSION_KEY, id);
+    return { id, persistent: localStorage.getItem(REPLICA_SESSION_KEY) === id };
+  } catch {}
+  return { id, persistent: false };
+}
+async function removeDirectory(id: string) {
+  try {
+    const root = await navigator.storage.getDirectory();
+    await root.removeEntry(`.sent-mailbox-${id}`, { recursive: true });
+  } catch {}
+}
+export class MailboxReplica {
+  private readonly identity = sessionId();
+  readonly id = this.identity.id;
+  readonly ready: () => boolean;
+  private setReady: (value: boolean) => void;
+  private worker?: Worker;
+  private closed = false;
+  private next = 0;
+  private calls = new Map<
+    number,
+    {
+      resolve: (value: unknown) => void;
+      reject: (error: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
+  >();
+  private timer?: ReturnType<typeof setTimeout>;
+  private startup?: ReturnType<typeof setTimeout>;
+  private controller = new AbortController();
+  private cursor?: string;
+  private revision = 0;
+  private bodies = new Map<string, Promise<void>>();
+  private channel?: BroadcastChannel;
+  private persistent = false;
+  private hydrated = createSignal(false);
+  private closing?: Promise<void>;
+  constructor(
+    private client: QueryClient,
+    private canPoll: () => boolean,
+    private verified: () => boolean,
+  ) {
+    [this.ready, this.setReady] = createSignal(false);
+    replicas.set(client, this);
+    window.addEventListener(REPLICA_RESET_EVENT, this.reset);
+    try {
+      this.channel = new BroadcastChannel(REPLICA_CHANNEL);
+      this.channel.onmessage = (event) => {
+        if (event.data?.id === this.id) window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+      };
+    } catch {}
+    this.startup = setTimeout(() => void this.start(), 2000);
+  }
+  private reset = (event: Event) => {
+    const id = (event as CustomEvent<{ id?: string }>).detail?.id;
+    if (!id || id === this.id) void this.close(true);
+  };
+  private call<T>(method: string, ...args: unknown[]): Promise<T> {
+    const worker = this.worker;
+    if (!worker || this.closed) return Promise.reject(new Error("Replica is unavailable"));
+    const id = ++this.next;
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.calls.delete(id);
+        reject(new Error("Replica operation timed out"));
+      }, 30_000);
+      this.calls.set(id, { resolve: (value) => resolve(value as T), reject, timer });
+      worker.postMessage({ id, method, args });
+    });
+  }
+  private async start() {
+    if (this.closed || typeof Worker === "undefined") return;
+    try {
+      this.worker = new Worker(new URL("./replica-worker.ts", import.meta.url), { type: "module" });
+      this.worker.onmessage = (event: MessageEvent<RpcReply>) => {
+        const call = this.calls.get(event.data.id);
+        if (!call) return;
+        this.calls.delete(event.data.id);
+        clearTimeout(call.timer);
+        if (event.data.error) call.reject(new Error(event.data.error));
+        else call.resolve(event.data.result);
+      };
+      this.worker.onerror = () => this.fail();
+      const state = await this.call<{ persistent: boolean; cursor?: string }>(
+        "init",
+        this.id,
+        this.identity.persistent,
+      );
+      if (this.closed) return;
+      this.persistent = state.persistent;
+      this.cursor = state.cursor;
+      if (this.cursor) {
+        this.setReady(true);
+        await this.refresh();
+        this.hydrated[1](true);
+      }
+      await this.poll();
+    } catch {
+      this.fail();
+    }
+  }
+  private fail() {
+    if (this.closed) return;
+    const wasReady = this.ready();
+    void this.close(false);
+    if (wasReady)
+      for (const family of ["messages", "message", "thread"])
+        void this.client.resetQueries({ queryKey: [family] });
+  }
+  private async fetchDelta(cursor: string) {
+    return api<ReplicaDelta>(`/api/sync/delta?cursor=${encodeURIComponent(cursor)}`, {
+      signal: this.controller.signal,
+      cache: "no-store",
+    });
+  }
+  private async bootstrap() {
+    await this.call("reset");
+    let next: string | null = null,
+      baseline = "",
+      accounts: Account[] = [];
+    do {
+      const page: ReplicaPage = await api(
+        `/api/sync/snapshot?limit=2000${next ? `&cursor=${encodeURIComponent(next)}` : ""}`,
+        { signal: this.controller.signal, cache: "no-store" },
+      );
+      await this.call("stage", page.messages);
+      next = page.nextCursor;
+      baseline = page.cursor;
+      accounts = page.accounts;
+    } while (next && !this.closed);
+    while (!this.closed) {
+      if (!this.canPoll() || !this.verified()) {
+        await new Promise((done) => setTimeout(done, 250));
+        continue;
+      }
+      const revision = this.revision,
+        delta = await this.fetchDelta(baseline);
+      if (revision !== this.revision || !this.canPoll()) continue;
+      await this.call("delta", delta, true);
+      baseline = delta.cursor;
+      accounts = delta.accounts;
+      if (revision !== this.revision || !this.canPoll()) continue;
+      const committed = this.call("commit", baseline);
+      this.cursor = baseline;
+      await committed;
+      this.setReady(true);
+      this.client.setQueryData(["accounts"], { accounts });
+      await this.refresh();
+      this.hydrated[1](true);
+      return;
+    }
+    if (this.closed) return;
+  }
+  private async poll() {
+    if (this.closed) return;
+    try {
+      if (navigator.onLine !== false && this.verified() && this.canPoll()) {
+        if (!this.cursor) await this.bootstrap();
+        else {
+          const revision = this.revision,
+            delta = await this.fetchDelta(this.cursor);
+          if (revision === this.revision && this.canPoll()) {
+            await this.call("delta", delta, false);
+            this.cursor = delta.cursor;
+            this.client.setQueryData(["accounts"], { accounts: delta.accounts });
+            if (delta.upserts.length || delta.deletions.length) await this.refresh();
+          }
+        }
+      }
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 410) this.cursor = undefined;
+      else if (
+        !(error instanceof ApiError) &&
+        !(error instanceof TypeError) &&
+        !this.controller.signal.aborted
+      )
+        this.fail();
+    } finally {
+      if (!this.closed) this.timer = setTimeout(() => void this.poll(), 4000);
+    }
+  }
+  async list(params: URLSearchParams) {
+    return this.call<ReplicaList>("list", {
+      view: params.get("view") ?? "l1",
+      accountId: params.get("accountId") ?? undefined,
+      cursor: params.get("cursor") ?? undefined,
+      limit: Number(params.get("limit") ?? 75),
+    });
+  }
+  private seed(key: QueryKey, rows: ReplicaDetail[], thread = false) {
+    const messages = rows.map((row) => ({
+      ...row.message,
+      ...(!row.hasBody ? { localBodyPending: true } : {}),
+    }));
+    this.client.setQueryData(key, thread ? { messages } : (messages[0] ?? null));
+  }
+  private async ensureBodies(ids: string[], signal?: AbortSignal) {
+    const pending: Promise<void>[] = [],
+      fresh = ids.filter((id) => !this.bodies.has(id));
+    for (let index = 0; index < fresh.length; index += 16) {
+      const batch = fresh.slice(index, index + 16);
+      const request = (async () => {
+        const result = await api<{ messages: ReplicaRow[] }>(
+          `/api/sync/bodies?ids=${batch.join(",")}`,
+          { signal, cache: "no-store" },
+        );
+        await this.call("bodies", result.messages);
+      })();
+      const tracked = request.finally(() => {
+        for (const id of batch) this.bodies.delete(id);
+      });
+      for (const id of batch) this.bodies.set(id, tracked);
+      pending.push(tracked);
+    }
+    for (const id of ids)
+      if (!fresh.includes(id)) {
+        const existing = this.bodies.get(id);
+        if (existing) pending.push(existing);
+      }
+    await Promise.all(pending);
+  }
+  async message(id: string, signal?: AbortSignal): Promise<MessageDetail> {
+    let row = await this.call<ReplicaDetail | undefined>("detail", id);
+    if (row?.hasBody) return row.message;
+    if (row) this.seed(["message", id], [row]);
+    await this.ensureBodies([id], signal);
+    row = await this.call("detail", id);
+    if (row?.hasBody) return row.message;
+    return sentApi.message(id, signal);
+  }
+  async thread(
+    id: string,
+    trash: boolean,
+    signal?: AbortSignal,
+  ): Promise<{ messages: MessageDetail[] }> {
+    let rows = await this.call<ReplicaDetail[]>("thread", id, trash);
+    if (!rows.length) return sentApi.thread(id, trash, signal);
+    const missing = rows.filter((row) => !row.hasBody).map((row) => row.message.id);
+    if (missing.length) {
+      this.seed(["thread", id, trash], rows, true);
+      await this.ensureBodies(missing, signal);
+      rows = await this.call("thread", id, trash);
+    }
+    if (rows.some((row) => !row.hasBody)) return sentApi.thread(id, trash, signal);
+    return { messages: rows.map((row) => row.message) };
+  }
+  begin(change: ReplicaChange) {
+    this.revision++;
+    const token = crypto.randomUUID(),
+      active = this.ready();
+    if (active) void this.call("begin", token, change).catch(() => this.fail());
+    return {
+      commit: (response?: CacheResponse) => {
+        if (active) void this.call("settle", token, true, response).catch(() => this.fail());
+      },
+      rollback: (response?: CacheResponse) => {
+        if (active) void this.call("settle", token, false, response).catch(() => this.fail());
+      },
+    };
+  }
+  private async refresh() {
+    const revision = this.revision;
+    for (const query of this.client.getQueryCache().getAll()) {
+      if (this.closed || revision !== this.revision) return;
+      const key = query.queryKey,
+        family = key[0];
+      if (
+        ["messages", "message", "thread"].includes(String(family)) &&
+        query.state.fetchStatus === "fetching"
+      )
+        void this.client.cancelQueries({ queryKey: key, exact: true });
+      const updates = query.state.dataUpdateCount;
+      if (family === "messages") {
+        const count = (query.state.data as { pageCount?: number } | undefined)?.pageCount ?? 1;
+        let cursor: string | null = null;
+        const messages: ReplicaList["messages"] = [];
+        for (let page = 0; page < count; page++) {
+          const result: ReplicaList = await this.call<ReplicaList>("list", {
+            view: String(key[1]),
+            accountId: key[2],
+            cursor: cursor ?? undefined,
+            limit: 75,
+          });
+          messages.push(...result.messages);
+          cursor = result.nextCursor;
+          if (!cursor) break;
+        }
+        if (revision === this.revision && query.state.dataUpdateCount === updates)
+          this.client.setQueryData(key, { messages, nextCursor: cursor, pageCount: count });
+      } else if (family === "message" || family === "thread") {
+        const rows =
+          family === "message"
+            ? [await this.call<ReplicaDetail | undefined>("detail", String(key[1]))].filter(
+                (value): value is ReplicaDetail => Boolean(value),
+              )
+            : await this.call<ReplicaDetail[]>("thread", String(key[1]), Boolean(key[2]));
+        if (revision !== this.revision || query.state.dataUpdateCount !== updates) continue;
+        this.seed(key, rows, family === "thread");
+        if (rows.some((row) => !row.hasBody))
+          void this.client.invalidateQueries({ queryKey: key, exact: true });
+      }
+    }
+  }
+  status() {
+    return {
+      ready: this.ready() && this.hydrated[0](),
+      persistent: this.persistent,
+      session: this.id,
+    };
+  }
+  disable() {
+    this.fail();
+  }
+  close(wipe = false) {
+    this.closing ??= this.shutdown(wipe);
+    return this.closing;
+  }
+  private async shutdown(wipe: boolean) {
+    if (this.closed) return;
+    this.setReady(false);
+    clearTimeout(this.startup);
+    clearTimeout(this.timer);
+    this.controller.abort();
+    window.removeEventListener(REPLICA_RESET_EVENT, this.reset);
+    this.channel?.close();
+    if (wipe && this.worker)
+      try {
+        await this.call("wipe");
+      } catch {}
+    this.closed = true;
+    this.worker?.terminate();
+    for (const call of this.calls.values()) {
+      clearTimeout(call.timer);
+      call.reject(new Error("Replica closed"));
+    }
+    this.calls.clear();
+    if (replicas.get(this.client) === this) replicas.delete(this.client);
+    if (wipe) await removeDirectory(this.id);
+  }
+}
+export async function mailboxRead(
+  client: QueryClient,
+  params: URLSearchParams,
+  signal?: AbortSignal,
+) {
+  const replica = replicas.get(client);
+  if (replica?.ready())
+    try {
+      return await replica.list(params);
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      replica.disable();
+      if (params.get("cursor")?.startsWith("local:")) throw error;
+    }
+  return sentApi.messages(params, signal);
+}
+export async function messageRead(client: QueryClient, id: string, signal?: AbortSignal) {
+  const replica = replicas.get(client);
+  if (replica?.ready())
+    try {
+      return await replica.message(id, signal);
+    } catch (error) {
+      if (
+        signal?.aborted ||
+        client.getQueryData<{ authenticated: boolean }>(["session"])?.authenticated === false
+      )
+        throw error;
+      if (!(error instanceof ApiError) && !(error instanceof TypeError)) replica.disable();
+    }
+  return sentApi.message(id, signal);
+}
+export async function threadRead(
+  client: QueryClient,
+  id: string,
+  trash: boolean,
+  signal?: AbortSignal,
+) {
+  const replica = replicas.get(client);
+  if (replica?.ready())
+    try {
+      return await replica.thread(id, trash, signal);
+    } catch (error) {
+      if (
+        signal?.aborted ||
+        client.getQueryData<{ authenticated: boolean }>(["session"])?.authenticated === false
+      )
+        throw error;
+      if (!(error instanceof ApiError) && !(error instanceof TypeError)) replica.disable();
+    }
+  return sentApi.thread(id, trash, signal);
+}

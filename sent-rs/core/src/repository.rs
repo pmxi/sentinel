@@ -3,11 +3,21 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row, postgres::PgRow};
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct Repository(pub PgPool);
+
+pub struct ReplicaInventory {
+    pub messages: Vec<Value>,
+    pub accounts: Vec<Value>,
+}
+
+pub fn replica_fingerprint(value: &Value) -> String {
+    format!("{:x}", Sha256::digest(value.to_string().as_bytes()))
+}
 
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
@@ -339,6 +349,49 @@ impl Repository {
             None
         };
         Ok(json!({"messages":rows.iter().map(conversation).collect::<Vec<_>>(),"nextCursor":next}))
+    }
+
+    pub async fn replica_inventory(
+        &self,
+        ids: Option<&[Uuid]>,
+        bodies: bool,
+    ) -> Result<ReplicaInventory> {
+        let fits = "octet_length(m.text_body)+coalesce(octet_length(m.html_body),0)+coalesce(octet_length(c.plain_text),0)<=262144";
+        let include = if bodies { fits } else { "false" };
+        let selection = SELECT.replace(
+            "c.plain_text",
+            &format!("case when {include} then c.plain_text end plain_text"),
+        );
+        let query = format!("select {selection},m.archived,m.deleted,c.message_id is not null classified,m.to_addresses,m.cc_addresses,m.bcc_addresses,m.sent_at,m.internet_message_id,
+          case when {include} then m.text_body else '' end text_body,
+          case when {include} then m.html_body end html_body,({include}) body_available,
+          encode(sha256(convert_to(jsonb_build_array(m.text_body,m.html_body,c.plain_text)::text,'UTF8')),'hex') body_version,
+          m.received_at sort_received_at
+          from messages m join accounts a on a.id=m.account_id left join classifications c on c.message_id=m.id
+          where not m.tombstone and ($1::uuid[] is null or m.id=any($1)) order by m.id");
+        let mut tx = self.0.begin().await?;
+        sqlx::query("set transaction isolation level repeatable read read only")
+            .execute(&mut *tx)
+            .await?;
+        let rows = sqlx::query(&query).bind(ids).fetch_all(&mut *tx).await?;
+        let accounts = sqlx::query("select id,provider::text,email,display_name,status::text,last_synced_at from accounts order by created_at").fetch_all(&mut *tx).await?.iter().map(|row| json!({
+            "id":row.get::<Uuid,_>("id"),"provider":row.get::<String,_>("provider"),"email":row.get::<String,_>("email"),"displayName":row.get::<String,_>("display_name"),"status":row.get::<String,_>("status"),"lastSyncedAt":date(row,"last_synced_at")
+        })).collect();
+        let messages = rows
+            .iter()
+            .map(|row| {
+                let mut value = cached_detail(row, true);
+                value["bodyVersion"] = json!(row.get::<String, _>("body_version"));
+                value["bodyAvailable"] = json!(row.get::<bool, _>("body_available"));
+                value["sortReceivedAt"] = json!(
+                    row.get::<DateTime<Utc>, _>("sort_received_at")
+                        .to_rfc3339_opts(SecondsFormat::Micros, true)
+                );
+                value
+            })
+            .collect();
+        tx.commit().await?;
+        Ok(ReplicaInventory { messages, accounts })
     }
 
     pub async fn get_message(&self, id: Uuid) -> Result<Option<Value>> {
