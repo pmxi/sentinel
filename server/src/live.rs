@@ -504,7 +504,6 @@ mod tests {
             sent_core::config::Config::from_env().unwrap(),
             sent_core::repository::Repository(pool),
         ));
-        let mut updates = state.live.updates.subscribe();
         let logged_out = auth::Session {
             key: "persisted-logout-before-restart".into(),
             expires: Utc::now().timestamp() + 60,
@@ -514,6 +513,7 @@ mod tests {
             .unwrap();
         start(state.clone()).await.unwrap();
         assert!(!state.live.valid(&logged_out));
+        let mut updates = state.live.updates.subscribe();
         tokio::time::timeout(Duration::from_secs(3), updates.changed())
             .await
             .unwrap()
