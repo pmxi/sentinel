@@ -547,6 +547,29 @@ kbd {
   overflow-y: auto;
   border-top: 1px solid var(--line);
 }
+@media (forced-colors: none) {
+  .message-list::-webkit-scrollbar,
+  .message-reader::-webkit-scrollbar {
+    width: 8px;
+  }
+  .message-list::-webkit-scrollbar-thumb,
+  .message-reader::-webkit-scrollbar-thumb {
+    border: 2px solid var(--paper);
+    border-radius: 8px;
+    background: #c6c8cc;
+  }
+  .message-list::-webkit-scrollbar-button,
+  .message-reader::-webkit-scrollbar-button {
+    display: none;
+  }
+  @supports not selector(::-webkit-scrollbar) {
+    .message-list,
+    .message-reader {
+      scrollbar-width: thin;
+      scrollbar-color: #c6c8cc transparent;
+    }
+  }
+}
 .message-row {
   position: relative;
   width: 100%;
