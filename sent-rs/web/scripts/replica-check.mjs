@@ -176,6 +176,23 @@ try {
   assert.equal(await page.locator(".latest-message .email-body").innerText(), text);
   await page.screenshot({ path: join(output, "offline-local-reader.png"), fullPage: true });
   console.log("PASS bodies load lazily and cached reader/list work offline");
+  const searchStart = requests.filter((path) => path === "/api/search").length;
+  await page.locator('input[aria-label="Search mail"]').fill("Newsletter");
+  await page.locator('input[aria-label="Search mail"]').press("Enter");
+  await page.waitForFunction(
+    () =>
+      location.pathname === "/search" && document.querySelectorAll("button.message-row").length > 0,
+  );
+  assert((await page.locator(".message-subject").first().innerText()).includes("Newsletter"));
+  await page.screenshot({ path: join(output, "offline-local-search.png"), fullPage: true });
+  await page.keyboard.press("Control+k");
+  const palette = page.locator('input[aria-label="Search commands"]');
+  await palette.fill("Newsletter");
+  await page.locator('button[id^="command-mail-"]').first().waitFor();
+  await page.keyboard.press("Escape");
+  assert.equal(requests.filter((path) => path === "/api/search").length, searchStart);
+  console.log("PASS offline search view and Cmd+K find local mail without search requests");
+  await page.locator('a[href="/inbox/l1"]').first().click();
   const uncached = page
     .locator(
       `button.message-row:not([data-thread-id="${thread}"]):not([data-thread-id="${recent.thread_id}"])`,

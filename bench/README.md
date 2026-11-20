@@ -1,5 +1,12 @@
 # Browser speed benchmark
 
+`warm_search_rare` and `warm_search_common` wait for replica rows and recent bodies
+outside timing. Within each action/profile they retain a browser context (OPFS and
+shell cache), but open and close a fresh document for each sample: application query
+caches therefore do not answer repeated searches. They measure the same submit-to-paint
+boundary as `search_*`. Original `search_*` still uses fresh contexts and blocks service
+workers. Reseed separately for matched baseline and candidate runs.
+
 Fake mail only. **Never run against production.** The seeder refuses database names
 that do not start with `sent_bench`; the browser runner can target any URL and does
 not have that protection. Archive changes data: reseed before every full run.
@@ -179,7 +186,9 @@ service worker or persisted shell metadata across samples.
 
 `warm_mailbox` separately measures a warm in-app navigation from L1 to Sent.
 Untimed setup waits for an advertised SQLite replica and its recent-body sync to be ready (bounded to
-120 seconds), and for pending network activity to settle. Builds without a
+300 seconds), and for pending network activity to settle. The same five-minute
+budget covers the untimed network-idle and shell preparation for replica actions;
+the shell-only `warm_reload` setup retains its 30-second bound. Builds without a
 replica, including Node, use the same navigation without a replica wait. The
 paint condition requires the first row to change, so old L1 rows cannot complete
 the measurement. Fresh contexts still do not share storage across samples: this

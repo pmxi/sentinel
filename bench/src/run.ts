@@ -162,6 +162,7 @@ const newPage = async (context: BrowserContext, profile: Profile) => {
 try {
   for (const profile of profiles as Profile[]) {
     for (const action of ACTIONS.filter((action) => actions.includes(action))) {
+      let warmContext: BrowserContext | undefined;
       for (let iteration = -2; iteration < iterations; iteration++) {
         const sample: Sample = {
           profile,
@@ -175,12 +176,14 @@ try {
         let context: BrowserContext | undefined;
         let capture: ((prefix: string) => Promise<void>) | undefined;
         try {
-          context = await browser.newContext({
-            storageState,
-            viewport: { width: 1440, height: 1000 },
-            serviceWorkers:
-              action === "warm_reload" || action === "warm_mailbox" ? "allow" : "block",
-          });
+          context =
+            warmContext ??
+            (await browser.newContext({
+              storageState,
+              viewport: { width: 1440, height: 1000 },
+              serviceWorkers: action.startsWith("warm_") ? "allow" : "block",
+            }));
+          if (action.startsWith("warm_search_")) warmContext = context;
           const page = await newPage(context, profile);
           if (values.diagnostics) capture = await installDiagnostics(page, selectors);
           const network = trackNetwork(page);
@@ -217,7 +220,11 @@ try {
             await page.keyboard.press(selectors.archiveKey);
             sample.ms = await waitPaint(page);
           } else {
-            const term = action === "search_rare" ? SEARCH_TERMS.rare : SEARCH_TERMS.common;
+            if (action.startsWith("warm_search_")) await prepareWarmMailbox(page);
+            const term =
+              action === "search_rare" || action === "warm_search_rare"
+                ? SEARCH_TERMS.rare
+                : SEARCH_TERMS.common;
             const before = await page.locator(selectors.rows).first().innerText();
             await page.keyboard.press(selectors.searchKey);
             await page.locator(selectors.search).fill(term);
@@ -243,10 +250,12 @@ try {
           }
           console.error(`${profile}/${action}/${iteration}: ${sample.error}`);
         } finally {
-          await context?.close();
+          if (warmContext) for (const page of warmContext.pages()) await page.close();
+          else await context?.close();
         }
         results.samples.push(sample);
       }
+      await warmContext?.close();
       await save();
       console.log(`${profile}/${action} complete`);
     }

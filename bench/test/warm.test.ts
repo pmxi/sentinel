@@ -3,6 +3,29 @@ import { describe, expect, it, vi } from "vitest";
 import { prepareWarmMailbox, prepareWarmReload } from "../src/warm.ts";
 
 describe("warm mailbox preparation", () => {
+  it("allows a large throttled replica to initialize beyond the shell-only setup budget", async () => {
+    vi.useFakeTimers();
+    try {
+      const page = {
+        waitForLoadState: vi
+          .fn()
+          .mockResolvedValue(undefined)
+          .mockImplementationOnce(
+            () => new Promise<void>((resolve) => setTimeout(resolve, 45_000)),
+          ),
+        evaluate: vi.fn().mockResolvedValue({ registered: false, controlled: false }),
+        locator: vi.fn().mockReturnValue({ getAttribute: vi.fn().mockResolvedValue("loading") }),
+        waitForFunction: vi.fn().mockResolvedValue(undefined),
+      };
+      const pending = prepareWarmMailbox(page as unknown as Page);
+      await vi.advanceTimersByTimeAsync(45_001);
+      await pending;
+      expect(page.waitForLoadState).toHaveBeenCalledWith("networkidle", { timeout: 300_000 });
+      expect(page.waitForFunction.mock.calls[0]?.[2]).toEqual({ timeout: 300_000 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it("does not time navigation while recent-body background sync is still running", async () => {
     const page = {
       waitForLoadState: vi.fn().mockResolvedValue(undefined),
@@ -85,7 +108,7 @@ describe("warm reload preparation", () => {
       reload: vi.fn().mockResolvedValue(null),
     };
     await prepareWarmReload(page as unknown as Page);
-    expect(page.waitForLoadState).toHaveBeenCalledWith("networkidle");
+    expect(page.waitForLoadState).toHaveBeenCalledWith("networkidle", { timeout: 30_000 });
     expect(page.reload).not.toHaveBeenCalled();
   });
   it("navigates outside measurement if an installed worker has not claimed its first page", async () => {

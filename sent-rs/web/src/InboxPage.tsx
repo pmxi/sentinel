@@ -3,7 +3,6 @@ import type {
   ConversationSummary,
   MessageDetail,
   MessageSummary,
-  SearchResponse,
   Tier,
 } from "@sent/shared";
 import { createMutation, createQuery, useQueryClient } from "@tanstack/solid-query";
@@ -32,6 +31,7 @@ import { cachedRow, headerData, usePrefetch } from "./prefetch";
 import { ReaderText } from "./ReaderText";
 import { localBodyPending, messageRead, replicaFor, replicaReady, threadRead } from "./replica";
 import { useLocation, useNavigate, useParams, useSearchParams } from "./router";
+import { useMailSearch } from "./search";
 import { nextMessageId, useTriage, visibleConversations } from "./triage";
 
 function useMessageNavigation<Message extends MessageSummary>(messages: Accessor<Message[]>) {
@@ -181,21 +181,8 @@ export function SearchResults(props: { accounts: Account[] }) {
   const client = useQueryClient();
   const [params, setParams] = useSearchParams();
   const q = createMemo(() => params().get("q") ?? "");
-  const [debounced, setDebounced] = createSignal(q());
-  createEffect(() => {
-    const value = q();
-    const timer = setTimeout(() => setDebounced(value), 150);
-    onCleanup(() => clearTimeout(timer));
-  });
   const selectedId = createMemo(() => params().get("message"));
-  const result = createQuery<SearchResponse>(() => ({
-    queryKey: ["search", client.getQueryData(["search", q()]) ? q() : debounced()],
-    queryFn: ({ queryKey }) =>
-      sentApi.search(new URLSearchParams({ q: String(queryKey[1]), limit: "75" })),
-    enabled: Boolean(q()) && (q() === debounced() || Boolean(client.getQueryData(["search", q()]))),
-    placeholderData: (previous) => previous,
-    reconcile: "threadId",
-  }));
+  const result = useMailSearch(q);
   const navigation = useMessageNavigation(() => result.data?.messages ?? []);
   const prefetch = usePrefetch(
     client,

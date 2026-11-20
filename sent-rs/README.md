@@ -1,5 +1,31 @@
 # Sent Rust/Solid rewrite
 
+## On-device search
+
+Schema 6 rebuilds the browser cache once and maintains one contentless-delete FTS5
+index over subject/sender/recipients/snippet headers and locally cached body text.
+Only message/thread IDs and ordering timestamps are retained as unindexed content;
+searchable text is not stored twice. BM25 favors subject and sender matches,
+with recency/ID tie-breaks; the final literal token is a prefix. Operators, quotes and
+punctuation in user queries cannot become FTS syntax. Indexed text and queries share
+NFKC normalization. Queries are bounded to 32 tokens.
+
+The search page and Cmd+K share the existing debounced query cache. Once the replica
+is ready they publish a viewport-sized local lexical page without a request, then
+append the rest of the 75-result page after paint. Native FTS rank limits candidates;
+ties and duplicate conversations expand the bound before recency/ID tie-breaking.
+Background initialization warms the search index into SQLite's 64 MiB target page
+cache; this uses RAM, not another persistent copy or a search-result cache. When
+recent-body initialization completes, it reads the FTS payload pages and runs one
+representative header query to warm the SQLite/WASM search path before user input.
+Online hybrid search
+refines asynchronously after that paint; existing rows and selected message identities
+stay fixed while semantic-only conversations append. Offline no refinement is sent.
+Embeddings and attachment contents remain server-side. Mail older than 90 days whose
+body has not been opened locally is searchable by headers/snippet, **not its body**.
+Body arrival, eviction, version changes, snapshots, deltas and tombstones update the
+index; archived mail stays searchable, deleted mail does not.
+
 ## One-command local benchmark
 
 Prerequisites: a local default Docker context with Compose v2, Rust stable, Node 24, pnpm 11, Bash 4.3+

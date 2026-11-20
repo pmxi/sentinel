@@ -1,7 +1,9 @@
-import type { ConversationSummary, MailAddress } from "@sent/shared";
+import type { ConversationSummary, MailAddress, SearchResponse } from "@sent/shared";
 import type { Database, SqlValue } from "@sqlite.org/sqlite-wasm";
 import type { CacheResponse } from "./api";
+import { unpackDetail } from "./replica-body";
 import { recentBodyCutoff } from "./replica-policy";
+import { ftsQuery } from "./replica-search";
 import {
   MAX_BODY_BYTES,
   MAX_BODY_CACHE_BYTES,
@@ -30,6 +32,12 @@ const fields = [
   "attachments",
   "internetMessageId",
 ] as const;
+function searchableBody(body: Pick<ReplicaRow, "textBody" | "plainText">) {
+  return (
+    body.textBody +
+    (body.plainText && body.plainText !== body.textBody ? `\n${body.plainText}` : "")
+  );
+}
 type StoredRow = {
   id: string;
   thread_id: string;
@@ -62,10 +70,16 @@ function condition(view: string, alias = "") {
 }
 export class ReplicaStore {
   private accounts = new Map<string, ReplicaRow["account"]>();
+  private pendingSearch = new Set<string>();
+  private warmedSearch = false;
+  private searchReadyWarmed = false;
+  private searchWarmMs = 0;
   constructor(readonly db: Database) {
-    if (Number(db.selectValue("pragma user_version")) !== 3) {
+    db.createFunction("sent_nfkc", (_context, value) => String(value ?? "").normalize("NFKC"));
+    this.run("pragma temp_store=memory; pragma cache_size=-65536");
+    if (Number(db.selectValue("pragma user_version")) !== 6) {
       this.run(
-        "drop table if exists messages; drop table if exists staging; drop table if exists bodies; drop table if exists meta; drop table if exists base; drop table if exists operations; drop table if exists accounts;",
+        "drop table if exists messages; drop table if exists staging; drop table if exists bodies; drop table if exists meta; drop table if exists base; drop table if exists operations; drop table if exists accounts; drop table if exists search_headers; drop table if exists search_bodies; drop table if exists search_documents; drop table if exists search_documents_content;",
       );
     }
     this.run(`create table if not exists messages(${columns}); create table if not exists staging(${columns});
@@ -77,13 +91,37 @@ export class ReplicaStore {
       create table if not exists meta(key text primary key,value text not null);
       create table if not exists base(id text primary key,data text not null);
       create table if not exists operations(seq integer primary key autoincrement,token text not null,id text not null,patch text not null,status text not null);
-      pragma user_version=3;`);
+      create virtual table if not exists search_documents using fts5(subject,sender,recipients,snippet,body,message_id unindexed,thread_id unindexed,received_at unindexed,content='',contentless_delete=1,contentless_unindexed=1,tokenize='unicode61 remove_diacritics 2');
+      create trigger if not exists search_message_delete after delete on messages begin
+        delete from search_documents where rowid=old.rowid;
+      end;
+      create trigger if not exists search_body_delete after delete on bodies begin
+        delete from search_documents where rowid=(select rowid from messages where id=old.id);
+        insert into search_documents(rowid,subject,sender,recipients,snippet,body,message_id,thread_id,received_at)
+          select m.rowid,sent_nfkc(json_extract(m.data,'$[0]')),
+            sent_nfkc((select group_concat(coalesce(value->>'name','')||' '||(value->>'address'),' ') from json_each(m.from_json))),
+            sent_nfkc((select group_concat(coalesce(value->>'name','')||' '||(value->>'address'),' ') from (
+              select value from json_each(m.data,'$[8]') union all select value from json_each(m.data,'$[9]') union all select value from json_each(m.data,'$[10]')))),
+            sent_nfkc(json_extract(m.data,'$[1]')),'',m.id,m.thread_id,m.received_at from messages m where m.id=old.id and m.deleted=0;
+      end;
+      pragma user_version=6;`);
     for (const row of this.rows<{ id: string; data: string }>("select id,data from accounts"))
       this.accounts.set(row.id, JSON.parse(row.data));
     this.transaction(() => {
       this.run("update operations set status='failed' where status='pending'");
       for (const { id } of this.rows<{ id: string }>("select id from base")) this.recompute(id);
     });
+    this.warmSearchCache();
+  }
+  private warmSearchCache(force = false) {
+    if ((!force && this.warmedSearch) || !this.count()) return;
+    const start = performance.now();
+    this.run(`select sum(length(hex(block))) from search_documents_data;
+      select sum(length(sz)) from search_documents_docsize;
+      select sum(length(c5)+length(c6)+length(c7)) from search_documents_content;
+      select count(*) from search_documents_idx;`);
+    this.searchWarmMs += performance.now() - start;
+    this.warmedSearch = true;
   }
   private run(sql: string, bind: SqlValue[] = []) {
     this.db.exec({ sql, bind });
@@ -113,21 +151,147 @@ export class ReplicaStore {
       ]);
       this.accounts.set(row.account.id, row.account);
     }
-    this.run(`insert or replace into ${table} values(?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
-      row.id,
-      row.threadId,
-      row.account.id,
-      row.sortReceivedAt,
-      Number(row.read),
-      Number(Boolean(row.archived)),
-      Number(Boolean(row.deleted)),
-      Number(Boolean(row.classified)),
-      row.tier,
-      row.direction,
-      row.bodyVersion,
-      JSON.stringify(row.from),
-      JSON.stringify(fields.map((field) => row[field])),
-    ]);
+    this.run(
+      `insert into ${table} values(?,?,?,?,?,?,?,?,?,?,?,?,?) on conflict(id) do update set thread_id=excluded.thread_id,account_id=excluded.account_id,received_at=excluded.received_at,read=excluded.read,archived=excluded.archived,deleted=excluded.deleted,classified=excluded.classified,tier=excluded.tier,direction=excluded.direction,body_version=excluded.body_version,from_json=excluded.from_json,data=excluded.data`,
+      [
+        row.id,
+        row.threadId,
+        row.account.id,
+        row.sortReceivedAt,
+        Number(row.read),
+        Number(Boolean(row.archived)),
+        Number(Boolean(row.deleted)),
+        Number(Boolean(row.classified)),
+        row.tier,
+        row.direction,
+        row.bodyVersion,
+        JSON.stringify(row.from),
+        JSON.stringify(fields.map((field) => row[field])),
+      ],
+    );
+    if (table === "messages") this.indexHeader(row);
+  }
+  private indexHeader(row: ReplicaRow, bodyText?: string) {
+    const id = this.db.selectValue("select rowid from messages where id=?", [row.id]) as number;
+    this.run("delete from search_documents where rowid=?", [id]);
+    this.pendingSearch.delete(row.id);
+    if (bodyText === undefined && !row.deleted) {
+      const body = this.db.selectValue("select data from bodies where id=? and version=?", [
+        row.id,
+        row.bodyVersion,
+      ]);
+      if (typeof body === "string") bodyText = searchableBody(JSON.parse(body));
+      else if (body !== undefined) this.pendingSearch.add(row.id);
+    }
+    if (!row.deleted)
+      this.run(
+        "insert into search_documents(rowid,subject,sender,recipients,snippet,body,message_id,thread_id,received_at) values(?,?,?,?,?,?,?,?,?)",
+        [
+          id,
+          row.subject.normalize("NFKC"),
+          row.from
+            .map((p) => `${p.name ?? ""} ${p.address}`)
+            .join(" ")
+            .normalize("NFKC"),
+          [...row.to, ...row.cc, ...row.bcc]
+            .map((p) => `${p.name ?? ""} ${p.address}`)
+            .join(" ")
+            .normalize("NFKC"),
+          (row.snippet ?? "").normalize("NFKC"),
+          (bodyText ?? "").normalize("NFKC"),
+          row.id,
+          row.threadId,
+          row.sortReceivedAt,
+        ],
+      );
+  }
+  search(text: string, limit = 75): SearchResponse {
+    const query = ftsQuery(text);
+    if (!query) return { messages: [], mode: "lexical" };
+    limit = Math.max(1, Math.min(75, Math.floor(limit) || 75));
+    const sql =
+      "select rowid,rank score,message_id id,thread_id,received_at from search_documents where search_documents match ? and rank match 'bm25(8,6,3,2,0.5)' order by rank limit ?";
+    type Candidate = {
+      rowid: number;
+      score: number;
+      id: string;
+      thread_id: string;
+      received_at: string;
+    };
+    let page: Candidate[] = [];
+    for (let size = Math.max(64, limit * 2); ; size *= 2) {
+      const hits = this.rows<Candidate>(sql, [query, size]);
+      const scores = new Map(hits.map((hit) => [hit.rowid, hit.score]));
+      const candidates = [...hits];
+      candidates.sort(
+        (a, b) =>
+          (scores.get(a.rowid) as number) - (scores.get(b.rowid) as number) ||
+          (a.received_at < b.received_at
+            ? 1
+            : a.received_at > b.received_at
+              ? -1
+              : a.id < b.id
+                ? 1
+                : a.id > b.id
+                  ? -1
+                  : 0),
+      );
+      const threads = new Set<string>();
+      page = [];
+      for (const candidate of candidates) {
+        if (threads.has(candidate.thread_id)) continue;
+        threads.add(candidate.thread_id);
+        page.push(candidate);
+        if (page.length === limit) break;
+      }
+      if (
+        hits.length < size ||
+        (page.length === limit &&
+          (scores.get(page.at(-1)?.rowid as number) as number) < (hits.at(-1)?.score as number))
+      )
+        break;
+    }
+    const rows = page.length
+      ? this.headers(
+          `select id,thread_id,account_id,received_at,read,archived,deleted,classified,tier,direction,body_version,from_json,json_array(${fields
+            .slice(0, 8)
+            .map((_, index) => `data->'$[${index}]'`)
+            .join(",")}) data from messages where rowid in (${page.map(() => "?").join(",")})`,
+          page.map((row) => row.rowid),
+        )
+      : [];
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const messages = this.summarize(page.map(({ id }) => byId.get(id) as ReplicaRow));
+    return { messages, mode: "lexical" };
+  }
+  private indexBody(id: string, text: string) {
+    const row = this.header(id);
+    if (row) this.indexHeader(row, text);
+  }
+  async restoreSearch() {
+    const ids = [...this.pendingSearch];
+    for (let start = 0; start < ids.length; start += 32) {
+      const batch = ids.slice(start, start + 32);
+      const rows = this.rows<{ id: string; data: Uint8Array }>(
+        `select id,data from bodies where id in (${batch.map(() => "?").join(",")})`,
+        batch,
+      );
+      for (const id of batch) if (!rows.some((row) => row.id === id)) this.pendingSearch.delete(id);
+      const decoded = await Promise.all(
+        rows.map(async (row) => ({
+          id: row.id,
+          body: await unpackDetail({
+            message: {} as ReplicaRow,
+            hasBody: true,
+            packedBody: row.data,
+          }),
+        })),
+      );
+      this.transaction(() => {
+        for (const row of decoded)
+          if (row.body) this.indexBody(row.id, searchableBody(row.body.message));
+      });
+    }
   }
   cursor() {
     return this.db.selectValue("select value from meta where key='cursor'") as string | undefined;
@@ -147,6 +311,8 @@ export class ReplicaStore {
       );
       this.setCursor(cursor);
       this.pruneBodies();
+      for (const row of this.headers("select * from messages")) this.indexHeader(row);
+      this.run("insert into search_documents(search_documents) values('optimize')");
     });
     this.run("vacuum");
   }
@@ -197,10 +363,22 @@ export class ReplicaStore {
   }
   recentBodies() {
     this.trimBodies();
-    return this.rows<{ id: string }>(
+    const ids = this.rows<{ id: string }>(
       "select m.id from messages m left join bodies b on b.id=m.id and b.version=m.body_version left join meta s on s.key='bodySkipped:'||m.id and s.value=m.body_version where m.received_at>=? and b.id is null and s.key is null order by m.received_at desc,m.id desc limit 16",
       [recentBodyCutoff()],
     ).map((row) => row.id);
+    if (!ids.length && !this.searchReadyWarmed) {
+      this.warmSearchCache(true);
+      const start = performance.now();
+      const subject = String(
+        this.db.selectValue("select data->>'$[0]' from messages limit 1") ?? "",
+      );
+      const term = subject.match(/[\p{L}\p{N}]+/u)?.[0];
+      if (term) this.search(term, 20);
+      this.searchWarmMs += performance.now() - start;
+      this.searchReadyWarmed = true;
+    }
+    return ids;
   }
   storageStats() {
     const allocated = this.rows<{ name: string; bytes: number }>(
@@ -220,6 +398,10 @@ export class ReplicaStore {
       .reduce((total, row) => total + Number(row.bytes), 0);
     const pageSize = Number(this.db.selectValue("pragma page_size"));
     return {
+      searchWarmMs: this.searchWarmMs,
+      ftsAllocatedBytes: allocated
+        .filter((row) => row.name.startsWith("search_"))
+        .reduce((total, row) => total + Number(row.bytes), 0),
       databaseBytes: Number(this.db.selectValue("pragma page_count")) * pageSize,
       rowAllocatedBytes,
       bodyAllocatedBytes,
@@ -269,6 +451,12 @@ export class ReplicaStore {
     };
   }
   profileList(input: Parameters<ReplicaStore["list"]>[0]) {
+    return this.profileRead(() => this.list(input));
+  }
+  profileSearch(text: string, limit = 75) {
+    return this.profileRead(() => this.search(text, limit));
+  }
+  private profileRead<T>(read: () => T) {
     const statements: { sql: string; bind: SqlValue[]; ms: number; rows: number }[] = [];
     const exec = this.db.exec;
     this.db.exec = ((...args: unknown[]) => {
@@ -284,7 +472,7 @@ export class ReplicaStore {
     }) as Database["exec"];
     const start = performance.now();
     try {
-      const result = this.list(input);
+      const result = read();
       const totalMs = performance.now() - start,
         sqlMs = statements.reduce((sum, statement) => sum + statement.ms, 0);
       return { result, profile: { totalMs, sqlMs, jsMs: totalMs - sqlMs, statements } };
@@ -297,6 +485,13 @@ export class ReplicaStore {
     return [
       ...new Map(profile.statements.map((statement) => [statement.sql, statement])).values(),
     ].map((statement) => ({
+      sql: statement.sql,
+      plan: this.rows(`explain query plan ${statement.sql}`, statement.bind),
+    }));
+  }
+  searchPlans(text: string, limit = 75) {
+    const { profile } = this.profileSearch(text, limit);
+    return profile.statements.map((statement) => ({
       sql: statement.sql,
       plan: this.rows(`explain query plan ${statement.sql}`, statement.bind),
     }));
@@ -359,6 +554,17 @@ export class ReplicaStore {
     );
     const more = rows.length > limit;
     rows.length = Math.min(rows.length, limit);
+    const messages = this.summarize(rows, input.view === "trash");
+    const last = rows.at(-1);
+    return {
+      messages,
+      nextCursor:
+        more && last
+          ? `local:${btoa(JSON.stringify({ receivedAt: last.sortReceivedAt, id: last.id }))}`
+          : null,
+    };
+  }
+  private summarize(rows: ReplicaRow[], trash = false): ConversationSummary[] {
     const aggregates = new Map<
       string,
       { count: number; unread: number; people: Map<string, MailAddress> }
@@ -366,7 +572,7 @@ export class ReplicaStore {
     if (rows.length)
       for (const member of this.rows<{ thread_id: string; read: number; from_json: string }>(
         `select thread_id,read,from_json from messages where thread_id in (${rows.map(() => "?").join(",")}) and deleted=? order by thread_id,received_at desc,id desc`,
-        [...rows.map((row) => row.threadId), Number(input.view === "trash")],
+        [...rows.map((row) => row.threadId), Number(trash)],
       )) {
         let aggregate = aggregates.get(member.thread_id);
         if (!aggregate) {
@@ -414,14 +620,7 @@ export class ReplicaStore {
       };
       return result;
     });
-    const last = rows.at(-1);
-    return {
-      messages,
-      nextCursor:
-        more && last
-          ? `local:${btoa(JSON.stringify({ receivedAt: last.sortReceivedAt, id: last.id }))}`
-          : null,
-    };
+    return messages;
   }
   detail(id: string, opened = false): ReplicaDetail | undefined {
     if (opened) this.opened([id]);
@@ -523,6 +722,9 @@ export class ReplicaStore {
             row.sortReceivedAt,
           ],
         );
+        if (existing) {
+          this.indexBody(row.id, searchableBody(row));
+        }
       }
       this.trimBodies();
     });

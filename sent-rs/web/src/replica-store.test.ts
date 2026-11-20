@@ -1,6 +1,7 @@
 // @vitest-environment node
 import sqlite3InitModule from "@sqlite.org/sqlite-wasm";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { packBody } from "./replica-body";
 import { RECENT_BODY_DAYS, recentBodyCutoff } from "./replica-policy";
 import { ReplicaStore } from "./replica-store";
 import {
@@ -65,6 +66,203 @@ afterEach(() => {
   store.db.close();
 });
 describe("real SQLite replica", () => {
+  it("matches compatibility-normalized Unicode in every indexed field and after body eviction", () => {
+    const headers = row("unicode", {
+      subject: "ﬁnance",
+      from: [{ name: "ﬂorence", address: "sender@test" }],
+      to: [{ name: "ｶﾀｶﾅ", address: "recipient@test" }],
+      snippet: "ｓｕｍｍａｒｙ",
+    });
+    seed([headers]);
+    const check = () => {
+      for (const term of ["ﬁnance", "finance", "florence", "ｶﾀｶﾅ", "カタカナ", "summary"])
+        expect(
+          store.search(term).messages.map((message) => message.id),
+          term,
+        ).toEqual(["unicode"]);
+    };
+    check();
+    store.bodies([{ ...headers, bodyAvailable: true, textBody: "ｂｕｄｇｅｔ" }]);
+    expect(store.search("budget").messages[0]?.id).toBe("unicode");
+    store.db.exec("delete from bodies where id='unicode'");
+    check();
+    expect(store.search("budget").messages).toEqual([]);
+    expect(store.detail("unicode")?.message.subject).toBe("ﬁnance");
+  });
+  it("indexes headers, prefixes and accents without storing a second content copy", () => {
+    seed([
+      row("one", {
+        subject: "Café quarterly",
+        from: [{ name: "María", address: "maria@company.test" }],
+        to: [{ name: "Recipient", address: "recipient@test" }],
+      }),
+      row("two", { subject: "Other" }),
+    ]);
+    for (const query of ["cafe quar", "maria", "recipient", "company", "Text"])
+      expect(store.search(query).messages.map((m) => m.id)).toContain("one");
+    expect(store.search("notpresent").messages).toEqual([]);
+    expect(store.db.selectValue("select subject from search_documents limit 1")).toBeNull();
+    expect(store.storageStats().ftsAllocatedBytes).toBeGreaterThan(0);
+  });
+  it("warms a representative query once when recent-body initialization finishes", () => {
+    seed([
+      row("one", {
+        subject: "Comet memo",
+        receivedAt: "2000-01-01T00:00:00Z",
+        sortReceivedAt: "2000-01-01T00:00:00.000000Z",
+      }),
+    ]);
+    const search = vi.spyOn(store, "search");
+    expect(store.recentBodies()).toEqual([]);
+    expect(store.recentBodies()).toEqual([]);
+    expect(search).toHaveBeenCalledExactlyOnceWith("Comet", 20);
+    expect(store.db.selectValue("pragma cache_size")).toBe(-65536);
+  });
+  it("skips representative query warming for an empty mailbox", () => {
+    const search = vi.spyOn(store, "search");
+    expect(store.recentBodies()).toEqual([]);
+    expect(search).not.toHaveBeenCalled();
+  });
+  it("keeps snapshots, deltas, archive/undo, deletions and cached bodies synchronized", () => {
+    const original = row("one", {
+      subject: "Headerneedle",
+      bodyAvailable: true,
+      textBody: "uniquebodyword",
+    });
+    seed([original]);
+    expect(store.search("uniquebodyword").messages).toEqual([]);
+    store.bodies([original]);
+    expect(store.search("uniquebodyword").messages[0]?.id).toBe("one");
+    expect(store.search("Headerneedle uniquebody").messages[0]?.id).toBe("one");
+    store.begin("archive", { id: "one", action: "archive" });
+    expect(store.search("uniquebodyword").messages[0]?.id).toBe("one");
+    store.settle("archive", false);
+    seed([row("new", { subject: "Newneedle" }), original]);
+    expect(store.search("uniquebodyword").messages[0]?.id).toBe("one");
+    store.delta(delta([row("new", { subject: "Changedneedle" })]));
+    expect(store.search("Newneedle").messages).toEqual([]);
+    expect(store.search("Changedneedle").messages[0]?.id).toBe("new");
+    store.begin("delete", { id: "one", action: "delete" });
+    expect(store.search("uniquebodyword").messages).toEqual([]);
+    store.settle("delete", false);
+    expect(store.search("uniquebodyword").messages[0]?.id).toBe("one");
+    store.delta(delta([], ["one"]));
+    expect(store.search("uniquebodyword").messages).toEqual([]);
+    expect(store.search("Headerneedle").messages).toEqual([]);
+  });
+  it("removes stale and evicted body tokens and rebuilds schema-5 caches once", () => {
+    const original = row("one", { bodyAvailable: true, textBody: "oldbodyneedle" });
+    seed([original]);
+    store.bodies([original]);
+    store.delta(delta([{ ...original, bodyVersion: "v2" }]));
+    expect(store.search("oldbodyneedle").messages).toEqual([]);
+    store.bodies([{ ...original, bodyVersion: "v2", textBody: "newbodyneedle" }]);
+    expect(store.search("newbodyneedle").messages[0]?.id).toBe("one");
+    store.db.exec("delete from bodies");
+    expect(store.search("newbodyneedle").messages).toEqual([]);
+    store.db.exec("pragma user_version=5");
+    store = new ReplicaStore(store.db);
+    expect(store.count()).toBe(0);
+    expect(store.db.selectValue("pragma user_version")).toBe(6);
+    seed([original]);
+    expect(store.search("one").messages[0]?.id).toBe("one");
+  });
+  it("treats arbitrary FTS operators and malformed syntax as literal sanitized tokens", () => {
+    seed([row("needle", { subject: "ordinary words" })]);
+    for (const query of [
+      "",
+      "***",
+      '"NEAR(foo) OR bar* NOT - baz:',
+      "\\",
+      "a".repeat(10000),
+      "😀 {} [] ()",
+      "\u0000\u0001",
+    ])
+      expect(() => store.search(query)).not.toThrow();
+  });
+  it("ranks subject matches over body matches, breaks ties by recency and deduplicates conversations", () => {
+    const subject = row("subject", { subject: "rankneedle", threadId: "conversation" });
+    const body = row("body", { bodyAvailable: true, textBody: "rankneedle" });
+    seed([
+      subject,
+      { ...subject, id: "older", sortReceivedAt: "2025-01-01T00:00:00.000000Z" },
+      body,
+    ]);
+    store.bodies([body]);
+    expect(store.search("rankneedle").messages.map((m) => m.id)).toEqual(["subject", "body"]);
+  });
+  it("expands score ties past the initial bound before applying recency", () => {
+    seed(
+      Array.from({ length: 140 }, (_, index) =>
+        row(`tie-${index}`, {
+          subject: "rankneedle",
+          sortReceivedAt: new Date(Date.UTC(2025, 0, 1) + index * 1000).toISOString(),
+        }),
+      ),
+    );
+    const result = store.profileSearch("rankneedle", 20);
+    expect(result.result.messages.map((message) => message.id)).toEqual(
+      Array.from({ length: 20 }, (_, index) => `tie-${139 - index}`),
+    );
+    expect(
+      result.profile.statements.filter((statement) => statement.sql.startsWith("select rowid,rank"))
+        .length,
+    ).toBeGreaterThan(1);
+  });
+  it("fills a conversation page beyond duplicate-thread hits and includes body-only matches", () => {
+    const body = row("body-only", {
+      bodyAvailable: true,
+      textBody: "rankneedle",
+      subject: "Other",
+    });
+    seed([
+      ...Array.from({ length: 140 }, (_, index) =>
+        row(`same-${index}`, { subject: "rankneedle", threadId: "same" }),
+      ),
+      body,
+      row("another", { subject: "rankneedle" }),
+    ]);
+    store.bodies([body]);
+    const results = store.search("rankneedle", 20).messages;
+    expect(results).toHaveLength(3);
+    expect(results.map((message) => message.id)).toContain("body-only");
+    expect(results.filter((message) => message.threadId === "same")).toHaveLength(1);
+  });
+  it("keeps summary boolean types and returns the exact full-page prefix", () => {
+    seed(
+      Array.from({ length: 90 }, (_, index) =>
+        row(`summary-${index}`, { subject: "rankneedle", flagged: true, syncPending: false }),
+      ),
+    );
+    const full = store.search("rankneedle");
+    expect(store.search("rankneedle", 20).messages).toEqual(full.messages.slice(0, 20));
+    expect(full.messages[0]).toMatchObject({ flagged: true, syncPending: false });
+    expect(store.search("notfound", 20)).toEqual({ messages: [], mode: "lexical" });
+  });
+  it("preserves compressed body tokens across header changes and snapshots, then evicts only the body", async () => {
+    const original = row("packed", {
+      subject: "Headerneedle",
+      to: [{ name: "Recipientneedle", address: "to@test" }],
+      bodyAvailable: true,
+      textBody: "Bodyneedle ".repeat(40),
+      plainText: "Distinctneedle ".repeat(40),
+    });
+    seed([original]);
+    const packed = await packBody(original);
+    if (!packed) throw new Error("Fixture must compress");
+    store.bodies([original], false, undefined, new Map([[original.id, packed]]));
+    store.delta(delta([{ ...original, read: true }]));
+    await store.restoreSearch();
+    expect(store.search("Headerneedle Bodyneedle Distinctneedle").messages[0]?.id).toBe(
+      original.id,
+    );
+    seed([row("another"), original]);
+    await store.restoreSearch();
+    expect(store.search("Bodyneedle").messages[0]?.id).toBe(original.id);
+    store.db.exec("delete from bodies");
+    expect(store.search("Bodyneedle").messages).toEqual([]);
+    expect(store.search("Headerneedle Recipientneedle").messages[0]?.id).toBe(original.id);
+  });
   it("background-caches the inclusive recent window and expires only unopened older bodies", () => {
     const now = Date.UTC(2026, 10, 20);
     vi.spyOn(Date, "now").mockReturnValue(now);

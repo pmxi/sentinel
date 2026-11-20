@@ -84,7 +84,8 @@ export const sentApi = {
       headers: cacheHeaders,
       body: JSON.stringify({ tier }),
     }),
-  search: (query: URLSearchParams) => api<SearchResponse>(`/api/search?${query}`),
+  search: (query: URLSearchParams, signal?: AbortSignal) =>
+    api<SearchResponse>(`/api/search?${query}`, { signal }),
   drafts: () => api<{ drafts: Draft[] }>("/api/drafts"),
   saveDraft: (draft: DraftInput) =>
     api<Draft>(draft.id ? `/api/drafts/${draft.id}` : "/api/drafts", {
