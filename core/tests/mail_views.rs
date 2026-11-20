@@ -219,6 +219,39 @@ async fn scheduled_labels_are_excluded_from_lists_counts_and_replica() -> Result
         2
     );
     assert!(f.list("all", 0, None, None).await.is_err());
+    for action in ["archive", "delete"] {
+        let input = ThreadActionInput {
+            action: action.into(),
+            view: "all".into(),
+            account_id: Some(f.owner),
+            undoable: false,
+        };
+        let receipt = f.repo.enqueue_thread_action(thread, &input, None).await?;
+        assert_eq!(f.repo.mutation_message_ids(receipt).await?, vec![ordinary]);
+        assert_eq!(
+            f.state(scheduled_ids[0]).await?,
+            json!({"archived":false,"deleted":false})
+        );
+    }
+    let input = ThreadActionInput {
+        action: "delete".into(),
+        view: "all".into(),
+        account_id: Some(f.owner),
+        undoable: false,
+    };
+    assert!(
+        f.repo
+            .enqueue_thread_action(thread, &input, None)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("select count(*) from mutation_outbox where message_id=?1")
+            .bind(scheduled_ids[0])
+            .fetch_one(&f.repo.0)
+            .await?,
+        0
+    );
     Ok(())
 }
 

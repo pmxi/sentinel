@@ -821,7 +821,7 @@ impl Repository {
             bail!("Invalid request");
         }
         let mut tx = self.0.begin_with("BEGIN IMMEDIATE").await?;
-        let rows = sqlx::query(&format!("select m.id,m.account_id,m.archived,m.deleted from messages m left join classifications c on c.message_id=m.id where m.thread_id=?1 and not m.tombstone and m.deleted={} and {} and (?2 is null or m.account_id=?2) order by m.id", input.view == "trash", message_view_condition(&input.view)))
+        let rows = sqlx::query(&format!("select m.id,m.account_id,m.archived,m.deleted from messages m left join classifications c on c.message_id=m.id where m.thread_id=?1 and {VISIBLE} and m.deleted={} and {} and (?2 is null or m.account_id=?2) order by m.id", input.view == "trash", message_view_condition(&input.view)))
             .bind(thread_id).bind(input.account_id).fetch_all(&mut *tx).await?;
         if rows.is_empty() {
             bail!("Message not found");
