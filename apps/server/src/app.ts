@@ -1,5 +1,5 @@
 import { access } from "node:fs/promises";
-import { resolve } from "node:path";
+import { relative, resolve, sep } from "node:path";
 import cookie from "@fastify/cookie";
 import multipart from "@fastify/multipart";
 import rateLimit from "@fastify/rate-limit";
@@ -299,7 +299,19 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     const webRoot = resolve(process.cwd(), env().WEB_DIST_PATH);
     try {
       await access(webRoot);
-      await app.register(fastifyStatic, { root: webRoot, wildcard: false });
+      await app.register(fastifyStatic, {
+        root: webRoot,
+        wildcard: false,
+        preCompressed: true,
+        setHeaders(response, path) {
+          response.header(
+            "Cache-Control",
+            relative(webRoot, path).startsWith(`assets${sep}`)
+              ? "public, max-age=31536000, immutable"
+              : "no-cache",
+          );
+        },
+      });
       app.setNotFoundHandler((request, reply) => {
         if (request.url.startsWith("/api/")) return reply.code(404).send({ error: "Not found" });
         return reply.sendFile("index.html");
