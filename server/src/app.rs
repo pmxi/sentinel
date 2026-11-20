@@ -139,8 +139,17 @@ impl Validated for ThreadActionInput {
             (
                 "view",
                 default(
-                    Schema::Enum(&["l1", "l2", "l3", "unclassified", "all", "sent", "trash"]),
-                    json!("l1"),
+                    Schema::Enum(&[
+                        "inbox",
+                        "l1",
+                        "l2",
+                        "l3",
+                        "unclassified",
+                        "all",
+                        "sent",
+                        "trash",
+                    ]),
+                    json!("inbox"),
                 ),
             ),
             ("accountId", optional(uuid())),
@@ -176,8 +185,17 @@ impl Validated for ListInput {
             (
                 "view",
                 default(
-                    Schema::Enum(&["l1", "l2", "l3", "unclassified", "all", "sent", "trash"]),
-                    json!("l1"),
+                    Schema::Enum(&[
+                        "inbox",
+                        "l1",
+                        "l2",
+                        "l3",
+                        "unclassified",
+                        "all",
+                        "sent",
+                        "trash",
+                    ]),
+                    json!("inbox"),
                 ),
             ),
             ("accountId", optional(uuid())),

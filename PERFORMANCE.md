@@ -10,8 +10,11 @@ No `apps/` or benchmark source was changed.
 
 ## Inbox transport stall
 
+Route names below use the current `/inbox` landing page. These historical
+measurements used the former tier-specific landing route, before the unified Inbox.
+
 The original Rust listener accepted Tokio TCP streams without disabling Nagle.
-The actual browser reload of `/inbox/l1` received the HTML headers in about
+The actual browser reload of `/inbox` received the HTML headers in about
 0.6 ms, but the 518-byte HTML body only completed at 41–42 ms. The JS/CSS requests
 could not start until about 42 ms. Node's HTML completed in about 2–3 ms. The
 connection was reused (`connectStart = -1`); this was not connection setup.
@@ -43,7 +46,7 @@ the uncached server path for each logical request in the six-request window.
 
 | Request | Node | Rust before | Rust after |
 | --- | ---: | ---: | ---: |
-| `/inbox/l1` | 0.830 | 0.359 | 0.359 |
+| `/inbox` | 0.830 | 0.359 | 0.359 |
 | `/assets/index-*.js` | 0.850 | 0.322 | 0.295 |
 | `/assets/index-*.css` | 0.889 | 0.296 | 0.285 |
 | `/api/auth/session` | 0.674 | 0.202 | 0.198 |

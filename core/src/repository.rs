@@ -150,6 +150,7 @@ pub struct ThreadActionInput {
 
 fn message_view_condition(view: &str) -> &'static str {
     match view {
+        "inbox" => "not m.archived and m.direction='inbound'",
         "l1" => {
             "not m.archived and m.direction='inbound' and (coalesce(c.manual_tier,c.model_tier)=1 or c.message_id is null)"
         }
@@ -420,10 +421,20 @@ impl Repository {
     }
 
     pub async fn list_messages(&self, input: ListInput) -> Result<Value> {
-        let view = input.view.as_deref().unwrap_or("l1");
+        let view = input.view.as_deref().unwrap_or("inbox");
         let limit = input.limit.unwrap_or(50);
         if !(1..=100).contains(&limit)
-            || !["l1", "l2", "l3", "unclassified", "all", "sent", "trash"].contains(&view)
+            || ![
+                "inbox",
+                "l1",
+                "l2",
+                "l3",
+                "unclassified",
+                "all",
+                "sent",
+                "trash",
+            ]
+            .contains(&view)
         {
             bail!("Invalid request");
         }
@@ -817,8 +828,17 @@ impl Repository {
             "delete" => "deleted",
             _ => bail!("Invalid request"),
         };
-        if !["l1", "l2", "l3", "unclassified", "all", "sent", "trash"]
-            .contains(&input.view.as_str())
+        if ![
+            "inbox",
+            "l1",
+            "l2",
+            "l3",
+            "unclassified",
+            "all",
+            "sent",
+            "trash",
+        ]
+        .contains(&input.view.as_str())
         {
             bail!("Invalid request");
         }

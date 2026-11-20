@@ -57,6 +57,7 @@ function condition(view: string, alias = "") {
   const col = (name: string) => `${alias}${name}`;
   const live = `${col("deleted")}=${view === "trash" ? 1 : 0}`;
   if (view === "sent") return `${live} and ${col("direction")}='outbound'`;
+  if (view === "inbox") return `${live} and ${col("archived")}=0 and ${col("direction")}='inbound'`;
   if (["l1", "l2", "l3", "unclassified"].includes(view)) {
     const tier =
       view === "unclassified"

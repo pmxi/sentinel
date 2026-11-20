@@ -338,7 +338,7 @@ describe("real SQLite replica", () => {
       row("d", { tier: 3, classified: true }),
       row("e", { deleted: true }),
     ]);
-    for (const view of ["l1", "l2", "l3", "unclassified", "all", "sent", "trash"]) {
+    for (const view of ["inbox", "l1", "l2", "l3", "unclassified", "all", "sent", "trash"]) {
       for (const accountId of [undefined, "owner"]) {
         const { profile } = store.profileList({ view, accountId });
         expect(profile.statements).toHaveLength(2);
@@ -446,6 +446,34 @@ describe("real SQLite replica", () => {
     );
     expect(store.db.selectValue("select count(*) from bodies")).toBe(128);
   });
+  it("includes all inbound tiers and unsorted mail in Inbox and archives all eligible thread members", () => {
+    seed([
+      row("unsorted"),
+      row("important", { threadId: "mixed", tier: 1, classified: true }),
+      row("update", { threadId: "mixed", tier: 2, classified: true }),
+      row("low", { tier: 3, classified: true }),
+      row("archived", { archived: true }),
+      row("outbound", { direction: "outbound" }),
+      row("deleted", { deleted: true }),
+    ]);
+    const ids = () => store.list({ view: "inbox" }).messages.map((item) => item.id);
+    expect(ids().sort()).toEqual(["low", "unsorted", "update"]);
+    expect(store.list({ view: "all" }).messages).toHaveLength(5);
+    store.begin("archive", { threadId: "mixed", view: "inbox", action: "archive" });
+    expect(ids().sort()).toEqual(["low", "unsorted"]);
+    expect(store.list({ view: "l1" }).messages.map((item) => item.id)).toEqual(["unsorted"]);
+    expect(store.list({ view: "l2" }).messages).toEqual([]);
+    store.settle("archive", false);
+    expect(ids().sort()).toEqual(["low", "unsorted", "update"]);
+    store.begin("delete", { threadId: "mixed", view: "inbox", action: "delete" });
+    expect(ids().sort()).toEqual(["low", "unsorted"]);
+  });
+
+  it("returns an empty Inbox when only archived and outbound mail exist", () => {
+    seed([row("archived", { archived: true }), row("outbound", { direction: "outbound" })]);
+    expect(store.list({ view: "inbox" }).messages).toEqual([]);
+  });
+
   it("groups every view, sorts and pages by stable identities, aggregates outside the view", () => {
     seed([
       row("a"),

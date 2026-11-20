@@ -154,7 +154,7 @@ try {
       } catch {}
     });
   });
-  await page.goto(`${url}/inbox/l1`);
+  await page.goto(`${url}/inbox`);
   await page.waitForFunction(
     () =>
       document.documentElement.dataset.sentReplica === "ready" &&
@@ -180,7 +180,7 @@ try {
   );
   const other = await context.newPage();
   other.on("pageerror", (error) => errors.push(error.message));
-  await other.goto(`${url}/inbox/l1`);
+  await other.goto(`${url}/inbox`);
   await other.waitForFunction(
     () =>
       document.documentElement.dataset.sentReplica === "ready" &&
@@ -333,7 +333,7 @@ try {
   await login(network);
   const networkPage = await network.newPage();
   networkPage.on("pageerror", (error) => errors.push(error.message));
-  await networkPage.goto(`${url}/inbox/l1`);
+  await networkPage.goto(`${url}/inbox`);
   await networkPage.waitForFunction(() => document.documentElement.dataset.sentLive === "ready");
   await networkPage.waitForLoadState("networkidle");
   const networkMail = await insert("Live network fallback");
@@ -349,7 +349,7 @@ try {
   const expiringToken = `${signed}.${createHmac("sha256", secret).update(signed).digest("base64url")}`;
   await expiring.addCookies([{ url, name: "sent_session", value: expiringToken }]);
   const expiringPage = await expiring.newPage();
-  await expiringPage.goto(`${url}/inbox/l1`);
+  await expiringPage.goto(`${url}/inbox`);
   await expiringPage.waitForFunction(() => document.documentElement.dataset.sentLive === "ready");
   await expiringPage.getByLabel("Password").waitFor({ timeout: 10_000 });
   await expiring.close();
@@ -385,7 +385,7 @@ try {
   await login(fallback);
   const fallbackPage = await fallback.newPage();
   fallbackPage.on("pageerror", (error) => errors.push(error.message));
-  await fallbackPage.goto(`${proxyUrl}/inbox/l1`);
+  await fallbackPage.goto(`${proxyUrl}/inbox`);
   await fallbackPage.waitForFunction(
     () => document.documentElement.dataset.sentReplica === "ready",
   );

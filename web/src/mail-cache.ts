@@ -94,6 +94,7 @@ function reconcile(client: QueryClient, keys: QueryKey[]) {
 export function inView(item: Mail, view = "all") {
   if (Boolean(item.deleted) !== (view === "trash")) return false;
   if (view === "sent") return item.direction === "outbound";
+  if (view === "inbox") return !item.archived && item.direction === "inbound";
   if (["l1", "l2", "l3", "unclassified"].includes(view)) {
     if (item.archived || item.direction !== "inbound") return false;
     if (view === "unclassified")

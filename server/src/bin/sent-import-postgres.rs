@@ -288,7 +288,16 @@ async fn check(path: &Path) -> Result<()> {
     let started = Instant::now();
     let pool = db::read_only_pool(path).await?;
     let repo = Repository(pool.clone());
-    for view in ["l1", "l2", "l3", "unclassified", "all", "sent", "trash"] {
+    for view in [
+        "inbox",
+        "l1",
+        "l2",
+        "l3",
+        "unclassified",
+        "all",
+        "sent",
+        "trash",
+    ] {
         let start = Instant::now();
         let page = repo
             .list_messages(ListInput {
