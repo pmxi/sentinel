@@ -283,6 +283,7 @@ a silently skipped update. Snapshot and delta payloads contain no message bodies
 Mail is stored in the browser's private OPFS storage, not encrypted by this
 application. Logout/401 revokes the local session, closes/wipes its database and
 notifies other tabs. LocalStorage contains no mail, passwords or bearer tokens.
+Pending shell activation waits for these private database wipes before reloading.
 The static-only service worker still never handles `/api/*`.
 
 After release/web builds, check against an isolated, existing local test database:

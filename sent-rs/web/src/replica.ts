@@ -82,8 +82,11 @@ export class MailboxReplica {
     this.startup = setTimeout(() => void this.start(), 2000);
   }
   private reset = (event: Event) => {
-    const id = (event as CustomEvent<{ id?: string }>).detail?.id;
-    if (!id || id === this.id) void this.close(true);
+    const detail = (event as CustomEvent<{ id?: string; pending?: Promise<unknown>[] }>).detail;
+    if (!detail?.id || detail.id === this.id) {
+      const wipe = this.close(true);
+      detail?.pending?.push(wipe);
+    }
   };
   private call<T>(method: string, ...args: unknown[]): Promise<T> {
     const worker = this.worker;

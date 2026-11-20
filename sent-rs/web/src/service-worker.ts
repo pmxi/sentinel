@@ -1,8 +1,18 @@
 const reloadGuards = new Set<() => Promise<void>>();
 const reloadChecks = new Set<() => void>();
 
-export function clearShellReloadGuards() {
+export function clearShellReloadGuards(until?: Promise<unknown>) {
   reloadGuards.clear();
+  if (until) {
+    const guard = async () => {
+      await until;
+    };
+    reloadGuards.add(guard);
+    const release = () => {
+      if (reloadGuards.delete(guard)) for (const check of reloadChecks) check();
+    };
+    void until.then(release, release);
+  }
   for (const check of reloadChecks) check();
 }
 
