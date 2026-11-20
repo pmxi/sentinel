@@ -137,6 +137,158 @@ fn ids(value: &Value) -> Vec<Uuid> {
 }
 
 #[tokio::test]
+async fn scheduled_labels_are_excluded_from_lists_counts_and_replica() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let pool = db::pool(directory.path().join("sent.sqlite").to_str().unwrap(), true).await?;
+    db::migrate(
+        &pool,
+        &sent_core::config::Config::from_env()?.migrations_path,
+    )
+    .await?;
+    let f = Fixture {
+        repo: Repository(pool),
+        owner: Uuid::new_v4(),
+        other: Uuid::new_v4(),
+    };
+    f.reset().await?;
+    let ordinary = f.message("group", 1, json!({})).await?;
+    let mut scheduled_ids = Vec::new();
+    for (id, thread, labels) in [
+        (
+            "scheduled",
+            "group",
+            json!(["SCHEDULED", "INBOX", "UNREAD"]),
+        ),
+        ("scheduled-only", "scheduled-only", json!(["SCHEDULED"])),
+    ] {
+        let message = sent_core::normalize::gmail_message(
+            &json!({"id":id,"threadId":thread,"internalDate":"1893456000000","labelIds":labels,
+                "payload":{"headers":[{"name":"From","value":"scheduled@example.test"},{"name":"Subject","value":"scheduledneedle"}]}}),
+            "owner@example.test",
+        )?;
+        scheduled_ids.push(f.repo.upsert_message(f.owner, &message).await?.0);
+    }
+    for view in ["all", "l1", "unclassified"] {
+        let list = f.list(view, 1, None, None).await?;
+        assert_eq!(ids(&list), vec![ordinary]);
+        assert!(list["nextCursor"].is_null());
+        assert_eq!(list["messages"][0]["messageCount"], 1);
+        assert_eq!(list["messages"][0]["unreadCount"], 0);
+        assert_eq!(
+            list["messages"][0]["participants"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+    let inventory = f.repo.replica_inventory(None, false).await?;
+    assert_eq!(inventory.messages.len(), 1);
+    assert_eq!(uuid(&inventory.messages[0]["id"]), ordinary);
+    assert!(
+        f.repo
+            .replica_inventory(Some(&scheduled_ids), false)
+            .await?
+            .messages
+            .is_empty()
+    );
+    let thread = uuid(&f.repo.get_message(ordinary).await?.unwrap()["threadId"]);
+    assert_eq!(
+        f.repo
+            .get_thread(thread, false)
+            .await?
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    assert!(ids(&f.search("scheduledneedle", 10, None, None).await?).is_empty());
+    assert_eq!(
+        ids(&f.search("group", 10, None, None).await?),
+        vec![ordinary]
+    );
+    assert_eq!(
+        ids(&f.search("-nomatch", 10, None, None).await?),
+        vec![ordinary]
+    );
+    let embedding = vec![1.0; 3072];
+    for id in [ordinary, scheduled_ids[0], scheduled_ids[1]] {
+        f.repo
+            .save_embedding(id, &embedding, "fixture", "hash")
+            .await?;
+    }
+    let results = f
+        .repo
+        .search(
+            &SearchInput {
+                q: "nomatch".into(),
+                account_id: None,
+                tier: None,
+                after: None,
+                before: None,
+                has_attachment: None,
+                limit: Some(10),
+            },
+            Some(embedding),
+        )
+        .await?;
+    assert_eq!(ids(&results), vec![ordinary]);
+    assert_eq!(results["messages"][0]["messageCount"], 1);
+
+    let sent = sent_core::normalize::gmail_message(
+        &json!({"id":"scheduled-only","threadId":"scheduled-only","internalDate":"1893456000000","labelIds":["SENT"]}),
+        "owner@example.test",
+    )?;
+    let sent_id = f.repo.upsert_message(f.owner, &sent).await?.0;
+    assert_eq!(sent_id, scheduled_ids[1]);
+    assert_eq!(
+        ids(&f.list("all", 10, None, None).await?),
+        vec![sent_id, ordinary]
+    );
+    assert_eq!(ids(&f.list("sent", 10, None, None).await?), vec![sent_id]);
+    assert_eq!(
+        f.repo.replica_inventory(None, false).await?.messages.len(),
+        2
+    );
+    assert!(f.list("all", 0, None, None).await.is_err());
+    for action in ["archive", "delete"] {
+        let input = ThreadActionInput {
+            action: action.into(),
+            view: "all".into(),
+            account_id: Some(f.owner),
+            undoable: false,
+        };
+        let receipt = f.repo.enqueue_thread_action(thread, &input, None).await?;
+        assert_eq!(f.repo.mutation_message_ids(receipt).await?, vec![ordinary]);
+        assert_eq!(
+            f.state(scheduled_ids[0]).await?,
+            json!({"archived":false,"deleted":false})
+        );
+    }
+    let input = ThreadActionInput {
+        action: "delete".into(),
+        view: "all".into(),
+        account_id: Some(f.owner),
+        undoable: false,
+    };
+    assert!(
+        f.repo
+            .enqueue_thread_action(thread, &input, None)
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("select count(*) from mutation_outbox where message_id=?1")
+            .bind(scheduled_ids[0])
+            .fetch_one(&f.repo.0)
+            .await?,
+        0
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn mail_views_and_send_checkpoints() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("sent.sqlite");

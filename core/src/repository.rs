@@ -216,12 +216,16 @@ const SELECT: &str = "m.id, m.thread_id, m.account_id, a.provider, a.email accou
  c.model_tier, c.manual_tier, c.reasoning, c.summary, c.plain_text, c.model classification_model,
  exists(select 1 from mutation_outbox o where o.message_id=m.id and o.status in ('pending','processing')) sync_pending";
 
+const VISIBLE: &str = "not m.tombstone and not exists(select 1 from json_each(m.native_state,'$.labelIds') label where label.value='SCHEDULED')";
+
 fn metadata(deleted: bool) -> String {
-    format!("(select count(*) from messages tm where tm.thread_id=page.thread_id and not tm.tombstone and tm.deleted={deleted}) message_count,
-      (select count(*) from messages tm where tm.thread_id=page.thread_id and not tm.tombstone and tm.deleted={deleted} and not tm.read) unread_count,
+    let visible = VISIBLE.replace("m.", "tm.");
+    let participants_visible = VISIBLE.replace("m.", "pm.");
+    format!("(select count(*) from messages tm where tm.thread_id=page.thread_id and {visible} and tm.deleted={deleted}) message_count,
+      (select count(*) from messages tm where tm.thread_id=page.thread_id and {visible} and tm.deleted={deleted} and not tm.read) unread_count,
       (select json_group_array(json(person)) from (
         select person from (select person.value person, row_number() over(partition by lower(person.value->>'address') order by pm.received_at desc,pm.id desc) sender_rank
-        from messages pm,json_each(pm.from_addresses) person where pm.thread_id=page.thread_id and not pm.tombstone and pm.deleted={deleted})
+        from messages pm,json_each(pm.from_addresses) person where pm.thread_id=page.thread_id and {participants_visible} and pm.deleted={deleted})
         where sender_rank=1 order by person->>'address'
       )) participants")
 }
@@ -450,11 +454,12 @@ impl Repository {
             .transpose()?;
         let deleted = view == "trash";
         let newer_condition = condition.replace("m.", "newer.").replace("c.", "nc.");
+        let newer_visible = VISIBLE.replace("m.", "newer.");
         let sql = format!("with page as materialized (select m.id,m.thread_id,m.received_at
           from messages m join accounts a on a.id=m.account_id left join classifications c on c.message_id=m.id
-          where not m.tombstone and m.deleted={deleted} and {condition} and (?1 is null or m.account_id=?1)
+          where {VISIBLE} and m.deleted={deleted} and {condition} and (?1 is null or m.account_id=?1)
           and not exists(select 1 from messages newer left join classifications nc on nc.message_id=newer.id
-            where newer.thread_id=m.thread_id and not newer.tombstone and newer.deleted={deleted} and {newer_condition}
+            where newer.thread_id=m.thread_id and {newer_visible} and newer.deleted={deleted} and {newer_condition}
             and (?1 is null or newer.account_id=?1) and (newer.received_at,newer.id)>(m.received_at,m.id))
           and (?2 is null or (m.received_at,m.id)<(?2,?3)) order by m.received_at desc,m.id desc limit ?4)
           select {SELECT},{} from page join messages m on m.id=page.id join accounts a on a.id=m.account_id
@@ -519,7 +524,7 @@ impl Repository {
           from messages m join accounts a on a.id=m.account_id left join classifications c on c.message_id=m.id
           left join sent_body_revisions revisions on revisions.message_id=m.id
           left join cached_values cached on cached.key=m.id
-          where not m.tombstone and (?1 is null or m.id in (select value from json_each(?1))) order by m.id");
+          where {VISIBLE} and (?1 is null or m.id in (select value from json_each(?1))) order by m.id");
         let mut tx = self.0.begin().await?;
         let mut rows = sqlx::query(&query)
             .bind(ids.map(|ids| json!(ids)))
@@ -592,7 +597,7 @@ impl Repository {
 
     pub async fn get_thread_with_state(&self, id: Uuid, trash: bool, state: bool) -> Result<Value> {
         let sql = format!(
-            "select {SELECT},m.archived,m.deleted,c.message_id is not null classified,m.to_addresses,m.cc_addresses,m.bcc_addresses,m.sent_at,m.text_body,m.html_body,m.internet_message_id from messages m join accounts a on a.id=m.account_id left join classifications c on c.message_id=m.id where m.thread_id=?1 and not m.tombstone and m.deleted=?2 order by m.received_at,m.id"
+            "select {SELECT},m.archived,m.deleted,c.message_id is not null classified,m.to_addresses,m.cc_addresses,m.bcc_addresses,m.sent_at,m.text_body,m.html_body,m.internet_message_id from messages m join accounts a on a.id=m.account_id left join classifications c on c.message_id=m.id where m.thread_id=?1 and {VISIBLE} and m.deleted=?2 order by m.received_at,m.id"
         );
         Ok(json!(
             sqlx::query(&sql)
@@ -631,7 +636,9 @@ impl Repository {
         {
             bail!("Invalid request");
         }
-        let filter = "not m.tombstone and not m.deleted and (?2 is null or m.account_id=?2) and (?3 is null or coalesce(c.manual_tier,c.model_tier)=?3) and (?4 is null or m.received_at >= ?4) and (?5 is null or m.received_at < ?5) and (?6 is null or (json_array_length(m.attachments)>0)=?6)";
+        let filter = format!(
+            "{VISIBLE} and not m.deleted and (?2 is null or m.account_id=?2) and (?3 is null or coalesce(c.manual_tier,c.model_tier)=?3) and (?4 is null or m.received_at >= ?4) and (?5 is null or m.received_at < ?5) and (?6 is null or (json_array_length(m.attachments)>0)=?6)"
+        );
         let (query, exclusions) = fts_query(&input.q);
         let lexical = format!("with exclusion_matches as materialized (
             select exclusions.key group_id,messages_search.rowid message_rowid
@@ -816,7 +823,7 @@ impl Repository {
             bail!("Invalid request");
         }
         let mut tx = self.0.begin_with("BEGIN IMMEDIATE").await?;
-        let rows = sqlx::query(&format!("select m.id,m.account_id,m.archived,m.deleted from messages m left join classifications c on c.message_id=m.id where m.thread_id=?1 and not m.tombstone and m.deleted={} and {} and (?2 is null or m.account_id=?2) order by m.id", input.view == "trash", message_view_condition(&input.view)))
+        let rows = sqlx::query(&format!("select m.id,m.account_id,m.archived,m.deleted from messages m left join classifications c on c.message_id=m.id where m.thread_id=?1 and {VISIBLE} and m.deleted={} and {} and (?2 is null or m.account_id=?2) order by m.id", input.view == "trash", message_view_condition(&input.view)))
             .bind(thread_id).bind(input.account_id).fetch_all(&mut *tx).await?;
         if rows.is_empty() {
             bail!("Message not found");
