@@ -2,7 +2,12 @@ import type { Account, MessageDetail } from "@sent/shared";
 import type { QueryClient, QueryKey } from "@tanstack/solid-query";
 import { createSignal } from "solid-js";
 import { ApiError, api, type CacheResponse, sentApi } from "./api";
-import { REPLICA_CHANNEL, REPLICA_RESET_EVENT } from "./replica-session";
+import {
+  REPLICA_CHANNEL,
+  REPLICA_RESET_EVENT,
+  REPLICA_REVOKED_KEY,
+  replicaStorageReady,
+} from "./replica-session";
 import {
   REPLICA_SESSION_KEY,
   type ReplicaChange,
@@ -24,6 +29,8 @@ export const replicaFor = (client: QueryClient) => replicas.get(client);
 function sessionId() {
   try {
     const old = localStorage.getItem(REPLICA_SESSION_KEY);
+    if (old && localStorage.getItem(REPLICA_REVOKED_KEY) === old)
+      return { id: crypto.randomUUID(), persistent: false };
     if (old && /^[a-f0-9-]{36}$/.test(old)) return { id: old, persistent: true };
   } catch {}
   const id = crypto.randomUUID();
@@ -40,8 +47,10 @@ async function removeDirectory(id: string) {
   } catch {}
 }
 export class MailboxReplica {
-  private readonly identity = sessionId();
-  readonly id = this.identity.id;
+  private identity = sessionId();
+  get id() {
+    return this.identity.id;
+  }
   readonly ready: () => boolean;
   private setReady: (value: boolean) => void;
   private worker?: Worker;
@@ -106,6 +115,14 @@ export class MailboxReplica {
   private async start() {
     if (this.closed || typeof Worker === "undefined") return;
     try {
+      await replicaStorageReady();
+      try {
+        if (
+          localStorage.getItem(REPLICA_SESSION_KEY) !== this.id &&
+          !localStorage.getItem(REPLICA_REVOKED_KEY)
+        )
+          this.identity = sessionId();
+      } catch {}
       this.worker = new Worker(new URL("./replica-worker.ts", import.meta.url), { type: "module" });
       this.worker.onmessage = (event: MessageEvent<RpcReply>) => {
         const call = this.calls.get(event.data.id);

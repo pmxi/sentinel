@@ -19,6 +19,7 @@ import { InboxPage, SearchResults } from "./InboxPage";
 import { LoginPage } from "./LoginPage";
 import { quietUntil } from "./mail-cache";
 import { MailboxReplica } from "./replica";
+import { waitForReplicaWipe } from "./replica-session";
 import { Link, NavLink, useLocation, useNavigate } from "./router";
 import {
   forgetShellMetadata,
@@ -386,8 +387,8 @@ function SettingsPage(props: { accounts: Account[] }) {
   };
   const logout = createMutation(() => ({
     mutationFn: sentApi.logout,
-    onSuccess: () => {
-      forgetShellMetadata();
+    onSuccess: async () => {
+      await waitForReplicaWipe(forgetShellMetadata());
       queryClient.clear();
       navigate("/");
       window.location.reload();

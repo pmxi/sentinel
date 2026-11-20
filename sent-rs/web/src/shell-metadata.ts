@@ -56,5 +56,7 @@ export function forgetShellMetadata() {
   try {
     localStorage.removeItem(SHELL_METADATA_KEY);
   } catch {}
-  clearShellReloadGuards(endReplicaSession());
+  const wipe = endReplicaSession();
+  clearShellReloadGuards(wipe);
+  return wipe;
 }
