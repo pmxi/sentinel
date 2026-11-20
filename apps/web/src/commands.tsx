@@ -192,6 +192,10 @@ function CommandPalette({ commands, close }: { commands: Command[]; close(): voi
         }
       }}
       onKeyDown={(event) => {
+        if (event.repeat || event.nativeEvent.isComposing) {
+          if (event.key === "Enter" && event.repeat) event.preventDefault();
+          return;
+        }
         if (event.key === "ArrowDown" || event.key === "ArrowUp") {
           event.preventDefault();
           setActive((value) =>
