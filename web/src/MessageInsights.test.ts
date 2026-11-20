@@ -11,9 +11,11 @@ const message = {
 };
 
 describe("AI insights", () => {
-  it("replaces boilerplate snippets with a labeled AI summary", () => {
+  it("replaces boilerplate snippets with an unmarked summary", () => {
     const html = renderToStaticMarkup(createElement(MessagePreview, { message }));
-    expect(html).toContain('class="ai-label">AI</span>');
+    expect(html).toContain('class="message-snippet"');
+    expect(html).not.toContain("ai-label");
+    expect(html).not.toContain(">AI<");
     expect(html).toContain(message.aiSummary);
     expect(html).not.toContain(message.snippet);
   });
@@ -28,6 +30,26 @@ describe("AI insights", () => {
       expect(html).not.toContain("ai-label");
     },
   );
+
+  it("renders empty previews without adding labels", () => {
+    const html = renderToStaticMarkup(
+      createElement(MessagePreview, { message: { ...message, aiSummary: null, snippet: "" } }),
+    );
+    expect(html).toBe('<span class="message-snippet"></span>');
+  });
+
+  it("escapes summary and fallback preview text", () => {
+    for (const aiSummary of [null, "<img src=x onerror=alert(1)>"]) {
+      const html = renderToStaticMarkup(
+        createElement(MessagePreview, {
+          message: { ...message, aiSummary, snippet: "<script>alert(1)</script>" },
+        }),
+      );
+      expect(html).not.toContain("<img");
+      expect(html).not.toContain("<script");
+      expect(html).toContain("&lt;");
+    }
+  });
 
   it("exposes a native keyboard-accessible disclosure without nested buttons", () => {
     const html = renderToStaticMarkup(createElement(RankingReason, { message }));

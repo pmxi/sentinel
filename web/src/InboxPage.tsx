@@ -23,7 +23,7 @@ import { useCommands, useFrameCommands } from "./commands";
 import { replySeed, useCompose } from "./compose";
 import { messageCursorIndex, nextMessageIndex } from "./keyboard";
 import { liveInterval } from "./live";
-import { ReaderInsights } from "./MessageInsights";
+import { MessagePreview, ReaderInsights } from "./MessageInsights";
 import { optimistic, quietUntil } from "./mail-cache";
 import { useMailbox } from "./mailbox";
 import { cachedRow, headerData, usePrefetch } from "./prefetch";
@@ -145,6 +145,7 @@ export function InboxPage(props: { accounts: Account[] }) {
               )}
             </header>
             <MessageList
+              showImportance={route.view === "all"}
               prefetch={prefetch}
               messages={navigation.visible}
               loading={messages.isLoading}
@@ -221,6 +222,7 @@ export function SearchResults(props: { accounts: Account[] }) {
               </div>
             </header>
             <MessageList
+              showImportance
               prefetch={prefetch}
               messages={navigation.visible}
               loading={result.isLoading}
@@ -257,6 +259,7 @@ export function SearchResults(props: { accounts: Account[] }) {
   );
 }
 function MessageList(props: {
+  showImportance?: boolean;
   prefetch?(message: ConversationSummary): void;
   messages: ConversationSummary[];
   loading: boolean;
@@ -271,7 +274,6 @@ function MessageList(props: {
   emptyDescription?: string;
 }) {
   const [list, setList] = createSignal<HTMLDivElement>();
-  const [params] = useSearchParams();
   const mobileQuery = window.matchMedia("(max-width: 700px)");
   const [mobile, setMobile] = createSignal(mobileQuery.matches);
   const updateMobile = () => setMobile(mobileQuery.matches);
@@ -492,7 +494,7 @@ function MessageList(props: {
       <Match when={true}>
         {
           <div
-            class={`message-list ${params().get("mock") === "bar" ? "importance-bar" : "importance-tint"}`}
+            class={`message-list ${props.showImportance ? "importance-tint" : ""}`}
             ref={(element) =>
               queueMicrotask(() => {
                 if (element.isConnected) setList(element);
@@ -576,9 +578,7 @@ function MessageList(props: {
                           {message.subject.replace(/^(?:(?:re|fw|fwd):\s*)+/i, "") ||
                             "(No subject)"}
                         </span>
-                        <span class="message-snippet">
-                          {message.aiSummary?.trim() || message.snippet}
-                        </span>
+                        <MessagePreview message={message} />
                       </span>
                     </button>
                   </div>
