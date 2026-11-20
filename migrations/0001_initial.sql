@@ -101,10 +101,6 @@ CREATE TABLE sent_body_revisions (
 );
 CREATE TABLE sent_live_signal (id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);
 INSERT INTO sent_live_signal VALUES(1,0);
-CREATE TABLE sent_live_revocations (session TEXT PRIMARY KEY NOT NULL,expires INTEGER NOT NULL);
-CREATE TRIGGER sent_live_revocations_expire AFTER INSERT ON sent_live_revocations BEGIN
-  DELETE FROM sent_live_revocations WHERE expires<strftime('%s','now');
-END;
 CREATE TRIGGER messages_revision_insert AFTER INSERT ON messages BEGIN
   INSERT INTO sent_body_revisions VALUES(new.id,lower(hex(randomblob(16))));
 END;

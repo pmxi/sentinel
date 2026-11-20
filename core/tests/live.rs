@@ -6,11 +6,16 @@ use sent_core::{
 
 #[tokio::test]
 async fn durable_revocations_are_scoped_and_expire_without_affecting_worker_health() -> Result<()> {
-    let Ok(url) = std::env::var("SENT_TEST_DATABASE_URL") else {
-        return Ok(());
-    };
-    anyhow::ensure!(reqwest::Url::parse(&url)?.path().starts_with("/sent_test_"));
-    let pool = db::pool(&url, true).await?;
+    let directory = tempfile::tempdir()?;
+    let pool = db::pool(
+        directory
+            .path()
+            .join("revocations.sqlite")
+            .to_str()
+            .unwrap(),
+        true,
+    )
+    .await?;
     db::migrate(
         &pool,
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../migrations"),
@@ -34,12 +39,12 @@ async fn durable_revocations_are_scoped_and_expire_without_affecting_worker_heal
             .await?["workerHeartbeat"],
         health["workerHeartbeat"]
     );
-    let expired_rows: i64 = sqlx::query_scalar("select count(*) from worker_state where name=$1")
+    let expired_rows: i64 = sqlx::query_scalar("select count(*) from worker_state where name=?1")
         .bind(format!("session-revoked:{expired}"))
         .fetch_one(&pool)
         .await?;
     assert_eq!(expired_rows, 0);
-    sqlx::query("delete from worker_state where name=$1")
+    sqlx::query("delete from worker_state where name=?1")
         .bind(format!("session-revoked:{session}"))
         .execute(&pool)
         .await?;
@@ -86,9 +91,11 @@ async fn notifications_follow_commit_and_rollback_and_never_contain_credentials(
         chrono::Utc::now().timestamp() + 60,
     )
     .await?;
-    let key: String = sqlx::query_scalar("select session from sent_live_revocations")
-        .fetch_one(&mut *listener)
-        .await?;
+    let key: String = sqlx::query_scalar(
+        "select substr(name,17) from worker_state where name like 'session-revoked:%'",
+    )
+    .fetch_one(&mut *listener)
+    .await?;
     assert_eq!(key, "opaque-session-id");
     let revoked: i64 = sqlx::query_scalar("pragma data_version")
         .fetch_one(&mut *listener)

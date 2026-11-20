@@ -106,7 +106,7 @@ async fn coalesce(changed: &Notify) {
 
 pub async fn start(state: Arc<State>) -> Result<(), sqlx::Error> {
     let revocations: Vec<(String, i64)> = sqlx::query_as(
-        "select session,expires from sent_live_revocations where expires>strftime('%s','now')",
+        "select substr(name,17),cast(json_extract(metadata,'$.expires') as integer) from worker_state where name like 'session-revoked:%' and cast(json_extract(metadata,'$.expires') as integer)>cast(strftime('%s','now') as integer)",
     )
     .fetch_all(&state.repository.0)
     .await?;
@@ -155,7 +155,7 @@ pub async fn start(state: Arc<State>) -> Result<(), sqlx::Error> {
                 loop {
                     ticks.tick().await;
                     let current: i64 = sqlx::query_scalar("pragma data_version").fetch_one(&mut *listener).await?;
-                    let revocations: Vec<(String,i64)> = sqlx::query_as("select session,expires from sent_live_revocations where expires>strftime('%s','now')").fetch_all(&mut *listener).await?;
+                    let revocations: Vec<(String,i64)> = sqlx::query_as("select substr(name,17),cast(json_extract(metadata,'$.expires') as integer) from worker_state where name like 'session-revoked:%' and cast(json_extract(metadata,'$.expires') as integer)>cast(strftime('%s','now') as integer)").fetch_all(&mut *listener).await?;
                     for (key, expires) in revocations {
                         let known = state.live.revoked.lock().unwrap().contains_key(&key);
                         if !known {
