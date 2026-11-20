@@ -1,4 +1,72 @@
-# Sent Rust/Solid rewrite — stages 1–3
+# Sent Rust/Solid rewrite
+
+## One-command local benchmark
+
+Prerequisites: a local default Docker context with Compose v2, Rust stable, Node 24, pnpm 11, Bash 4.3+
+and curl. From the repository root (no `.env` setup required):
+
+```sh
+sent-rs/scripts/run-local.sh
+# Optional: --messages 10000 --port 4001
+# Or: SENT_LOCAL_DB=sent_benchmark_large SENT_LOCAL_PORT=4001 sent-rs/scripts/run-local.sh --messages 10000
+```
+
+The URL is **http://127.0.0.1:4000** and the local-only login password is
+**`sent-local-dev-password`**. The runner prints both after the API, fake sync and
+worker heartbeat are healthy. It starts only Compose's Postgres service on
+loopback port **5433**, creates/uses **`sent_benchmark`** (never `sent`), installs
+dependencies, builds Solid and the release binaries, applies the shared migrations
+via the seeder, and replaces fake fixture accounts with a fresh deterministic
+mailbox (3000 messages by default; `--messages 0` creates an empty mailbox).
+Only names `sent_benchmark` or `sent_benchmark_*` are accepted as DB overrides.
+
+The runner ignores `.env` for Compose and overrides DB/auth/provider settings for
+the Rust processes: it binds to loopback, forces fake providers, disables AI/live
+credentials, and uses disposable local auth/encryption values. Do not use these
+values outside local development. No deployment services are started.
+
+**Ctrl+C stops both Rust processes**; if either exits, the other is stopped too.
+Postgres is deliberately left running, since other local databases may use it.
+Run only one stack at a time against a given benchmark database; rerunning the
+launcher resets the fake mailbox, so stop it before switching implementations.
+
+### Compare today's TypeScript/React stack on the same seed
+
+Run the launcher once and stop it with Ctrl+C. Do **not** reseed between captures
+when comparing precisely the same mailbox state. From the repository root:
+
+```sh
+pnpm install --frozen-lockfile
+NODE_ENV=production pnpm --filter @sent/web build
+export DATABASE_URL=postgres://sent:sent-local-only@127.0.0.1:5433/sent_benchmark
+export HOST=127.0.0.1 PORT=4000 NODE_ENV=development
+export SENT_PUBLIC_URL=http://127.0.0.1:4000 SENT_WEB_URL=http://127.0.0.1:4000
+export SESSION_SECRET=sent-local-only-benchmark-session-secret-not-for-production
+export TOKEN_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+export SENT_PASSWORD_HASH="$(printf '%s' 'sent-local-dev-password' | pnpm -s sent:hash-password | tail -1)"
+export OPENAI_API_KEY= GOOGLE_CLIENT_ID= GOOGLE_CLIENT_SECRET= MICROSOFT_CLIENT_ID= MICROSOFT_CLIENT_SECRET=
+export MICROSOFT_MAIL_SEND_ENABLED=false WEB_DIST_PATH="$PWD/apps/web/dist"
+pnpm --filter @sent/server exec tsx src/index.ts
+```
+
+Use the same URL/password above (change DB/port consistently if overridden).
+This runs the existing TS API and its built React UI against the shared seed,
+without changing any TS code. **Do not run `pnpm dev` or the TS worker**: TS does
+not implement `SENT_FAKE_PROVIDERS`, and fake credential markers intentionally
+cannot authenticate. Browsing/search/drafts/undo work, but TS outbox delivery,
+send completion and provider attachment downloads are not fake-provider capable.
+For those benchmark actions use the TS server with the **Rust fake worker** in
+a second terminal, exporting the same variables plus `SENT_FAKE_PROVIDERS=true`:
+
+```sh
+export DATABASE_URL=postgres://sent:sent-local-only@127.0.0.1:5433/sent_benchmark
+export SENT_FAKE_PROVIDERS=true OPENAI_API_KEY=
+sent-rs/target/release/sent-worker
+```
+
+The Rust fake worker never contacts providers; the TS API's provider attachment
+download path still cannot serve fake bytes. Stop this worker before returning
+to the all-Rust launcher. For read-only captures no worker is needed.
 
 This workspace is local-only. It does not change or start the existing TypeScript
 applications. The Solid frontend is a standalone package in `sent-rs/web`.
