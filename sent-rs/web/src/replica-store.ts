@@ -75,8 +75,9 @@ export class ReplicaStore {
   private searchReadyWarmed = false;
   private searchWarmMs = 0;
   constructor(readonly db: Database) {
+    db.createFunction("sent_nfkc", (_context, value) => String(value ?? "").normalize("NFKC"));
     this.run("pragma temp_store=memory; pragma cache_size=-65536");
-    if (Number(db.selectValue("pragma user_version")) !== 5) {
+    if (Number(db.selectValue("pragma user_version")) !== 6) {
       this.run(
         "drop table if exists messages; drop table if exists staging; drop table if exists bodies; drop table if exists meta; drop table if exists base; drop table if exists operations; drop table if exists accounts; drop table if exists search_headers; drop table if exists search_bodies; drop table if exists search_documents; drop table if exists search_documents_content;",
       );
@@ -97,13 +98,13 @@ export class ReplicaStore {
       create trigger if not exists search_body_delete after delete on bodies begin
         delete from search_documents where rowid=(select rowid from messages where id=old.id);
         insert into search_documents(rowid,subject,sender,recipients,snippet,body,message_id,thread_id,received_at)
-          select m.rowid,json_extract(m.data,'$[0]'),
-            (select group_concat(coalesce(value->>'name','')||' '||(value->>'address'),' ') from json_each(m.from_json)),
-            (select group_concat(coalesce(value->>'name','')||' '||(value->>'address'),' ') from (
-              select value from json_each(m.data,'$[8]') union all select value from json_each(m.data,'$[9]') union all select value from json_each(m.data,'$[10]'))),
-            json_extract(m.data,'$[1]'),'',m.id,m.thread_id,m.received_at from messages m where m.id=old.id and m.deleted=0;
+          select m.rowid,sent_nfkc(json_extract(m.data,'$[0]')),
+            sent_nfkc((select group_concat(coalesce(value->>'name','')||' '||(value->>'address'),' ') from json_each(m.from_json))),
+            sent_nfkc((select group_concat(coalesce(value->>'name','')||' '||(value->>'address'),' ') from (
+              select value from json_each(m.data,'$[8]') union all select value from json_each(m.data,'$[9]') union all select value from json_each(m.data,'$[10]')))),
+            sent_nfkc(json_extract(m.data,'$[1]')),'',m.id,m.thread_id,m.received_at from messages m where m.id=old.id and m.deleted=0;
       end;
-      pragma user_version=5;`);
+      pragma user_version=6;`);
     for (const row of this.rows<{ id: string; data: string }>("select id,data from accounts"))
       this.accounts.set(row.id, JSON.parse(row.data));
     this.transaction(() => {
@@ -187,11 +188,17 @@ export class ReplicaStore {
         "insert into search_documents(rowid,subject,sender,recipients,snippet,body,message_id,thread_id,received_at) values(?,?,?,?,?,?,?,?,?)",
         [
           id,
-          row.subject,
-          row.from.map((p) => `${p.name ?? ""} ${p.address}`).join(" "),
-          [...row.to, ...row.cc, ...row.bcc].map((p) => `${p.name ?? ""} ${p.address}`).join(" "),
-          row.snippet ?? "",
-          bodyText ?? "",
+          row.subject.normalize("NFKC"),
+          row.from
+            .map((p) => `${p.name ?? ""} ${p.address}`)
+            .join(" ")
+            .normalize("NFKC"),
+          [...row.to, ...row.cc, ...row.bcc]
+            .map((p) => `${p.name ?? ""} ${p.address}`)
+            .join(" ")
+            .normalize("NFKC"),
+          (row.snippet ?? "").normalize("NFKC"),
+          (bodyText ?? "").normalize("NFKC"),
           row.id,
           row.threadId,
           row.sortReceivedAt,

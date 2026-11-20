@@ -66,6 +66,29 @@ afterEach(() => {
   store.db.close();
 });
 describe("real SQLite replica", () => {
+  it("matches compatibility-normalized Unicode in every indexed field and after body eviction", () => {
+    const headers = row("unicode", {
+      subject: "ﬁnance",
+      from: [{ name: "ﬂorence", address: "sender@test" }],
+      to: [{ name: "ｶﾀｶﾅ", address: "recipient@test" }],
+      snippet: "ｓｕｍｍａｒｙ",
+    });
+    seed([headers]);
+    const check = () => {
+      for (const term of ["ﬁnance", "finance", "florence", "ｶﾀｶﾅ", "カタカナ", "summary"])
+        expect(
+          store.search(term).messages.map((message) => message.id),
+          term,
+        ).toEqual(["unicode"]);
+    };
+    check();
+    store.bodies([{ ...headers, bodyAvailable: true, textBody: "ｂｕｄｇｅｔ" }]);
+    expect(store.search("budget").messages[0]?.id).toBe("unicode");
+    store.db.exec("delete from bodies where id='unicode'");
+    check();
+    expect(store.search("budget").messages).toEqual([]);
+    expect(store.detail("unicode")?.message.subject).toBe("ﬁnance");
+  });
   it("indexes headers, prefixes and accents without storing a second content copy", () => {
     seed([
       row("one", {
@@ -127,7 +150,7 @@ describe("real SQLite replica", () => {
     expect(store.search("uniquebodyword").messages).toEqual([]);
     expect(store.search("Headerneedle").messages).toEqual([]);
   });
-  it("removes stale and evicted body tokens and rebuilds schema-4 caches once", () => {
+  it("removes stale and evicted body tokens and rebuilds schema-5 caches once", () => {
     const original = row("one", { bodyAvailable: true, textBody: "oldbodyneedle" });
     seed([original]);
     store.bodies([original]);
@@ -137,10 +160,10 @@ describe("real SQLite replica", () => {
     expect(store.search("newbodyneedle").messages[0]?.id).toBe("one");
     store.db.exec("delete from bodies");
     expect(store.search("newbodyneedle").messages).toEqual([]);
-    store.db.exec("pragma user_version=4");
+    store.db.exec("pragma user_version=5");
     store = new ReplicaStore(store.db);
     expect(store.count()).toBe(0);
-    expect(store.db.selectValue("pragma user_version")).toBe(5);
+    expect(store.db.selectValue("pragma user_version")).toBe(6);
     seed([original]);
     expect(store.search("one").messages[0]?.id).toBe("one");
   });

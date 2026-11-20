@@ -2,12 +2,13 @@
 
 ## On-device search
 
-Schema 5 rebuilds the browser cache once and maintains one contentless-delete FTS5
+Schema 6 rebuilds the browser cache once and maintains one contentless-delete FTS5
 index over subject/sender/recipients/snippet headers and locally cached body text.
 Only message/thread IDs and ordering timestamps are retained as unindexed content;
 searchable text is not stored twice. BM25 favors subject and sender matches,
 with recency/ID tie-breaks; the final literal token is a prefix. Operators, quotes and
-punctuation in user queries cannot become FTS syntax. Queries are bounded to 32 tokens.
+punctuation in user queries cannot become FTS syntax. Indexed text and queries share
+NFKC normalization. Queries are bounded to 32 tokens.
 
 The search page and Cmd+K share the existing debounced query cache. Once the replica
 is ready they publish a viewport-sized local lexical page without a request, then
