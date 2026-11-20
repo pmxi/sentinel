@@ -477,10 +477,13 @@ current database and its `-wal`/`-shm` sidecars, then install a backup as
 Never copy a live SQLite database without using the backup API.
 
 For local SQLite installations, `scripts/backup.sh` also uses the consistent
-SQLite backup API. Set `SENT_DATABASE_PATH` (default `./data/sent.sqlite`) and
-`SENT_BACKUP_DIR` (default `./backups`); backups are private and retained for
+SQLite backup API. It resolves `SENT_DATABASE_PATH` from the environment first,
+then the nearest `.env` in the current directory or its parents, then defaults
+to `./data/sent.sqlite`. A missing configured database is an error, not a reason
+to fall back. Set `SENT_BACKUP_DIR` to override `./backups`; backups are private and retained for
 14 days. Retention applies only to its `sent-script-backup-*.sqlite` files,
-never the source database. The `sqlite3` command-line tool is required. No Compose database
+never the source database. Node.js 20.12+ (for dotenv parsing) and the `sqlite3`
+command-line tool are required. No Compose database
 service is used.
 
 Restore to a **new explicit path**; the script refuses existing targets or

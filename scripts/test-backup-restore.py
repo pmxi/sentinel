@@ -18,10 +18,13 @@ class BackupRestoreTests(unittest.TestCase):
         self.database = self.root / "live.sqlite"
         self.backups = self.root / "backups"
 
-    def run_script(self, script, *args):
+    def run_script(self, script, *args, config=None, cwd=None):
+        env = dict(os.environ, SENT_DATABASE_PATH=str(self.database),
+                   SENT_BACKUP_DIR=str(self.backups))
+        env.update(config or {})
         return subprocess.run(["sh", str(SCRIPTS / script), *map(str, args)],
-                              env=dict(os.environ, SENT_DATABASE_PATH=str(self.database),
-                                       SENT_BACKUP_DIR=str(self.backups)), capture_output=True, text=True)
+                              env={key: value for key, value in env.items() if value is not None},
+                              cwd=cwd, capture_output=True, text=True)
 
     def test_consistent_wal_backup_retention_and_explicit_restore(self):
         with sqlite3.connect(self.database) as connection:
@@ -83,6 +86,35 @@ class BackupRestoreTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(source.exists())
         self.assertTrue(unrelated.exists())
+
+    def test_database_configuration_precedence_and_missing_configured_file(self):
+        configured = self.root / "configured.sqlite"
+        default = self.root / "data" / "sent.sqlite"
+        default.parent.mkdir()
+        for path, value in ((configured, "dotenv"), (default, "default"), (self.database, "environment")):
+            with sqlite3.connect(path) as connection:
+                connection.execute("create table fixture(value text)")
+                connection.execute("insert into fixture values (?)", (value,))
+        env_file = self.root / ".env"
+        env_file.write_text(f'export SENT_DATABASE_PATH="{configured}" # quoted path\n')
+
+        def check(expected, config, cwd):
+            before = set(self.backups.glob("*.sqlite"))
+            result = self.run_script("backup.sh", config=config, cwd=cwd)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            created, = set(self.backups.glob("*.sqlite")) - before
+            with sqlite3.connect(created) as connection:
+                self.assertEqual(connection.execute("select value from fixture").fetchone(), (expected,))
+
+        check("environment", {}, self.root)
+        nested = self.root / "nested"
+        nested.mkdir()
+        check("dotenv", {"SENT_DATABASE_PATH": None}, nested)
+        env_file.write_text('SENT_DATABASE_PATH="missing.sqlite"\n')
+        self.assertNotEqual(self.run_script("backup.sh", config={"SENT_DATABASE_PATH": None}, cwd=self.root).returncode, 0)
+        self.assertNotEqual(self.run_script("backup.sh", config={"SENT_DATABASE_PATH": ""}, cwd=self.root).returncode, 0)
+        env_file.unlink()
+        check("default", {"SENT_DATABASE_PATH": None}, self.root)
 
 
 if __name__ == "__main__":

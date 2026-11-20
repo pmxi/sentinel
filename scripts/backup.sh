@@ -2,7 +2,25 @@
 set -eu
 umask 077
 
-database=${SENT_DATABASE_PATH:-./data/sent.sqlite}
+database=$(node --input-type=module <<'NODE'
+import {readFileSync} from 'node:fs';
+import {dirname, join} from 'node:path';
+import {parseEnv} from 'node:util';
+let database = process.env.SENT_DATABASE_PATH;
+if (database === undefined) {
+  for (let directory = process.cwd(); ; directory = dirname(directory)) {
+    try {
+      database = parseEnv(readFileSync(join(directory, '.env'), 'utf8')).SENT_DATABASE_PATH;
+      break;
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error;
+    }
+    if (dirname(directory) === directory) break;
+  }
+}
+process.stdout.write(database ?? './data/sent.sqlite');
+NODE
+)
 backup_dir=${SENT_BACKUP_DIR:-./backups}
 [ -f "$database" ] || { echo 'SQLite database does not exist.' >&2; exit 1; }
 database=$(realpath "$database")
