@@ -58,7 +58,7 @@ const db = new Client({ connectionString: database });
 await db.connect();
 const recent = (
   await db.query(
-    "select m.id from messages m join classifications c on c.message_id=m.id where m.direction='inbound' and not m.archived and not m.deleted limit 1",
+    "select m.id,m.thread_id from messages m join classifications c on c.message_id=m.id where m.direction='inbound' and not m.archived and not m.deleted limit 1",
   )
 ).rows[0];
 await db.query(
@@ -149,8 +149,16 @@ try {
   }
   assert.equal(requests.slice(start).filter((path) => path === "/api/messages").length, 0);
   console.log("PASS all mailbox views read SQLite without list requests");
-  const thread = await page.locator("button.message-row").first().getAttribute("data-thread-id");
-  await page.locator("button.message-row").first().click();
+  const older = (
+    await db.query(
+      "select m.id,m.thread_id from messages m left join classifications c on c.message_id=m.id where not m.deleted and not m.tombstone and not m.archived and m.direction='inbound' and (coalesce(c.manual_tier,c.model_tier)=1 or c.message_id is null) and m.received_at<now()-interval '90 days' and m.thread_id<>$1 order by m.received_at desc,m.id desc limit 1",
+      [recent.thread_id],
+    )
+  ).rows[0];
+  assert(older, "An older L1 conversation must be present");
+  const thread = older.thread_id;
+  await page.locator(`button.message-row[data-thread-id="${thread}"]`).click();
+  assert.equal(new URL(page.url()).searchParams.get("message"), older.id);
   await page.locator(".latest-message .email-body").waitFor();
   await page.waitForFunction(() => {
     const body = document.querySelector(".latest-message .email-body");
