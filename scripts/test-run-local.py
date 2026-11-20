@@ -22,7 +22,7 @@ class LocalRunnerArguments(unittest.TestCase):
 
     def test_accepts_empty_and_normal_mailbox_sizes(self):
         with tempfile.TemporaryDirectory() as directory:
-            for name in ["docker", "cargo", "node", "pnpm", "curl"]:
+            for name in ["cargo", "node", "pnpm", "curl"]:
                 stub = Path(directory) / name
                 stub.write_text("#!/bin/sh\necho reached-local-preflight\nexit 7\n")
                 stub.chmod(0o755)

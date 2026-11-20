@@ -19,7 +19,7 @@ async fn main() -> Result<()> {
         secret.len() >= 32,
         "SESSION_SECRET must contain at least 32 characters"
     );
-    let pool = db::pool(&config.database_url, config.node_env == "test").await?;
+    let pool = db::pool(&config.database_path, config.node_env == "test").await?;
     db::migrate(&pool, &config.migrations_path).await?;
     let address = format!("{}:{}", config.host, config.port);
     let listener = bind_listener(&address).await?;

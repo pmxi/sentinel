@@ -1,4 +1,5 @@
 use anyhow::Result;
+use sent_core::db::Uuid;
 use sent_core::{
     config::Config,
     crypto::encrypt_secret,
@@ -9,7 +10,6 @@ use sent_core::{
 };
 use serde_json::{Value, json};
 use sqlx::Row;
-use uuid::Uuid;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{method, path},
@@ -17,14 +17,9 @@ use wiremock::{
 
 #[tokio::test]
 async fn outbox_delivery_safety_fake_sync_and_reauthentication() -> Result<()> {
-    let Ok(url) = std::env::var("SENT_TEST_DATABASE_URL") else {
-        return Ok(());
-    };
-    anyhow::ensure!(
-        reqwest::Url::parse(&url)?.path().starts_with("/sent_test_"),
-        "Use an isolated sent_test_* database"
-    );
-    let pool = db::pool(&url, false).await?;
+    let directory = tempfile::tempdir()?;
+    let database_path = directory.path().join("sent.sqlite");
+    let pool = db::pool(database_path.to_str().unwrap(), true).await?;
     let mut config = Config::from_env()?;
     db::migrate(&pool, &config.migrations_path).await?;
     let repository = Repository(pool.clone());
@@ -94,7 +89,7 @@ async fn outbox_delivery_safety_fake_sync_and_reauthentication() -> Result<()> {
         if scenario == "completion-failed" {
             repository.claim_mutations(25).await?;
             repository.record_send_attempt(id).await?;
-            sqlx::query("update mutation_outbox set next_attempt_at=now() where id=$1")
+            sqlx::query("update mutation_outbox set next_attempt_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') where id=?1")
                 .bind(id)
                 .execute(&pool)
                 .await?;
@@ -106,23 +101,23 @@ async fn outbox_delivery_safety_fake_sync_and_reauthentication() -> Result<()> {
             } else {
                 1
             };
-            sqlx::query("update mutation_outbox set payload=jsonb_set(payload,'{attachments}','[{\"filename\":\"bad\",\"contentType\":\"text/plain\",\"contentBase64\":\"!notbase64\"}]') where id=$1").bind(id).execute(&pool).await?;
+            sqlx::query("update mutation_outbox set payload=json_set(payload,'$.attachments',json('[{\"filename\":\"bad\",\"contentType\":\"text/plain\",\"contentBase64\":\"!notbase64\"}]')) where id=?1").bind(id).execute(&pool).await?;
             for _ in 0..attempts {
-                sqlx::query("update mutation_outbox set next_attempt_at=now() where id=$1")
+                sqlx::query("update mutation_outbox set next_attempt_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') where id=?1")
                     .bind(id)
                     .execute(&pool)
                     .await?;
                 service.process_outbox().await?;
             }
             let attempted: bool = sqlx::query_scalar(
-                "select payload ? 'sendAttemptedAt' from mutation_outbox where id=$1",
+                "select json_extract(payload,'$.sendAttemptedAt') is not null from mutation_outbox where id=?1",
             )
             .bind(id)
             .fetch_one(&pool)
             .await?;
             assert!(!attempted);
             if scenario == "pre-dispatch" {
-                sqlx::query("update mutation_outbox set payload=jsonb_set(payload,'{attachments}','[]'),next_attempt_at=now() where id=$1").bind(id).execute(&pool).await?;
+                sqlx::query("update mutation_outbox set payload=json_set(payload,'$.attachments',json('[]')),next_attempt_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') where id=?1").bind(id).execute(&pool).await?;
                 service.process_outbox().await?;
                 assert_eq!(server.received_requests().await.unwrap().len(), 1);
             } else {
@@ -135,14 +130,14 @@ async fn outbox_delivery_safety_fake_sync_and_reauthentication() -> Result<()> {
             }
         } else {
             service.process_outbox().await?;
-            sqlx::query("update mutation_outbox set next_attempt_at=now() where id=$1")
+            sqlx::query("update mutation_outbox set next_attempt_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') where id=?1")
                 .bind(id)
                 .execute(&pool)
                 .await?;
             service.process_outbox().await?;
             assert_eq!(server.received_requests().await.unwrap().len(), 1);
         }
-        let row = sqlx::query("select status::text,payload from mutation_outbox where id=$1")
+        let row = sqlx::query("select status,payload from mutation_outbox where id=?1")
             .bind(id)
             .fetch_one(&pool)
             .await?;
@@ -185,15 +180,16 @@ async fn outbox_delivery_safety_fake_sync_and_reauthentication() -> Result<()> {
             .mount(&server)
             .await;
             let thread: Uuid = sqlx::query_scalar(
-                "insert into threads(account_id,provider_thread_id,last_message_at) values($1,$2,now()) returning id",
+                "insert into threads(account_id,provider_thread_id,last_message_at,id) values(?1,?2,strftime('%Y-%m-%dT%H:%M:%f000Z','now'),?3) returning id",
             )
             .bind(owner)
             .bind(Uuid::new_v4().to_string())
+            .bind(Uuid::new_v4())
             .fetch_one(&pool)
             .await?;
             for _ in 0..3 {
-                sqlx::query("insert into messages(account_id,thread_id,provider_message_id,received_at,direction) values($1,$2,$3,now(),'inbound')")
-                    .bind(owner).bind(thread).bind(Uuid::new_v4().to_string()).execute(&pool).await?;
+                sqlx::query("insert into messages(account_id,thread_id,provider_message_id,received_at,direction,id) values(?1,?2,?3,strftime('%Y-%m-%dT%H:%M:%f000Z','now'),'inbound',?4)")
+                    .bind(owner).bind(thread).bind(Uuid::new_v4().to_string()).bind(Uuid::new_v4()).execute(&pool).await?;
             }
             let input = ThreadActionInput {
                 action: action.into(),
@@ -217,7 +213,7 @@ async fn outbox_delivery_safety_fake_sync_and_reauthentication() -> Result<()> {
             assert_eq!(service.process_outbox().await?, 3);
             assert_eq!(server.received_requests().await.unwrap().len(), 3);
             let complete: i64 = sqlx::query_scalar(
-                "select count(*) from mutation_outbox where account_id=$1 and status='complete'",
+                "select count(*) from mutation_outbox where account_id=?1 and status='complete'",
             )
             .bind(owner)
             .fetch_one(&pool)
@@ -226,7 +222,7 @@ async fn outbox_delivery_safety_fake_sync_and_reauthentication() -> Result<()> {
             assert_eq!(service.process_outbox().await?, 0);
             server.verify().await;
         }
-        sqlx::query("delete from accounts where id=$1")
+        sqlx::query("delete from accounts where id=?1")
             .bind(owner)
             .execute(&pool)
             .await?;
@@ -237,7 +233,7 @@ async fn outbox_delivery_safety_fake_sync_and_reauthentication() -> Result<()> {
         .mount(&server)
         .await;
     assert!(service.sync_account(account).await.is_err());
-    let status: String = sqlx::query_scalar("select status::text from accounts where id=$1")
+    let status: String = sqlx::query_scalar("select status from accounts where id=?1")
         .bind(account)
         .fetch_one(&pool)
         .await?;
@@ -278,10 +274,10 @@ async fn outbox_delivery_safety_fake_sync_and_reauthentication() -> Result<()> {
         )
         .await?;
     service.process_outbox().await?;
-    let sent:i64=sqlx::query_scalar("select count(*) from messages where account_id=$1 and direction='outbound' and subject='Fake send'").bind(account).fetch_one(&pool).await?;
+    let sent:i64=sqlx::query_scalar("select count(*) from messages where account_id=?1 and direction='outbound' and subject='Fake send'").bind(account).fetch_one(&pool).await?;
     assert_eq!(sent, 1);
     assert_eq!(server.received_requests().await.unwrap().len(), before);
-    sqlx::query("delete from accounts where id=$1")
+    sqlx::query("delete from accounts where id=?1")
         .bind(account)
         .execute(&pool)
         .await?;

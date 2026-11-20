@@ -1,3 +1,4 @@
+use crate::db::Uuid;
 use crate::{
     config::Config,
     crypto::{decrypt_secret, encrypt_secret},
@@ -12,8 +13,7 @@ use base64::{
 };
 use chrono::Utc;
 use serde_json::{Value, json};
-use sqlx::{PgPool, Row};
-use uuid::Uuid;
+use sqlx::{Row, SqlitePool};
 
 mod delivery;
 mod gmail;
@@ -52,7 +52,7 @@ pub struct SyncPage {
 #[derive(Clone)]
 pub struct Providers {
     config: Config,
-    pool: PgPool,
+    pool: SqlitePool,
     http: reqwest::Client,
     endpoints: Endpoints,
 }
@@ -64,12 +64,12 @@ pub struct Attachment {
 }
 
 impl Providers {
-    pub fn new(config: Config, pool: PgPool) -> Self {
+    pub fn new(config: Config, pool: SqlitePool) -> Self {
         let endpoints = Endpoints::production(&config.microsoft_tenant_id);
         Self::with_endpoints(config, pool, endpoints)
     }
 
-    pub fn with_endpoints(config: Config, pool: PgPool, endpoints: Endpoints) -> Self {
+    pub fn with_endpoints(config: Config, pool: SqlitePool, endpoints: Endpoints) -> Self {
         Self {
             config,
             pool,
@@ -234,9 +234,9 @@ impl Providers {
         };
         let encrypted = encrypt_secret(&serde_json::to_string(&credentials)?, self.key()?)?;
         let mut tx = self.pool.begin().await?;
-        let row=sqlx::query("insert into accounts(provider,email,display_name,encrypted_credentials,status,updated_at) values($1::text::provider,$2,$3,$4,'active',now()) on conflict(provider,email) do update set display_name=excluded.display_name,encrypted_credentials=excluded.encrypted_credentials,status='active',last_error=null,updated_at=now() returning id")
-            .bind(provider).bind(email.to_lowercase()).bind(display_name).bind(encrypted).fetch_one(&mut *tx).await?;
-        sqlx::query("insert into sync_cursors(account_id) values($1) on conflict do nothing")
+        let row=sqlx::query("insert into accounts(provider,email,display_name,encrypted_credentials,status,updated_at,id) values(?1,?2,?3,?4,'active',strftime('%Y-%m-%dT%H:%M:%f000Z','now'),?5) on conflict(provider,email) do update set display_name=excluded.display_name,encrypted_credentials=excluded.encrypted_credentials,status='active',last_error=null,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') returning id")
+            .bind(provider).bind(email.to_lowercase()).bind(display_name).bind(encrypted).bind(Uuid::new_v4()).fetch_one(&mut *tx).await?;
+        sqlx::query("insert into sync_cursors(account_id) values(?1) on conflict do nothing")
             .bind(row.get::<Uuid, _>("id"))
             .execute(&mut *tx)
             .await?;
@@ -390,7 +390,7 @@ impl Providers {
             credentials["cache"] = json!(serde_json::to_string(&cache)?);
             access
         };
-        sqlx::query("update accounts set encrypted_credentials=$2,updated_at=now() where id=$1")
+        sqlx::query("update accounts set encrypted_credentials=?2,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') where id=?1")
             .bind(account_id)
             .bind(encrypt_secret(
                 &serde_json::to_string(&credentials)?,
@@ -406,7 +406,7 @@ impl Providers {
         message_id: Uuid,
         attachment_id: &str,
     ) -> Result<Attachment> {
-        let row=sqlx::query("select m.attachments,m.provider_message_id,a.id account_id,a.provider::text,a.encrypted_credentials from messages m join accounts a on a.id=m.account_id where m.id=$1").bind(message_id).fetch_optional(&self.pool).await?.context("Message not found")?;
+        let row=sqlx::query("select m.attachments,m.provider_message_id,a.id account_id,a.provider,a.encrypted_credentials from messages m join accounts a on a.id=m.account_id where m.id=?1").bind(message_id).fetch_optional(&self.pool).await?.context("Message not found")?;
         let metadata: Value = row.get("attachments");
         let item = metadata
             .as_array()

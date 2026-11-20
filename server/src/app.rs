@@ -16,6 +16,7 @@ use axum::{
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::{Duration, Utc};
+use sent_core::db::Uuid;
 use sent_core::{
     config::Config,
     repository::{DraftInput, ListInput, Repository, SearchInput, ThreadActionInput, timestamp},
@@ -29,7 +30,6 @@ use std::{
     time::{Duration as StdDuration, Instant},
 };
 use tower_http::services::{ServeDir, ServeFile};
-use uuid::Uuid;
 
 pub struct State {
     pub config: Config,
@@ -1061,8 +1061,9 @@ mod tests {
         let mut config = Config::from_env().unwrap();
         config.web_dist_path = root.clone();
         config.session_secret = Some("test-session-secret-at-least-32-characters".into());
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgres://localhost/sent_test_unused")
+        let database = tempfile::tempdir().unwrap();
+        let pool = sent_core::db::pool(database.path().join("sent.sqlite").to_str().unwrap(), true)
+            .await
             .unwrap();
         let app = router(Arc::new(State::new(config, Repository(pool))));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();

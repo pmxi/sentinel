@@ -3,7 +3,7 @@ use std::{env, path::PathBuf};
 
 #[derive(Clone)]
 pub struct Config {
-    pub database_url: String,
+    pub database_path: String,
     pub host: String,
     pub port: u16,
     pub public_url: String,
@@ -55,7 +55,7 @@ impl Config {
         }
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
         Ok(Self {
-            database_url: value("DATABASE_URL", "postgres://sent:sent@localhost:5432/sent"),
+            database_path: value("SENT_DATABASE_PATH", "./data/sent.sqlite"),
             host: value("HOST", "0.0.0.0"),
             port,
             web_url: optional("SENT_WEB_URL").unwrap_or_else(|| public_url.clone()),

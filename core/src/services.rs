@@ -1,3 +1,4 @@
+use crate::db::Uuid;
 use crate::{
     ai::Intelligence,
     config::Config,
@@ -9,7 +10,6 @@ use crate::{
 use anyhow::{Context, Result, ensure};
 use chrono::Utc;
 use serde_json::{Value, json};
-use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct Services {
@@ -119,7 +119,7 @@ impl Services {
     ) -> Result<()> {
         let now = Utc::now();
         let thread = if let Some(original) = draft.reply_to_message_id {
-            sqlx::query_scalar::<_,String>("select t.provider_thread_id from messages m join threads t on t.id=m.thread_id where m.id=$1 and m.account_id=$2").bind(original).bind(account.id).fetch_optional(&self.repository.0).await?.unwrap_or_else(||format!("fake-thread-{mutation}"))
+            sqlx::query_scalar::<_,String>("select t.provider_thread_id from messages m join threads t on t.id=m.thread_id where m.id=?1 and m.account_id=?2").bind(original).bind(account.id).fetch_optional(&self.repository.0).await?.unwrap_or_else(||format!("fake-thread-{mutation}"))
         } else {
             format!("fake-thread-{mutation}")
         };

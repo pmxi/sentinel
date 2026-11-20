@@ -1,23 +1,17 @@
 use anyhow::Result;
 use chrono::{Duration, Utc};
+use sent_core::db::Uuid;
 use sent_core::{
     db,
     repository::{Repository, replica_fingerprint},
 };
 use serde_json::Value;
-use uuid::Uuid;
 
 #[tokio::test]
 async fn committed_inventory_catches_concurrent_writes_archive_undo_and_tombstones() -> Result<()> {
-    let Ok(url) = std::env::var("SENT_TEST_DATABASE_URL") else {
-        eprintln!("Skipping: SENT_TEST_DATABASE_URL is unset");
-        return Ok(());
-    };
-    anyhow::ensure!(
-        reqwest::Url::parse(&url)?.path().starts_with("/sent_test_"),
-        "Use an isolated sent_test_* database"
-    );
-    let pool = db::pool(&url, true).await?;
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("sent.sqlite");
+    let pool = db::pool(path.to_str().unwrap(), true).await?;
     db::migrate(
         &pool,
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../migrations"),
@@ -27,13 +21,13 @@ async fn committed_inventory_catches_concurrent_writes_archive_undo_and_tombston
     let account = Uuid::new_v4();
     let thread = Uuid::new_v4();
     let id = Uuid::new_v4();
-    sqlx::query("insert into accounts(id,provider,email,encrypted_credentials) values($1,'microsoft',$2,'test')").bind(account).bind(format!("{account}@test")).execute(&pool).await?;
-    sqlx::query("insert into threads(id,account_id,provider_thread_id,last_message_at) values($1,$2,$1::text,now())")
+    sqlx::query("insert into accounts(id,provider,email,encrypted_credentials) values(?1,'microsoft',?2,'test')").bind(account).bind(format!("{account}@test")).execute(&pool).await?;
+    sqlx::query("insert into threads(id,account_id,provider_thread_id,last_message_at) values(?1,?2,?1,strftime('%Y-%m-%dT%H:%M:%f000Z','now'))")
         .bind(thread)
         .bind(account)
         .execute(&pool)
         .await?;
-    sqlx::query("insert into messages(id,account_id,thread_id,provider_message_id,received_at,text_body,direction) values($1,$2,$3,$1::text,now(),'Body','inbound')").bind(id).bind(account).bind(thread).execute(&pool).await?;
+    sqlx::query("insert into messages(id,account_id,thread_id,provider_message_id,received_at,text_body,direction) values(?1,?2,?3,?1,strftime('%Y-%m-%dT%H:%M:%f000Z','now'),'Body','inbound')").bind(id).bind(account).bind(thread).execute(&pool).await?;
     let ids = [id];
     let original = repo
         .replica_inventory(Some(&ids), false)
@@ -50,7 +44,7 @@ async fn committed_inventory_catches_concurrent_writes_archive_undo_and_tombston
     assert_eq!(body["textBody"], "Body");
     assert_eq!(body["bodyVersion"], original["bodyVersion"]);
     let mut mutation = pool.begin().await?;
-    sqlx::query("update messages set read=true,updated_at=now()-interval '1 day' where id=$1")
+    sqlx::query("update messages set read=true,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 day') where id=?1")
         .bind(id)
         .execute(&mut *mutation)
         .await?;
@@ -94,10 +88,12 @@ async fn committed_inventory_catches_concurrent_writes_archive_undo_and_tombston
         .remove(0);
     assert_eq!(tier["tier"], 3);
     assert_eq!(tier["classified"], true);
-    sqlx::query("update messages set text_body=repeat('x',262145) where id=$1")
-        .bind(id)
-        .execute(&pool)
-        .await?;
+    sqlx::query(
+        "update messages set text_body=replace(hex(zeroblob(262145)),'00','x') where id=?1",
+    )
+    .bind(id)
+    .execute(&pool)
+    .await?;
     let capped = repo
         .replica_inventory(Some(&ids), true)
         .await?
@@ -106,7 +102,7 @@ async fn committed_inventory_catches_concurrent_writes_archive_undo_and_tombston
     assert_eq!(capped["bodyAvailable"], false);
     assert_eq!(capped["textBody"], "");
     assert_ne!(capped["bodyVersion"], body["bodyVersion"]);
-    sqlx::query("update messages set tombstone=true where id=$1")
+    sqlx::query("update messages set tombstone=true where id=?1")
         .bind(id)
         .execute(&pool)
         .await?;
@@ -116,7 +112,7 @@ async fn committed_inventory_catches_concurrent_writes_archive_undo_and_tombston
             .messages
             .is_empty()
     );
-    sqlx::query("delete from accounts where id=$1")
+    sqlx::query("delete from accounts where id=?1")
         .bind(account)
         .execute(&pool)
         .await?;

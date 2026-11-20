@@ -2,7 +2,7 @@
 
 Sent is a private, single-user web email client that unifies Gmail and Microsoft mail, puts important messages in an L1 attention queue, and searches the complete synchronized archive by words and meaning.
 
-The repository contains a SolidJS client (`web/`), a Rust Axum API (`server/`), a separate Rust Tokio worker (`worker/`), shared Rust code with the Gmail and Microsoft Graph adapters (`core/`), a fake-mail seeder (`seed/`), and PostgreSQL/pgvector SQL migrations (`migrations/`). The earlier TypeScript/React implementation is in git history before the Rust build replaced it. See [`plan.md`](./plan.md) for the product decisions and [`roadmap.md`](./roadmap.md) for intentionally deferred work.
+The repository contains a SolidJS client (`web/`), a Rust Axum API (`server/`), a separate Rust Tokio worker (`worker/`), shared Rust code with the Gmail and Microsoft Graph adapters (`core/`), a fake-mail seeder (`seed/`), and SQLite SQL migrations (`migrations/`). The earlier TypeScript/React implementation is in git history before the Rust build replaced it. See [`plan.md`](./plan.md) for the product decisions and [`roadmap.md`](./roadmap.md) for intentionally deferred work.
 
 ## What works
 
@@ -13,7 +13,7 @@ The repository contains a SolidJS client (`web/`), a Rust Axum API (`server/`), 
 - Read/unread, flag, archive, delete, send, reply, reply all, and forward
 - Sent-owned drafts and ordinary file attachments
 - Versioned OpenAI classification, one-line inbox summaries, and clean reader text with Markdown hyperlinks and strict `{ reasoning, summary, tier, plainText }` output
-- PostgreSQL full-text plus pgvector hybrid search, with lexical fallback if OpenAI is unavailable
+- SQLite FTS5 (Porter stemming) plus sqlite-vec hybrid search, with lexical fallback if OpenAI is unavailable
 - Manual tier overrides
 - Password login, encrypted OAuth credentials, durable mutation outbox, retries, health checks, HTTPS, and backups
 
@@ -21,7 +21,7 @@ The repository contains a SolidJS client (`web/`), a Rust Axum API (`server/`), 
 
 ### One-command local run
 
-Prerequisites: a local default Docker context with Compose v2, Rust stable, Node 24, pnpm 11, Bash 4.3+
+Prerequisites: Rust stable, a C compiler, Node 24, pnpm 11, Bash 4.3+
 and curl. From the repository root (no `.env` setup required):
 
 ```sh
@@ -32,20 +32,19 @@ scripts/run-local.sh
 
 The URL is **http://127.0.0.1:4000** and the local-only login password is
 **`sent-local-dev-password`**. The runner prints both after the API, fake sync and
-worker heartbeat are healthy. It starts only Compose's Postgres service on
-loopback port **5433**, creates/uses **`sent_benchmark`** (never `sent`), installs
+worker heartbeat are healthy. It creates/uses **`data/sent_benchmark.sqlite`**, installs
 dependencies, builds Solid and the release binaries, applies the shared migrations
 via the seeder, and replaces fake fixture accounts with a fresh deterministic
 mailbox (3000 messages by default; `--messages 0` creates an empty mailbox).
 Only names `sent_benchmark` or `sent_benchmark_*` are accepted as DB overrides.
 
-The runner ignores `.env` for Compose and overrides DB/auth/provider settings for
+The runner overrides DB/auth/provider settings for
 the Rust processes: it binds to loopback, forces fake providers, disables AI/live
 credentials, and uses disposable local auth/encryption values. Do not use these
 values outside local development. No deployment services are started.
 
 **Ctrl+C stops both Rust processes**; if either exits, the other is stopped too.
-Postgres is deliberately left running, since other local databases may use it.
+The SQLite file is retained under `data/`.
 Rerunning the launcher resets the fake mailbox.
 
 ### Manual setup
@@ -53,8 +52,7 @@ Rerunning the launcher resets the fake mailbox.
 From the repository root:
 
 ```sh
-POSTGRES_PORT=5433 docker compose up -d postgres
-export DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent
+export SENT_DATABASE_PATH=./data/sent.sqlite
 export SENT_FAKE_PROVIDERS=true
 export SESSION_SECRET=sent-local-session-secret-at-least-32-characters
 export SENT_PASSWORD_HASH="$(target/release/sent-hash-password sent-local-dev-password)"
@@ -74,8 +72,10 @@ The server never starts a worker;
 the worker is a separate process.
 `MIGRATIONS_PATH` optionally selects a directory of SQL migrations.
 
-The migration runner uses the original SQL files (not copies), advisory lock
-89372411, and `sent_migrations(filename, applied_at)`,, the same history the TypeScript build used. SQLx uses runtime queries; no database is needed to
+The migration runner uses `BEGIN IMMEDIATE` and `sent_migrations(filename, applied_at)`.
+The database file is created automatically, with WAL, foreign keys, a five-second busy timeout,
+and NORMAL synchronous mode. This fresh SQLite schema does not migrate existing Postgres data.
+SQLx uses runtime queries; no database is needed to
 build. The `v1` AES-256-GCM credential envelope is compatible with Node's format.
 
 ### Fixtures and provider safety
@@ -83,8 +83,8 @@ build. The `v1` AES-256-GCM credential envelope is compatible with Node's format
 `sent-seed --messages N` defaults to 3000 messages in 1200 conversations, split
 between Gmail and Microsoft fixture accounts. IDs, timestamps and contents are
 deterministic. `--reset` deletes only the two deterministic fixture accounts and
-their dependent data, not other accounts. Seeding requires both a loopback
-database host and `SENT_FAKE_PROVIDERS=true`. It does not reset arbitrary databases.
+their dependent data, not other accounts. Seeding requires `SENT_FAKE_PROVIDERS=true`.
+It does not reset arbitrary databases.
 
 Fake accounts contain an explicit `sent-fake-provider:` credentials marker, **not
 real OAuth credentials**. The Rust provider boundary refuses to use that marker
@@ -99,18 +99,16 @@ CI (`.github/workflows/ci.yml`) runs the `rust` and `web` jobs on every push and
 production deploys wait for both. Locally:
 
 ```sh
-docker exec sent-postgres-1 psql -U sent -d sent -c 'create database sent_test_rust'
 cargo fmt --all --check
 cargo clippy --locked --all-targets -- -D warnings
-SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_rust cargo test --locked
+cargo test --locked
 bash -n scripts/run-local.sh && python3 scripts/test-run-local.py
 python3 deploy/test-deploy.py
 pnpm --dir web install --frozen-lockfile
 pnpm --dir web typecheck && pnpm --dir web lint && pnpm --dir web test && pnpm --dir web build
 ```
 
-Integration tests skip without `SENT_TEST_DATABASE_URL` and refuse database names
-outside `sent_test_*`. They mutate/truncate their test database.
+Database integration tests run unconditionally, using a fresh temporary SQLite file per test.
 
 Live OAuth, provider attachment downloads and OpenAI hybrid search are not exercised
 by these checks; no production service or credentials are required.
@@ -127,8 +125,8 @@ retry five times starting at 30 seconds, both exponentially. Each sync attempt
 expires after 30 minutes. Account status and classification failures are persisted.
 
 Pending jobs and retry deadlines are checkpointed in the existing
-`worker_state.metadata` JSON and restored on restart. A session advisory lock
-89372413 enforces a single scheduler per database. SIGINT/SIGTERM stop scheduling, drain
+`worker_state.metadata` JSON and restored on restart. An exclusive file lock on
+`<database path>.worker.lock` enforces a single scheduler per database. SIGINT/SIGTERM stop scheduling, drain
 active work for up to 30 seconds, and checkpoint remaining work. Outbox delivery
 continues to use the existing lease, retry and durable pre-send checkpoint: an
 ambiguous dispatch or lost completion must not cause an automatic resend.
@@ -145,15 +143,15 @@ and send-checkpoint tests use local wiremock HTTP servers, not real credentials.
 database. Run the reproducible server/worker smoke check on a fresh local DB:
 
 ```sh
-docker exec sent-postgres-1 psql -U sent -d sent -c 'create database sent_test_worker'
 cargo build --release
-SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_worker python3 scripts/worker-smoke.py
+python3 scripts/worker-smoke.py
 ```
 
 The smoke check resets only fixture accounts, starts both Rust binaries, checks
 healthy sync/heartbeat, waits for an undoable archive to complete, verifies a
 draft send appears in Sent, and shuts down the worker via SIGTERM. Logs are in
-the ignored `parity-logs/` directory. It uses `psql` to inspect the outbox rows.
+the ignored `parity-logs/` directory. It uses Python's sqlite3 module to inspect
+outbox rows in its own temporary database.
 
 ### Web client
 
@@ -259,18 +257,9 @@ and incomplete body placeholders cannot be quoted into reply/forward drafts.
 Pending-body readers refetch on reconnect even while their cached headers are fresh.
 The static-only service worker still never handles `/api/*`.
 
-After release/web builds, check against an isolated, existing local test database:
-
-```sh
-SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_sqlite node web/scripts/replica-check.mjs
-```
-
-After the production web and Rust release builds, run the isolated Playwright
-offline/update/auth check (it resets only the named local `sent_test_*` database):
-
-```sh
-SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_sw pnpm --dir web sw:check
-```
+The legacy browser integration launchers `web/scripts/replica-check.mjs` and
+`pnpm --dir web sw:check` still provision Postgres. They have not yet been ported
+to the server's SQLite setup; use the Rust database tests for this migration.
 
 #### On-device search
 
@@ -343,6 +332,12 @@ Sent supports up to 10 outgoing attachments totaling 20 MB per message. Microsof
 After connecting each account in Settings, the worker pages through the entire archive. Imported messages remain visible in L1/Unclassified until classification completes, so an AI failure cannot hide mail. The worker classifies, generates reader text, and embeds newly synchronized messages once `OPENAI_API_KEY` is configured. The manual historical classify/embed commands belonged to the TypeScript build and have not been ported yet.
 
 ## Production deployment
+
+**SQLite migration status:** `deploy/` and the backup/restore procedures below
+still describe the previous Postgres deployment and are not SQLite-compatible.
+Do not use them for the SQLite application until the deployment migration lands.
+For now, use the local setup above. `DATABASE_URL` is no longer read by the app;
+`SENT_DATABASE_PATH` defaults to `./data/sent.sqlite`.
 
 ### Native production: pull-based push-to-deploy
 
@@ -488,7 +483,7 @@ The server and worker apply pending SQL migrations from `migrations/` at startup
 - HTML email is sanitized and rendered in a sandboxed iframe. Remote images load normally for now; proxying them is on the roadmap.
 - Generated reader text supports basic Markdown, including descriptive hyperlinks. Raw HTML, images, and unsafe link schemes are disabled in this view; the original email is always available.
 - The model selects short link references; Sent inserts the original URL definitions afterward so long signed links are not recopied by the model.
-- The mutation outbox first records an action in PostgreSQL, updates Sent optimistically, and then retries the provider write until it succeeds or surfaces as failed.
+- The mutation outbox first records an action in SQLite, updates Sent optimistically, and then retries the provider write until it succeeds or surfaces as failed.
 
 ## Live mailbox updates
 
@@ -509,7 +504,7 @@ delta when it fits (32 upserts, 512 removals and 64 KiB), otherwise a cursor hin
 The replayable HTTP delta feed remains authoritative: a cursor mismatch or
 expired generation causes catch-up or a background resnapshot, not skipped rows.
 
-Repeated inventories memoize the existing body SHA-256 using PostgreSQL tuple
+Repeated inventories memoize the existing body SHA-256 using SQLite tuple
 MVCC versions, transaction epoch and server start time. The cache contains at
 most 65,536 digests per process, not body text. Body hashes and HTTP JSON remain
 unchanged; even SQL edits that omit `updated_at` invalidate a cached digest.

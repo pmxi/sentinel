@@ -7,19 +7,19 @@ import json
 import os
 from pathlib import Path
 import signal
+import sqlite3
 import subprocess
+import tempfile
 import time
 import urllib.request
 import urllib.parse
 
 ROOT = Path(__file__).resolve().parents[1]
 RUST = ROOT
-DATABASE = os.environ.get("SENT_TEST_DATABASE_URL", "")
-url = urllib.parse.urlparse(DATABASE)
-if url.hostname not in ("localhost", "127.0.0.1", "::1") or not url.path.startswith("/sent_test_"):
-    raise SystemExit("Set SENT_TEST_DATABASE_URL to a local sent_test_* database")
+DIRECTORY = tempfile.TemporaryDirectory(prefix="sent-worker-smoke-")
+DATABASE = str(Path(DIRECTORY.name) / "sent.sqlite")
 SECRET = "sent-worker-smoke-local-session-secret-only"
-ENV = {**os.environ, "DATABASE_URL": DATABASE, "SENT_FAKE_PROVIDERS": "true", "OPENAI_API_KEY": "",
+ENV = {**os.environ, "SENT_DATABASE_PATH": DATABASE, "SENT_FAKE_PROVIDERS": "true", "OPENAI_API_KEY": "",
        "SESSION_SECRET": SECRET, "SENT_PASSWORD_HASH": "unused-with-test-bearer", "HOST": "127.0.0.1", "PORT": "3199"}
 LOGS = RUST / "parity-logs"
 LOGS.mkdir(exist_ok=True)
@@ -44,11 +44,9 @@ def request(path, method="GET", body=None):
 
 
 def sql(query, args=None):
-    for index, value in enumerate(args or [], 1):
-        query = query.replace(f"${index}", "'" + str(value).replace("'", "''") + "'")
-    rows = subprocess.check_output(["psql", ENV["DATABASE_URL"], "-AtX", "-v", "ON_ERROR_STOP=1",
-                                    "-c", f"select coalesce(json_agg(t), '[]') from ({query}) t"], env=ENV, text=True)
-    return json.loads(rows)
+    with sqlite3.connect(DATABASE) as connection:
+        connection.row_factory = sqlite3.Row
+        return [dict(row) for row in connection.execute(query, args or [])]
 
 
 def until(check, seconds=45):
@@ -79,7 +77,7 @@ try:
     selected = request("/api/messages?view=l1&limit=100")["messages"][0]
     receipt = request(f'/api/messages/{selected["id"]}/action', "POST", {"action": "archive", "undoable": True})
     until(lambda: sql("select status from mutation_outbox where id=$1", [receipt["mutationId"]])[0]["status"] == "complete")
-    row = sql("select o.status, m.archived, (o.payload->>'undoUntil')::timestamptz < now() as undo_elapsed from mutation_outbox o join messages m on m.id=o.message_id where o.id=$1", [receipt["mutationId"]])[0]
+    row = sql("select o.status, m.archived, json_extract(o.payload,'$.undoUntil') < strftime('%Y-%m-%dT%H:%M:%f000Z','now') as undo_elapsed from mutation_outbox o join messages m on m.id=o.message_id where o.id=$1", [receipt["mutationId"]])[0]
     assert row == {"status": "complete", "archived": True, "undo_elapsed": True}
     page = request("/api/messages?view=l1&limit=100")
     while True:
