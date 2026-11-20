@@ -7,20 +7,20 @@ import { sentApi } from "./api";
 type Notice = {
   id: string;
   label: string;
-  messageId?: string;
+  threadId?: string;
   action?: "archive" | "delete";
   receipt?: MutationReceipt;
   onUndo?: () => void;
   error?: boolean;
 };
 type TriageContextValue = {
-  hiddenIds: Set<string>;
+  hiddenThreadIds: Set<string>;
   perform(
     messageId: string,
     action: "archive" | "delete",
     advance: () => void,
     restore: () => void,
-    rowId?: string,
+    threadId: string,
   ): void;
   sent(receipt: MutationReceipt, onUndo: () => void): void;
 };
@@ -50,14 +50,14 @@ export function TriageProvider({ children }: { children: ReactNode }) {
     action,
     advance,
     restore,
-    rowId = messageId,
+    threadId,
   ) => {
     const id = crypto.randomUUID();
     setNotices((items) => [
       ...items,
       {
         id,
-        messageId: rowId,
+        threadId,
         action,
         label: action === "archive" ? "Archiving…" : "Deleting…",
         onUndo: restore,
@@ -70,7 +70,7 @@ export function TriageProvider({ children }: { children: ReactNode }) {
       void refresh();
     } catch (error) {
       update(id, {
-        messageId: undefined,
+        threadId: undefined,
         error: true,
         label: error instanceof Error ? error.message : "Action failed",
       });
@@ -93,7 +93,7 @@ export function TriageProvider({ children }: { children: ReactNode }) {
       notice.onUndo?.();
     } catch (error) {
       update(notice.id, {
-        messageId: undefined,
+        threadId: undefined,
         receipt: undefined,
         error: true,
         label: error instanceof Error ? error.message : "Undo failed",
@@ -104,7 +104,7 @@ export function TriageProvider({ children }: { children: ReactNode }) {
   return (
     <TriageContext.Provider
       value={{
-        hiddenIds: new Set(notices.flatMap((item) => (item.messageId ? [item.messageId] : []))),
+        hiddenThreadIds: new Set(notices.flatMap((item) => (item.threadId ? [item.threadId] : []))),
         perform,
         sent,
       }}
@@ -192,4 +192,11 @@ export function nextMessageId(messages: { id: string }[], currentId: string): st
   const index = messages.findIndex((message) => message.id === currentId);
   if (index < 0) return null;
   return messages[index + 1]?.id ?? messages[index - 1]?.id ?? null;
+}
+
+export function visibleConversations<Message extends { threadId: string }>(
+  messages: Message[],
+  hiddenThreadIds: Set<string>,
+): Message[] {
+  return messages.filter((message) => !hiddenThreadIds.has(message.threadId));
 }

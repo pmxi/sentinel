@@ -15,14 +15,14 @@ import { replySeed, useCompose } from "./compose";
 import { messageCursorIndex, nextMessageIndex } from "./keyboard";
 import { MessagePreview, RankingReason, ReaderInsights } from "./MessageInsights";
 import { ReaderText } from "./ReaderText";
-import { nextMessageId, useTriage } from "./triage";
+import { nextMessageId, useTriage, visibleConversations } from "./triage";
 
 function useMessageNavigation<Message extends MessageSummary>(messages: Message[]) {
   const location = useLocation();
   const navigate = useNavigate();
   const [, setParams] = useSearchParams();
   const triage = useTriage();
-  const visible = messages.filter((message) => !triage.hiddenIds.has(message.id));
+  const visible = visibleConversations(messages, triage.hiddenThreadIds);
   const restore = (id: string) => {
     const next = new URLSearchParams(location.search);
     next.set("message", id);
@@ -534,7 +534,9 @@ function Reader({
             className="icon-button"
             title="Archive latest message"
             aria-label="Archive latest message"
-            onClick={() => triage.perform(message.id, "archive", advance, restore, messageId)}
+            onClick={() =>
+              triage.perform(message.id, "archive", advance, restore, message.threadId)
+            }
           >
             <Archive size={18} />
           </button>
@@ -542,7 +544,7 @@ function Reader({
             className="icon-button"
             title="Delete latest message"
             aria-label="Delete latest message"
-            onClick={() => triage.perform(message.id, "delete", advance, restore, messageId)}
+            onClick={() => triage.perform(message.id, "delete", advance, restore, message.threadId)}
           >
             <Trash2 size={18} />
           </button>
