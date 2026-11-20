@@ -27,6 +27,20 @@ export function installPaintObserver(selectors: Selectors) {
   let pending = false;
   const normalize = (value: string) => value.trim().replace(/^(?:(?:re|fw|fwd):\s*)+/i, "");
   const text = (node: Element | null) => node?.textContent?.trim() ?? "";
+  const matchesKey = (event: KeyboardEvent, shortcut: string) => {
+    const parts = shortcut.split("+");
+    const key = parts.pop() || "+";
+    const modifiers = new Set(parts.filter(Boolean));
+    const mac = /Mac|iPhone|iPad|iPod/.test(navigator.platform);
+    const controlOrMeta = modifiers.has("ControlOrMeta");
+    return (
+      (event.key === key || event.code === key) &&
+      event.ctrlKey === (modifiers.has("Control") || (controlOrMeta && !mac)) &&
+      event.metaKey === (modifiers.has("Meta") || (controlOrMeta && mac)) &&
+      event.altKey === modifiers.has("Alt") &&
+      event.shiftKey === modifiers.has("Shift")
+    );
+  };
   const done = () => {
     const rows = [...document.querySelectorAll(selectors.rows)];
     if (condition.kind === "list") return rows.length >= 10;
@@ -93,7 +107,7 @@ export function installPaintObserver(selectors: Selectors) {
       type,
       (event) => {
         if (!trigger || start !== null || trigger.type !== event.type) return;
-        if (trigger.key && (event as KeyboardEvent).key !== trigger.key) return;
+        if (trigger.key && !matchesKey(event as KeyboardEvent, trigger.key)) return;
         start = event.timeStamp;
         window.__sentBench.startEpoch = performance.timeOrigin + start;
         check();

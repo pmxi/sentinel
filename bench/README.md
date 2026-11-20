@@ -163,6 +163,9 @@ or a readable same-origin iframe containing text. Search is submit-on-Enter, not
 live-as-you-type; first matching row must contain the submitted term. Loading
 placeholders must not match the row/body selectors. Keys are Playwright key strings;
 single-character shortcuts use their literal character as KeyboardEvent.key.
+Timing matches the final key (or physical key code) and exact modifiers in a
+Playwright chord such as `Control+Enter`; modifier-down events do not start it.
+`ControlOrMeta` follows the browser platform.
 
 ## Caveats
 
