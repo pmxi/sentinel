@@ -26,14 +26,33 @@ export const localBodyPending = (message?: MessageDetail) =>
   Boolean((message as LocalMessage | undefined)?.localBodyPending);
 export const replicaReady = (client: QueryClient) => replicas.get(client)?.ready() ?? false;
 export const replicaFor = (client: QueryClient) => replicas.get(client);
+export function replicaId() {
+  const source = globalThis.crypto;
+  if (typeof source?.randomUUID === "function") return source.randomUUID();
+  const bytes = new Uint8Array(16);
+  if (typeof source?.getRandomValues === "function") source.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  bytes[6] = (bytes[6] & 15) | 64;
+  bytes[8] = (bytes[8] & 63) | 128;
+  const hex = Array.from(bytes, (value) => value.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+export function createMailboxReplica(...args: ConstructorParameters<typeof MailboxReplica>) {
+  try {
+    return new MailboxReplica(...args);
+  } catch {
+    replicas.delete(args[0]);
+    return undefined;
+  }
+}
 function sessionId() {
   try {
     const old = localStorage.getItem(REPLICA_SESSION_KEY);
     if (old && localStorage.getItem(REPLICA_REVOKED_KEY) === old)
-      return { id: crypto.randomUUID(), persistent: false };
+      return { id: replicaId(), persistent: false };
     if (old && /^[a-f0-9-]{36}$/.test(old)) return { id: old, persistent: true };
   } catch {}
-  const id = crypto.randomUUID();
+  const id = replicaId();
   try {
     localStorage.setItem(REPLICA_SESSION_KEY, id);
     return { id, persistent: localStorage.getItem(REPLICA_SESSION_KEY) === id };

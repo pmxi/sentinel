@@ -18,7 +18,7 @@ import { ComposeProvider, useCompose } from "./compose";
 import { InboxPage, SearchResults } from "./InboxPage";
 import { LoginPage } from "./LoginPage";
 import { quietUntil } from "./mail-cache";
-import { MailboxReplica } from "./replica";
+import { createMailboxReplica } from "./replica";
 import { waitForReplicaWipe } from "./replica-session";
 import { Link, NavLink, useLocation, useNavigate } from "./router";
 import {
@@ -103,12 +103,13 @@ export default function App(props: { children?: JSX.Element }) {
 }
 function AuthenticatedApp(props: { children?: JSX.Element }) {
   const client = useQueryClient();
-  const replica = new MailboxReplica(
+  const replica = createMailboxReplica(
     client,
     () => quietUntil(client) <= Date.now(),
     () => client.getQueryState(["session"])?.status === "success",
   );
   createEffect(() => {
+    if (!replica) return;
     document.documentElement.dataset.sentReplica = replica.status().ready ? "ready" : "loading";
     document.documentElement.dataset.sentReplicaStorage = replica.status().persistent
       ? "opfs"
@@ -119,8 +120,8 @@ function AuthenticatedApp(props: { children?: JSX.Element }) {
       : "syncing";
   });
   onCleanup(() => {
-    void replica.close();
-    if (document.documentElement.dataset.sentReplicaSession === replica.id) {
+    void replica?.close();
+    if (replica && document.documentElement.dataset.sentReplicaSession === replica.id) {
       delete document.documentElement.dataset.sentReplica;
       delete document.documentElement.dataset.sentReplicaStorage;
       delete document.documentElement.dataset.sentReplicaSession;
