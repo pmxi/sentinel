@@ -7,7 +7,12 @@ import type {
   Tier,
 } from "@sent/shared";
 import { createMutation, createQuery, useQueryClient } from "@tanstack/solid-query";
-import { createVirtualizer, createWindowVirtualizer } from "@tanstack/solid-virtual";
+import {
+  createVirtualizer,
+  createWindowVirtualizer,
+  measureElement,
+  type Virtualizer,
+} from "@tanstack/solid-virtual";
 import { Archive, Flag, Mail, MailOpen, Paperclip, Trash2 } from "lucide-solid";
 import {
   type Accessor,
@@ -300,8 +305,11 @@ function MessageList(props: {
       return itemKey();
     },
     estimateSize: () => 150,
-    measureElement: (element: HTMLDivElement, entry: ResizeObserverEntry | undefined) =>
-      entry?.borderBoxSize?.[0]?.blockSize || element.offsetHeight || 150,
+    measureElement: <ScrollElement extends Element | Window>(
+      element: HTMLDivElement,
+      entry: ResizeObserverEntry | undefined,
+      instance: Virtualizer<ScrollElement, HTMLDivElement>,
+    ) => measureElement(element, entry, instance) || 150,
     overscan: 5,
     initialRect: { width: 400, height: 700 },
   };
@@ -320,6 +328,7 @@ function MessageList(props: {
   });
   // Native document scrolling lets mobile Safari collapse its browser bars.
   // Keep desktop's independently scrolling, virtualized split view unchanged.
+  let listMargin = 0;
   const pageVirtualizer = createWindowVirtualizer<HTMLDivElement>({
     ...sharedOptions,
     get count() {
@@ -329,10 +338,17 @@ function MessageList(props: {
       return itemKey();
     },
     get enabled() {
-      return mobile() && !props.selectedId;
+      return mobile();
+    },
+    // Disabling clears measured row heights. Keep them while the reader hides
+    // the list, and don't replace them with zero-size hidden DOM measurements.
+    get useCachedMeasurements() {
+      return Boolean(props.selectedId);
     },
     get scrollMargin() {
-      return list() ? (list()?.getBoundingClientRect().top ?? 0) + window.scrollY : 0;
+      if (!props.selectedId)
+        listMargin = list() ? (list()?.getBoundingClientRect().top ?? 0) + window.scrollY : 0;
+      return listMargin;
     },
   });
   const virtualizer = () => (mobile() ? pageVirtualizer : paneVirtualizer);
