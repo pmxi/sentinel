@@ -24,7 +24,7 @@ def main():
         root = base / "sent"
         legacy = base / "legacy"
         legacy.mkdir()
-        tools = base / "tools" / "bin"
+        tools = base / "tools" / "node" / "bin"
         tools.mkdir(parents=True)
         env_file = base / "shared.env"
         env_file.write_text("DATABASE_URL=postgres://test:fake%40password@fake/test?sslmode=verify-full&sslrootcert=%2Ffake%2Froot.crt&sslcert=%2Ffake%2Fclient.crt&sslkey=%2Ffake%2Fclient.key\n")
@@ -35,9 +35,19 @@ def main():
         run("git", "-C", str(work), "config", "user.name", "Test")
         (work / "deploy").mkdir()
         shutil.copy(SOURCE, work / "deploy" / "deploy.sh")
+        shutil.copy(SOURCE.parent / "sent-run", work / "deploy" / "sent-run")
+        (work / "deploy" / "systemd").mkdir()
+        (work / "deploy" / "systemd" / "sent-server.service").write_text("[Service]\n")
+        (work / "sent-rs" / "web").mkdir(parents=True)
+        (work / "sent-rs" / "Cargo.toml").write_text("[workspace]\n")
+        (work / "packages" / "core" / "src" / "db" / "migrations").mkdir(parents=True)
+        (work / "packages" / "core" / "src" / "db" / "migrations" / "0001.sql").write_text("select 1;\n")
+        (work / "pnpm-workspace.yaml").write_text("packages: []\n")
+        units = base / "units"
         calls = base / "calls"
         for name, body in {
-            "pnpm": 'printf "pnpm %s\\n" "$*" >> "$TEST_CALLS"\nif [[ "$*" == "--filter @sent/core db:migrate" ]]; then\n  [[ "$MIGRATIONS_PATH" == "$PWD/packages/core/src/db/migrations" ]]\n  printf "release migrations\\n" >> "$TEST_CALLS"\nfi\n',
+            "pnpm": 'printf "pnpm %s\\n" "$*" >> "$TEST_CALLS"\nif [[ "$*" == "--dir sent-rs/web build" ]]; then\n  [[ "$NODE_ENV" == production ]]\n  mkdir -p sent-rs/web/dist && printf ok > sent-rs/web/dist/index.html\nfi\n',
+            "cargo": 'printf "cargo %s\\n" "$*" >> "$TEST_CALLS"\n[[ "$CARGO_HOME" == "$SENT_DEPLOY_TOOLS/cargo" ]]\nfor arg; do case "$arg" in */cargo-target) target=$arg;; esac; done\nmkdir -p "$target/release"\nfor bin in sent-server sent-worker; do printf "#!/bin/sh\\n" > "$target/release/$bin"; chmod 700 "$target/release/$bin"; done\n',
             "pg_dump": '[[ "$PGPASSWORD" == "fake@password" && "$PGSSLMODE" == verify-full && "$PGSSLROOTCERT" == /fake/root.crt && "$PGSSLCERT" == /fake/client.crt && "$PGSSLKEY" == /fake/client.key ]]\nprintf "dump\\n" >> "$TEST_CALLS"\nfor arg; do case "$arg" in --file=*) printf fake > "${arg#--file=}";; esac; done\n',
             "systemctl": 'printf "systemctl %s\\n" "$*" >> "$TEST_CALLS"\n',
         }.items():
@@ -54,10 +64,11 @@ def main():
                 if self.path.startswith("/ci/"):
                     state["api"] += 1
                     pending = state["ci"] == "pending"
-                    data = {"total_count": 1, "check_runs": [{"name": "check", "id": 1,
+                    data = {"total_count": 2, "check_runs": [{"name": name, "id": 1,
                             "app": {"slug": "github-actions"},
-                            "status": "in_progress" if pending else "completed",
-                            "conclusion": None if pending else state["ci"]}]}
+                            "status": "in_progress" if pending and name == "web" else "completed",
+                            "conclusion": None if pending and name == "web" else state["ci"]}
+                            for name in ("rust", "web")]}
                 else:
                     current = (root / "current").resolve().name
                     stamp = time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(time.time() + 1)) + ".999Z"
@@ -77,12 +88,12 @@ def main():
         url = f"http://127.0.0.1:{server.server_port}"
         env = dict(os.environ, SENT_DEPLOY_ROOT=str(root), SENT_DEPLOY_REPO=str(base / "repo.git"),
                    SENT_DEPLOY_ENV=str(env_file), SENT_DEPLOY_LEGACY=str(legacy),
-                   SENT_DEPLOY_TOOLS=str(tools.parent), SENT_DEPLOY_HEALTH=url + "/health",
+                   SENT_DEPLOY_TOOLS=str(tools.parent.parent), SENT_DEPLOY_HEALTH=url + "/health",
                    SENT_DEPLOY_CI_URL=url + "/ci", SENT_DEPLOY_TIMEOUT="1", SENT_DEPLOY_INTERVAL="0.1",
-                   TEST_CALLS=str(calls), MIGRATIONS_PATH=str(legacy / "migrations"))
+                   TEST_CALLS=str(calls), SENT_DEPLOY_UNITS=str(units))
 
         def commit():
-            run("git", "-C", str(work), "add", "deploy/deploy.sh")
+            run("git", "-C", str(work), "add", ".")
             run("git", "-C", str(work), "commit", "--allow-empty", "-m", "test")
             sha = run("git", "-C", str(work), "rev-parse", "HEAD")
             if (base / "repo.git").exists():
@@ -94,13 +105,13 @@ def main():
         def deploy(code=0, *args):
             result = subprocess.run(["bash", str(SOURCE), *args], env=env, text=True, capture_output=True)
             assert result.returncode == code, result.stdout + result.stderr
-            return result.stdout
+            return result.stdout + result.stderr
 
         try:
             bootstrap = commit()
             state["bad"] = bootstrap
             output = deploy(1)
-            assert "Previous release healthy" in output
+            assert "Previous release healthy" in output, output
             assert (root / "current").resolve() == legacy
             assert (root / "releases" / "legacy-328f56f").resolve() == legacy
             assert (root / "state" / f"failed-{bootstrap}").exists()
@@ -114,9 +125,14 @@ def main():
             assert (root / "state" / "deployed").read_text().startswith(first)
             assert (root / "bin" / "deploy.sh").exists()
             assert len(list((root / "dumps").glob("*.dump"))) == 1
-            assert calls.read_text().index("dump") < calls.read_text().index("db:migrate")
-            assert "release migrations" in calls.read_text()
-            print("PASS success deploy (legacy bootstrap, dump before migrate, degraded health, self-update)")
+            text = calls.read_text()
+            assert text.index("cargo build --release --locked") < text.index("dump") < text.index("systemctl --user restart")
+            release = root / "releases" / first
+            assert (release / "bin" / "sent-server").exists() and (release / "bin" / "sent-worker").exists()
+            assert (release / "runtime.env").read_text() == (
+                f"WEB_DIST_PATH={release}/sent-rs/web/dist\nMIGRATIONS_PATH={release}/packages/core/src/db/migrations\n")
+            assert (root / "bin" / "sent-run").exists() and (units / "sent-server.service").exists()
+            print("PASS success deploy (legacy bootstrap, Rust build, dump before migrating restart, degraded health, self-update)")
             state["sync"] = True
             second = commit()
             state["bad"] = second
@@ -174,6 +190,20 @@ def main():
             assert (root / "current").resolve().name == fifth
             assert (root / "previous").resolve().name == fourth
             print("PASS fresh sync with accounts rejects pre-restart sync timestamp")
+            state["stale"] = None
+            seventh = commit()
+            typescript = root / "releases" / seventh
+            typescript.mkdir()
+            (root / "current").unlink()
+            (root / "current").symlink_to(typescript)
+            (root / "state" / "deployed").write_text(f"{seventh} 2026-01-01T00:00:00Z\n")
+            deploy()
+            assert (root / "current").resolve().name == f"{seventh}-rust"
+            assert (root / "previous").resolve() == typescript
+            assert deploy() == ""
+            assert "already current" in deploy(0, "force", seventh)
+            assert (root / "current").resolve().name == f"{seventh}-rust"
+            print("PASS cutover commit deployed as TypeScript by the old script -> rebuilt as Rust, TypeScript kept as previous")
         finally:
             server.shutdown()
 

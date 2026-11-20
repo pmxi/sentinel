@@ -148,16 +148,21 @@ automatically classifies, generates reader text, and embeds newly synchronized m
 ### Native production: pull-based push-to-deploy
 
 The production box runs user systemd units as `sentinel` (linger must already
-be enabled). Every two minutes `sent-deploy.timer` checks GitHub's `master` SHA.
-Only a new SHA queries the GitHub check-runs API; the latest GitHub Actions
-`check` job must succeed. Pending checks retry next tick; rejected checks and
+be enabled). Every 30 seconds `sent-deploy.timer` checks GitHub's `master` SHA.
+Only a new SHA queries the GitHub check-runs API (with ETags, so unchanged answers are free);
+the latest GitHub Actions `rust` and `web` jobs must succeed. Pending checks retry next tick; rejected checks and
 failed deploys are remembered so they do not loop. No inbound webhook is needed.
 
-Releases are built from a cached mirror into `~/sent/releases/<sha>` with
-`pnpm install --frozen-lockfile` and `pnpm build`. The shared
-`/opt/sent/app/.env` is symlinked, never copied. A custom-format `pg_dump` is
-taken before migrations (last 10 retained), then `~/sent/current` switches
-atomically and both units restart. Health requires active units, database
+Releases are built from a cached mirror into `~/sent/releases/<sha>`: the Rust
+`sent-server` and `sent-worker` binaries (`cargo build --release --locked`, shared
+`~/sent/cargo-target` for incremental builds) are copied to the release's `bin/`, and the
+Solid app is built with pnpm. The release's `runtime.env` points `WEB_DIST_PATH` and
+`MIGRATIONS_PATH` at that release. The shared `/opt/sent/app/.env` is symlinked, never
+copied. Each release installs its systemd units and `~/sent/bin/sent-run`, which starts
+the Rust binaries or, for older TypeScript releases kept for rollback, their Node entry
+points. A custom-format `pg_dump` is taken (last 10 retained), then `~/sent/current`
+switches atomically and both units restart; the Rust services apply pending migrations at
+startup, after the dump. Health requires active units, database
 connectivity and a worker heartbeat after restart, not `status: "ok"`.
 If sync was fresh before deployment, its oldest successful sync must also be
 after restart. Old builds without `sync` do not impose that condition.
@@ -170,7 +175,8 @@ One-time bootstrap on the box, as `sentinel`, from a checkout of this repository
 
 ```sh
 mkdir -p ~/sent/{bin,tools,releases,dumps,state} ~/.config/systemd/user
-# Unpack a trusted Node 24 linux-arm64 tarball to ~/sent/tools/node first.
+# Unpack a trusted Node 24 linux-arm64 tarball to ~/sent/tools/node first, and install
+# stable Rust with rustup using RUSTUP_HOME=~/sent/tools/rustup CARGO_HOME=~/sent/tools/cargo.
 # That installation must include corepack; the runtime stays /usr/local/bin/node24.
 export PATH="$HOME/sent/tools/node/bin:$PATH"
 corepack enable
@@ -178,6 +184,7 @@ corepack prepare pnpm@11.21.0 --activate
 # Also required on PATH: git, curl, flock, tar, pg_dump (matching the DB major).
 # git ls-remote https://github.com/pmxi/sentinel.git must work non-interactively.
 install -m 700 deploy/deploy.sh ~/sent/bin/deploy.sh
+install -m 700 deploy/sent-run ~/sent/bin/sent-run
 install -m 644 deploy/systemd/sent-{server,worker,deploy}.service deploy/systemd/sent-deploy.timer ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable sent-server.service sent-worker.service
@@ -189,8 +196,8 @@ Keep `/opt/sent/app` intact: the first run registers it as
 `~/sent/releases/legacy-328f56f` and uses it for rollback. Keep its `.env` in
 place, readable only by the owner. Bootstrap needs no sudo; PostgreSQL must be
 reachable using `DATABASE_URL` from that file. The user services keep the
-existing absolute runtime and EnvironmentFile paths. Unit changes in later
-releases must be installed manually; only the script self-updates.
+existing EnvironmentFile path. Successful releases install their own deploy script;
+every release installs its units and launcher before restarting.
 
 ```sh
 journalctl --user -u sent-deploy -u sent-server -u sent-worker -f
