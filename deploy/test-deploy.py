@@ -29,6 +29,10 @@ def main():
         tools.mkdir(parents=True)
         env_file = base / "shared.env"
         env_file.write_text("DATABASE_URL=postgres://test:fake%40password@fake/test?sslmode=verify-full&sslrootcert=%2Ffake%2Froot.crt&sslcert=%2Ffake%2Fclient.crt&sslkey=%2Ffake%2Fclient.key\n")
+        bogus_migrations = base / "bogus-postgres-migrations"
+        bogus_migrations.mkdir()
+        with env_file.open("a") as shared:
+            shared.write(f"MIGRATIONS_PATH={bogus_migrations}\n")
         work = base / "work"
         work.mkdir()
         run("git", "init", "-b", "master", str(work))
@@ -214,7 +218,7 @@ def main():
             state["sync"] = False
             (work / "server" / "src" / "bin").mkdir(parents=True)
             (work / "server" / "src" / "bin" / "sent-import-postgres.rs").write_text("// marker\n")
-            (work / "test-importer").write_text('#!/usr/bin/env bash\nset -eu\n[[ -n "$DATABASE_URL" && -d "$MIGRATIONS_PATH" ]]\nprintf "import\\n" >> "$TEST_CALLS"\nprintf imported > "$1"\n')
+            (work / "test-importer").write_text('#!/usr/bin/env bash\nset -eu\nrelease=$(dirname "$(dirname "$0")")\n[[ -n "$DATABASE_URL" && "$MIGRATIONS_PATH" == "$release/migrations" && -f "$MIGRATIONS_PATH/0001.sql" ]]\nprintf "import\\n" >> "$TEST_CALLS"\nprintf imported > "$1"\n')
             failed_sqlite = commit()
             state["bad"] = failed_sqlite
             start = len(calls.read_text())
@@ -238,6 +242,12 @@ def main():
             assert "SENT_DATABASE_PATH" not in (root / "current" / "runtime.env").read_text()
             deploy(0, "rollback")
             assert (root / "current").resolve().name == first_sqlite
+            for service in ("server", "worker"):
+                binary = root / "current" / "bin" / f"sent-{service}"
+                binary.write_text('#!/usr/bin/env bash\nset -eu\nexec node --env-file=.env -e \'if (process.env.MIGRATIONS_PATH !== process.cwd() + "/migrations") process.exit(1);\'\n')
+                run("bash", str(SOURCE.parent / "sent-run"), service,
+                    env=dict(env, MIGRATIONS_PATH=str(bogus_migrations)))
+            print("PASS importer, server and worker use release migrations despite bogus shared/inherited MIGRATIONS_PATH")
             run("bash", str(SOURCE.parent / "sent-run"), "server", env=env)
             runtime = root / "current" / "runtime.env"
             saved_runtime = runtime.read_text()
