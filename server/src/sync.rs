@@ -858,4 +858,98 @@ mod tests {
         });
         assert!(feed.live_delta(&first, &third, &inventory(vec![])).is_err());
     }
+
+    #[tokio::test]
+    async fn scheduled_inserts_and_relabels_match_full_inventory_and_inline_deltas()
+    -> anyhow::Result<()> {
+        use sent_core::{
+            db,
+            normalize::gmail_message,
+            repository::{BodyVersionCache, Repository},
+        };
+
+        let directory = tempfile::tempdir()?;
+        let pool = db::pool(
+            directory
+                .path()
+                .join("sent_test_scheduled.sqlite")
+                .to_str()
+                .unwrap(),
+            true,
+        )
+        .await?;
+        db::migrate(
+            &pool,
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../migrations"),
+        )
+        .await?;
+        let repo = Repository(pool.clone());
+        let account = repo
+            .upsert_account("gmail", "owner@example.test", "Owner", "fake")
+            .await?;
+        let mut cache = BodyVersionCache::default();
+        let initial = repo.replica_update(None, &mut cache).await?.unwrap();
+        let mut mark = initial.mark;
+        let mut feed = Feed::default();
+        let mut cursor = feed.apply(initial);
+        for (provider_id, scheduled) in [
+            ("ordinary", false),
+            ("inserted-scheduled", true),
+            ("ordinary", true),
+            ("inserted-scheduled", false),
+            ("inserted-scheduled", true),
+        ] {
+            let labels = if scheduled {
+                json!(["INBOX", "SCHEDULED"])
+            } else {
+                json!(["INBOX"])
+            };
+            let message = gmail_message(
+                &json!({"id":provider_id,"threadId":"thread","internalDate":"1893456000000","labelIds":labels,
+                "payload":{"headers":[{"name":"From","value":"sender@example.test"},{"name":"Subject","value":"Visibility"}]}}),
+                "owner@example.test",
+            )?;
+            let (id, _) = repo.upsert_message(account, &message).await?;
+            repo.heartbeat("scheduled-test", json!({})).await?;
+            let change = repo.replica_update(Some(mark), &mut cache).await?.unwrap();
+            assert!(!change.full);
+            assert_eq!(change.ids, vec![id]);
+            assert_eq!(change.inventory.messages.is_empty(), scheduled);
+            mark = change.mark;
+            let was_visible = feed.rows.contains_key(&id.to_string());
+            let previous = cursor;
+            cursor = feed.apply(change);
+            let full = repo.replica_inventory(None, false).await?;
+            assert_eq!(
+                feed.rows.values().cloned().collect::<Vec<_>>(),
+                full.messages
+            );
+            let mut rebuilt = Feed::default();
+            rebuilt.apply(sent_core::repository::ReplicaUpdate {
+                mark,
+                full: true,
+                ids: vec![],
+                inventory: full,
+            });
+            assert_eq!(feed.rows, rebuilt.rows);
+            let frame: Value = serde_json::from_str(
+                &feed
+                    .live_delta(&previous, &cursor, &feed.published_inventory())
+                    .unwrap(),
+            )?;
+            if scheduled {
+                assert_eq!(frame["delta"]["upserts"], json!([]));
+                assert_eq!(
+                    frame["delta"]["deletions"],
+                    if was_visible { json!([id]) } else { json!([]) }
+                );
+            } else {
+                assert_eq!(frame["delta"]["upserts"][0]["id"], json!(id));
+                assert_eq!(frame["delta"]["deletions"], json!([]));
+            }
+            assert!(repo.replica_update(Some(mark), &mut cache).await?.is_none());
+        }
+        pool.close().await;
+        Ok(())
+    }
 }
