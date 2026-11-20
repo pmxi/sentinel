@@ -28,11 +28,11 @@ export function revealRows(input: {
   }
   const top = first.getBoundingClientRect().top,
     bottom = last.getBoundingClientRect().bottom;
-  if (top < viewport.top) {
+  if (top < viewport.top - 1) {
     list.scrollTop += top - viewport.top;
     return false;
   }
-  if (bottom > viewport.bottom) {
+  if (bottom > viewport.bottom + 1) {
     list.scrollTop += bottom - viewport.bottom;
     return false;
   }

@@ -20,6 +20,13 @@ function fixture(indexed: boolean, indexes: number[]) {
   return list;
 }
 describe("untimed row preparation", () => {
+  it("accepts fractional pixel boundaries without repeatedly scrolling rounded offsets", () => {
+    const list = fixture(false, [0, 1]);
+    list.getBoundingClientRect = () => ({ top: 0.5, bottom: 240.5 });
+    expect(revealRows({ rows: "button.message-row", index: 0, next: true, indexed: false })).toBe(
+      true,
+    );
+  });
   it("scrolls ordinary Node rows and their neighbor into view without index hooks", () => {
     const list = fixture(
       false,
