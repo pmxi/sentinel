@@ -455,6 +455,7 @@ function Reader(props: {
     () => thread.data?.messages ?? (detail.data ? [detail.data] : []),
   );
   const readerLoading = createMemo(() => !thread.data && !detail.data && !hasShownFallback());
+  const headerOnly = createMemo(() => detail.isPlaceholderData && !thread.data);
   // Do not expose actions for the selected fallback while the newest reply is loading.
   const message = createMemo(() => (readerLoading() ? undefined : orderedMessages().at(-1)));
   const conversation = createMemo(() => orderedMessages().slice(0, -1));
@@ -526,7 +527,7 @@ function Reader(props: {
     });
   };
   const unavailable = createMemo(
-    () => !message() || action.isPending || (!thread.data && !thread.isError),
+    () => !message() || headerOnly() || action.isPending || (!thread.data && !thread.isError),
   );
   useCommands("reader", () => [
     {
@@ -551,7 +552,7 @@ function Reader(props: {
       group: "Message",
       keys: ["r"],
       run: () => reply(),
-      disabled: !message() || !account(),
+      disabled: !message() || headerOnly() || !account(),
     },
     {
       id: "reply-all",
@@ -559,7 +560,7 @@ function Reader(props: {
       group: "Message",
       keys: ["a"],
       run: () => reply(true),
-      disabled: !message() || !account(),
+      disabled: !message() || headerOnly() || !account(),
     },
     {
       id: "forward",
@@ -567,7 +568,7 @@ function Reader(props: {
       group: "Message",
       keys: ["f"],
       run: forward,
-      disabled: !message(),
+      disabled: !message() || headerOnly(),
     },
     {
       id: "read",
@@ -646,12 +647,14 @@ function Reader(props: {
               </button>
               <div class="toolbar-actions">
                 <TierPicker
+                  disabled={headerOnly()}
                   tier={current().tier}
                   onChange={(value) => tier.mutate({ id: current().id, tier: value })}
                 />
                 <button
                   class="icon-button"
                   title="Archive conversation"
+                  disabled={headerOnly()}
                   aria-label="Archive conversation"
                   onClick={() => triageAction("archive")}
                 >
@@ -660,6 +663,7 @@ function Reader(props: {
                 <button
                   class="icon-button"
                   title="Delete conversation"
+                  disabled={headerOnly()}
                   aria-label="Delete conversation"
                   onClick={() => triageAction("delete")}
                 >
@@ -668,6 +672,7 @@ function Reader(props: {
                 <button
                   class="icon-button"
                   title={current().read ? "Mark unread" : "Mark read"}
+                  disabled={headerOnly()}
                   onClick={() => doAction(current().read ? "mark_unread" : "mark_read")}
                 >
                   {current().read ? <Mail size={18} /> : <MailOpen size={18} />}
@@ -675,6 +680,7 @@ function Reader(props: {
                 <button
                   class={`icon-button ${current().flagged ? "active" : ""}`}
                   title="Flag"
+                  disabled={headerOnly()}
                   onClick={() => doAction(current().flagged ? "unflag" : "flag")}
                 >
                   <Flag size={18} fill={current().flagged ? "currentColor" : "none"} />
@@ -775,9 +781,15 @@ function Reader(props: {
                 <MessageAttachments message={current()} />
               </section>
               <div class="reply-actions">
-                <button onClick={() => reply()}>Reply</button>
-                <button onClick={() => reply(true)}>Reply all</button>
-                <button onClick={forward}>Forward</button>
+                <button disabled={headerOnly()} onClick={() => reply()}>
+                  Reply
+                </button>
+                <button disabled={headerOnly()} onClick={() => reply(true)}>
+                  Reply all
+                </button>
+                <button disabled={headerOnly()} onClick={forward}>
+                  Forward
+                </button>
               </div>
             </article>
           </section>
@@ -826,7 +838,7 @@ function MessageBody(props: { message: MessageDetail; view: "plain" | "original"
     </>
   );
 }
-function TierPicker(props: { tier: Tier | null; onChange(value: Tier): void }) {
+function TierPicker(props: { tier: Tier | null; disabled?: boolean; onChange(value: Tier): void }) {
   return (
     <>
       {
@@ -834,6 +846,7 @@ function TierPicker(props: { tier: Tier | null; onChange(value: Tier): void }) {
           <span>Tier:</span>
           <select
             aria-label="Email tier"
+            disabled={props.disabled}
             value={props.tier ?? ""}
             onInput={(event) => props.onChange(Number(event.currentTarget.value) as Tier)}
           >

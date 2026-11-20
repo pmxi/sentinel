@@ -139,9 +139,13 @@ describe("reader triage shortcuts", () => {
     expect(sentApi.thread).toHaveBeenCalled();
     expect(container.querySelector(".conversation-heading h2")?.textContent).toBe(message.subject);
     expect(container.querySelector(".email-body")).toBeNull();
+    expect(container.querySelector<HTMLButtonElement>('button[title="Flag"]')?.disabled).toBe(true);
     thread.resolve({ messages: [{ ...message, read: true }] });
     await vi.waitFor(() =>
       expect(container.querySelector(".email-body")?.textContent).toContain(message.textBody),
+    );
+    expect(container.querySelector<HTMLButtonElement>('button[title="Flag"]')?.disabled).toBe(
+      false,
     );
   });
   it.each([
