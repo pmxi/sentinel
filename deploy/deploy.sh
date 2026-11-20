@@ -6,7 +6,6 @@ ROOT=${SENT_DEPLOY_ROOT:-$HOME/sent}
 REPO=${SENT_DEPLOY_REPO:-https://github.com/pmxi/sentinel.git}
 API=${SENT_DEPLOY_CI_URL:-https://api.github.com/repos/pmxi/sentinel/commits}
 ENV_FILE=${SENT_DEPLOY_ENV:-/opt/sent/app/.env}
-LEGACY=${SENT_DEPLOY_LEGACY:-/opt/sent/app}
 HEALTH=${SENT_DEPLOY_HEALTH:-http://127.0.0.1:3000/api/health}
 TOOLS=${SENT_DEPLOY_TOOLS:-$ROOT/tools}
 export RUSTUP_HOME=${RUSTUP_HOME:-$TOOLS/rustup} CARGO_HOME=${CARGO_HOME:-$TOOLS/cargo}
@@ -17,7 +16,6 @@ TIMEOUT=${SENT_DEPLOY_TIMEOUT:-240}
 INTERVAL=${SENT_DEPLOY_INTERVAL:-5}
 mkdir -p "$ROOT"/{releases,dumps,state,bin,ci,data,backups}
 database="$ROOT/data/sent.sqlite"
-imported=false
 exec 9>"$ROOT/deploy.lock"
 flock -n 9 || exit 0
 
@@ -60,17 +58,13 @@ restart() {
   systemctl --user restart sent-server.service sent-worker.service
 }
 previous=$(readlink -e "$ROOT/current" || true)
-if [[ -z "$previous" ]]; then
-  [[ -d "$LEGACY" ]] || { log "Missing legacy release: $LEGACY"; exit 1; }
-  ln -sfn "$LEGACY" "$ROOT/releases/legacy-328f56f"
-  previous="$ROOT/releases/legacy-328f56f"
-  link "$previous" "$ROOT/current"
-fi
+[[ -x "$previous/bin/sent-server" && -x "$previous/bin/sent-worker" ]] || { log 'Missing current Rust release'; exit 1; }
+[[ -f "$database" ]] || { log "Missing SQLite database: $database"; exit 1; }
 
 mode=${1:-auto}
 if [[ "$mode" == rollback ]]; then
   target=$(readlink -e "$ROOT/previous" || true)
-  [[ -d "$target" ]] || { log 'No previous release'; exit 1; }
+  [[ -x "$target/bin/sent-server" && -x "$target/bin/sent-worker" ]] || { log 'No previous Rust release'; exit 1; }
   log "Manual rollback to $target"
   link "$target" "$ROOT/current"
   if restart && healthy; then
@@ -91,8 +85,6 @@ elif [[ "$mode" == auto && $# -le 1 ]]; then
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { log 'Cannot resolve master'; exit 1; }
   for state in deployed failed skipped; do
     if [[ -f "$ROOT/state/$state" ]] && read -r recorded _ <"$ROOT/state/$state" && [[ "$recorded" == "$sha" ]]; then
-      # The TypeScript-era script deploys the Rust cutover commit as TypeScript before replacing itself.
-      if [[ "$state" == deployed && "$(readlink -e "$ROOT/current")" == "$ROOT/releases/$sha" && ! -x "$ROOT/releases/$sha/bin/sent-server" ]]; then continue; fi
       exit 0
     fi
     [[ ! -f "$ROOT/state/$state-$sha" ]] || exit 0
@@ -137,14 +129,6 @@ failed() {
   trap - ERR INT TERM
   set +e
   log "Deploy $sha failed; restoring $previous (migrations not reversed)"
-  if $imported; then
-    failed_database="$database.failed-$(date -u +%Y%m%dT%H%M%S)-$$"
-    systemctl --user stop sent-worker.service sent-server.service
-    if [[ -f "$database" ]]; then mv "$database" "$failed_database"; fi
-    for suffix in -wal -shm .tmp .tmp-wal .tmp-shm; do
-      if [[ -f "$database$suffix" ]]; then mv "$database$suffix" "$failed_database$suffix"; fi
-    done
-  fi
   record "failed-$sha"
   record failed
   link "$previous" "$ROOT/current"
@@ -158,7 +142,6 @@ failed() {
 }
 trap failed ERR INT TERM
 release="$ROOT/releases/$sha"
-if [[ -d "$release" && ! -x "$release/bin/sent-server" ]]; then release+=-rust; fi
 [[ "$previous" != "$release" ]] || { log 'Requested release is already current'; exit 0; }
 log "Building $sha"
 if [[ ! -d "$ROOT/cache.git" ]]; then git clone --mirror "$REPO" "$ROOT/cache.git"; fi
@@ -172,23 +155,13 @@ if [[ "$release" != "$saved_previous" ]]; then
   (
     trap - ERR
     cd "$release"
-    # Commits from before the move to the repository root kept the Rust build in sent-rs/.
-    rs=
-    if [[ -f sent-rs/Cargo.toml ]]; then rs=sent-rs/; fi
-    migrations=migrations
-    [[ -d "$migrations" ]] || migrations=packages/core/src/db/migrations
-    binaries=(--bin sent-server --bin sent-worker)
-    if [[ -f "${rs}server/src/bin/sent-import-postgres.rs" ]]; then binaries+=(--bin sent-import-postgres); fi
-    cargo build --release --locked --manifest-path "${rs}Cargo.toml" --target-dir "$ROOT/cargo-target" "${binaries[@]}"
+    cargo build --release --locked --target-dir "$ROOT/cargo-target" --bin sent-server --bin sent-worker
     mkdir -p bin
     cp "$ROOT/cargo-target/release/sent-server" "$ROOT/cargo-target/release/sent-worker" bin/
-    if [[ -f "${rs}server/src/bin/sent-import-postgres.rs" ]]; then cp "$ROOT/cargo-target/release/sent-import-postgres" bin/; fi
-    if [[ -n "$rs" ]]; then pnpm install --frozen-lockfile; fi
-    pnpm --dir "${rs}web" install --frozen-lockfile
-    NODE_ENV=production pnpm --dir "${rs}web" build
-    [[ -f "${rs}web/dist/index.html" && -d "$migrations" ]]
-    printf 'WEB_DIST_PATH=%s\nMIGRATIONS_PATH=%s\n' "$release/${rs}web/dist" "$release/$migrations" >runtime.env
-    printf 'SENT_DATABASE_PATH=%s\n' "$database" >>runtime.env
+    pnpm --dir web install --frozen-lockfile
+    NODE_ENV=production pnpm --dir web build
+    [[ -f web/dist/index.html && -d migrations ]]
+    printf 'WEB_DIST_PATH=%s\nMIGRATIONS_PATH=%s\nSENT_DATABASE_PATH=%s\n' "$release/web/dist" "$release/migrations" "$database" >runtime.env
   )
 fi
 for unit in sent-server.service sent-worker.service sent-deploy.service sent-deploy.timer sent-sqlite-backup.service sent-sqlite-backup.timer; do
@@ -196,61 +169,27 @@ for unit in sent-server.service sent-worker.service sent-deploy.service sent-dep
 done
 install -m 700 "$release/deploy/sent-run" "$ROOT/bin/sent-run.next"
 mv "$ROOT/bin/sent-run.next" "$ROOT/bin/sent-run"
+legacy_timer=$(systemctl show --property=LoadState --value sent-backup.timer)
+legacy_service=$(systemctl show --property=LoadState --value sent-backup.service)
+if [[ "$legacy_timer" != not-found || "$legacy_service" != not-found ]]; then
+  if [[ "$legacy_timer" != not-found ]]; then sudo -n systemctl disable --now sent-backup.timer; fi
+  if [[ "$legacy_service" != not-found ]]; then sudo -n systemctl stop sent-backup.service; fi
+  sudo -n rm -f /etc/systemd/system/sent-backup.timer /etc/systemd/system/sent-backup.service
+  sudo -n systemctl daemon-reload
+fi
 systemctl --user daemon-reload
-if [[ -x "$release/bin/sent-import-postgres" && ! -f "$database" ]]; then
-  log 'Stopping services for the initial SQLite import'
-  systemctl --user stop sent-worker.service sent-server.service
-fi
-if [[ -f "$database" ]]; then
-  log 'Taking pre-migration SQLite backup'
-  dump="$ROOT/dumps/$(date -u +%Y%m%dT%H%M%S)-$sha.sqlite"
-  sqlite3 "$database" ".backup '${dump//\'/\'\'}'"
-else
-log 'Taking pre-migration database dump'
-# libpq does not expand a URL in PGDATABASE, and argv is visible to other users, so pass it as PG* variables.
-# shellcheck disable=SC2016
-pg_values=$(node --env-file="$ENV_FILE" -e '
-const u = new URL(process.env.DATABASE_URL);
-const d = decodeURIComponent;
-const values = new Map([["host", u.hostname], ["port", u.port], ["user", d(u.username)], ["password", d(u.password)], ["dbname", d(u.pathname.slice(1))]]);
-for (const [k, v] of u.searchParams) values.set(k, v);
-const names = {host:"PGHOST", hostaddr:"PGHOSTADDR", port:"PGPORT", user:"PGUSER", password:"PGPASSWORD", dbname:"PGDATABASE", sslmode:"PGSSLMODE", sslrootcert:"PGSSLROOTCERT", sslcert:"PGSSLCERT", sslkey:"PGSSLKEY", sslcrl:"PGSSLCRL", sslcrldir:"PGSSLCRLDIR", sslpassword:"PGSSLPASSWORD", ssl_min_protocol_version:"PGSSLMINPROTOCOLVERSION", ssl_max_protocol_version:"PGSSLMAXPROTOCOLVERSION", channel_binding:"PGCHANNELBINDING", connect_timeout:"PGCONNECT_TIMEOUT", application_name:"PGAPPNAME", options:"PGOPTIONS", target_session_attrs:"PGTARGETSESSIONATTRS", service:"PGSERVICE", passfile:"PGPASSFILE"};
-for (const [k, v] of values) {
-  if (!names[k] || /[\r\n\0]/.test(v)) throw new Error("Unsupported database connection option or value");
-  console.log(names[k] + "=" + v);
-}
-')
-mapfile -t pg_env <<<"$pg_values"
-unset pg_values
-dump="$ROOT/dumps/$(date -u +%Y%m%dT%H%M%S)-$sha.dump"
-(
-  trap - ERR
-  export "${pg_env[@]}"
-  pg_dump --format=custom --no-owner --no-acl --file="$dump.tmp"
-)
-mv "$dump.tmp" "$dump"
-unset pg_env
-fi
-if [[ -x "$release/bin/sent-import-postgres" && ! -f "$database" ]]; then
-  log 'Importing PostgreSQL into SQLite'
-  imported=true
-  MIGRATIONS_PATH="$release/migrations" node --env-file="$ENV_FILE" -e '
-const {spawnSync} = require("node:child_process");
-const result = spawnSync(process.argv[1], [process.argv[2]], {stdio:"inherit", env:process.env});
-process.exit(result.status ?? 1);
-' "$release/bin/sent-import-postgres" "$database"
-fi
-mapfile -t dumps < <(find "$ROOT/dumps" -maxdepth 1 \( -name '*.dump' -o -name '*.sqlite' \) -printf '%f\n' | sort -r | tail -n +11)
+log 'Taking pre-migration SQLite backup'
+dump="$ROOT/dumps/$(date -u +%Y%m%dT%H%M%S)-$sha.sqlite"
+sqlite3 "$database" ".backup '${dump//\'/\'\'}'"
+mapfile -t dumps < <(find "$ROOT/dumps" -maxdepth 1 -name '*.sqlite' -printf '%f\n' | sort -r | tail -n +11)
 for old in "${dumps[@]}"; do rm -- "$ROOT/dumps/$old"; done
 # The Rust server applies pending migrations from runtime.env at startup, after this dump.
 link "$previous" "$ROOT/previous"
 link "$release" "$ROOT/current"
 restart
 healthy
-if [[ -x "$release/bin/sent-import-postgres" ]]; then
-  install -m 700 "$release/deploy/sqlite-backup.sh" "$ROOT/bin/sqlite-backup.sh"
-  systemctl --user enable --now sent-sqlite-backup.timer
-fi
+install -m 700 "$release/deploy/sqlite-backup.sh" "$ROOT/bin/sqlite-backup.sh"
+systemctl --user enable --now sent-sqlite-backup.timer
 log "Release $sha healthy"
 install -m 700 "$release/deploy/deploy.sh" "$ROOT/bin/deploy.sh.next"
 mv "$ROOT/bin/deploy.sh.next" "$ROOT/bin/deploy.sh"

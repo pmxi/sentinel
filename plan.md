@@ -54,11 +54,11 @@ Paras can connect personal Gmail and Purdue mail, use Sent as the complete clien
 
 ### Architecture
 
-Use an online-only responsive web frontend backed by one codebase with separate web and worker entrypoints, plus PostgreSQL with full-text search and `pgvector`. Run both entrypoints from the same container image. Provider adapters connect directly to the Gmail API and Microsoft Graph. The application database is Sent's normalized replica and intelligence store; mutations are synchronized back to the originating provider through a durable outbox.
+Use an online-only responsive web frontend backed by separate Rust server and worker entrypoints, plus SQLite with full-text search and stored embedding vectors. Run both entrypoints as native services sharing the SQLite database. Provider adapters connect directly to the Gmail API and Microsoft Graph. The application database is Sent's normalized replica and intelligence store; mutations are synchronized back to the originating provider through a durable outbox.
 
 ```text
 Gmail API ---------\
-                    > provider adapters -> sync/normalize -> PostgreSQL
+                    > provider adapters -> sync/normalize -> SQLite
 Microsoft Graph ---/                              |          | full-text index
                                                    |          | vector index
                                                    v          | classifications
@@ -72,10 +72,10 @@ Keep the deployable system small:
 - **Web app:** responsive inboxes, search, reader, composer, settings, and provider OAuth callbacks
 - **Application API:** authentication, queries, message rendering, compose/send, and provider-neutral commands
 - **Worker:** mailbox synchronization, backfills, parsing, embeddings, LLM classification, retries, and later notifications
-- **PostgreSQL:** normalized messages, native provider state, full-text index, vectors, analysis, manual overrides, sync cursors, and durable job/outbox records
+- **SQLite:** normalized messages, native provider state, full-text index, vectors, analysis, manual overrides, sync cursors, and durable job/outbox records
 - **Optional object storage:** attachment cache only when caching becomes necessary; initially fetch attachment bytes lazily from the provider
 
-Avoid adding Redis or a separate vector database until PostgreSQL proves insufficient. Durable jobs can initially use PostgreSQL.
+Avoid adding Redis or a separate vector database until SQLite proves insufficient. Use SQLite for durable worker checkpoints and outbox records.
 
 ### Core data model
 
@@ -122,7 +122,7 @@ The initial prompt implements the L1/L2/L3 policy above and lives as a version-c
 
 Semantic search should be hybrid rather than vector-only:
 
-1. Build PostgreSQL full-text indexes for exact terms, names, addresses, subjects, and body text.
+1. Build SQLite full-text indexes for exact terms, names, addresses, subjects, and body text.
 2. Generate embeddings for the entire historical archive with a one-off batch script; the live worker embeds new messages.
 3. At query time, retrieve lexical and vector candidates in parallel.
 4. Merge lexical and vector ranks directly without an LLM reranking call.
@@ -152,7 +152,7 @@ Semantic search should be hybrid rather than vector-only:
 - Never write message bodies, access tokens, sign-in codes, or model request payloads to ordinary application logs.
 - Sanitize HTML email, but load remote images directly in the MVP. A privacy proxy is deferred to `roadmap.md`.
 - Add health checks for provider sync lag, classification failures, expired credentials, outbox failures, and backup age.
-- Expose the web app over public HTTPS and deploy the app, worker, and PostgreSQL in a privately controlled environment with repeatable container-based setup.
+- Expose the web app over public HTTPS and deploy the app and worker in a privately controlled environment with repeatable native service setup and SQLite backups.
 
 ### Delivery sequence
 
