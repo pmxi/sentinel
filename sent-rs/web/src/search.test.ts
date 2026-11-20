@@ -53,6 +53,22 @@ function ready(search = vi.fn().mockResolvedValue(local)) {
   return search;
 }
 describe("local-first search queries", () => {
+  it.each(["", "   "])("clears mail immediately for an empty query %j", async (empty) => {
+    const search = ready();
+    const remote = vi.spyOn(sentApi, "search");
+    const state = scope();
+    await vi.waitFor(() => expect(state.result.data).toEqual(local));
+    state.setQuery(empty);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(state.result.data?.messages ?? []).toEqual([]);
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    expect(state.result.data?.messages ?? []).toEqual([]);
+    expect(search).toHaveBeenCalledTimes(1);
+    expect(remote).not.toHaveBeenCalled();
+    state.setQuery("needle");
+    await vi.waitFor(() => expect(state.result.data).toEqual(local));
+  });
   it("paints local results before any request and appends hybrid results without moving rows", async () => {
     ready();
     const remote = vi
