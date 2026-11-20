@@ -47,6 +47,11 @@ export const sentApi = {
       method: "POST",
       body: JSON.stringify({ action, undoable }),
     }),
+  threadAction: (id: string, action: "archive" | "delete", view: string, accountId?: string) =>
+    api<import("@sent/shared").MutationReceipt>(`/api/threads/${id}/action`, {
+      method: "POST",
+      body: JSON.stringify({ action, view, accountId, undoable: true }),
+    }),
   undo: (id: string) =>
     api<{ draft: Draft | null }>(`/api/mutations/${id}/undo`, { method: "POST" }),
   tier: (id: string, tier: Tier | null) =>
