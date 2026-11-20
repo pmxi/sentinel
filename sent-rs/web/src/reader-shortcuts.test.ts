@@ -6,6 +6,7 @@ import { render } from "solid-js/web";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import App, { InboxRoute } from "./App";
 import { sentApi } from "./api";
+import { optimistic } from "./mail-cache";
 import { TriageProvider, useTriage } from "./triage";
 
 const account: Account = {
@@ -56,9 +57,14 @@ const cleanups: (() => void)[] = [];
 afterEach(() => {
   for (const cleanup of cleanups.splice(0).reverse()) cleanup();
   vi.restoreAllMocks();
+  vi.useRealTimers();
 });
-function mount(children: () => ReturnType<typeof createComponent>) {
+function mount(
+  children: () => ReturnType<typeof createComponent>,
+  configure?: (client: QueryClient) => void,
+) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  configure?.(client);
   const container = document.createElement("div");
   document.body.append(container);
   const dispose = render(
@@ -84,6 +90,7 @@ async function reader(
   view = "l1",
   accountId?: string,
   pending?: { detail: Promise<MessageDetail>; thread: Promise<{ messages: MessageDetail[] }> },
+  configure?: (client: QueryClient) => void,
 ) {
   const item = { ...message, read };
   vi.spyOn(sentApi, "session").mockResolvedValue({ authenticated: true });
@@ -103,14 +110,16 @@ async function reader(
   window.history.replaceState(null, "", path);
   const history = createMemoryHistory();
   history.set({ value: path, replace: true, scroll: false });
-  const container = mount(() =>
-    createComponent(MemoryRouter, {
-      history,
-      root: App,
-      get children() {
-        return createComponent(Route, { path: "/inbox/:view", component: InboxRoute });
-      },
-    }),
+  const container = mount(
+    () =>
+      createComponent(MemoryRouter, {
+        history,
+        root: App,
+        get children() {
+          return createComponent(Route, { path: "/inbox/:view", component: InboxRoute });
+        },
+      }),
+    configure,
   );
   await vi.waitFor(() =>
     expect(
@@ -128,6 +137,40 @@ function press(key: string) {
 }
 
 describe("reader triage shortcuts", () => {
+  it("resumes polling an untouched prefetched read conversation after the quiet window", async () => {
+    vi.useFakeTimers();
+    const item = { ...message, read: true };
+    const container = await reader(true, false, "l1", undefined, undefined, (client) => {
+      client.setQueryDefaults(["thread"], { staleTime: 15_000 });
+      client.setQueryDefaults(["message"], { staleTime: 15_000 });
+      client.setQueryData(["message", item.id], item);
+      client.setQueryData(["thread", item.threadId, false], { messages: [item] });
+      client.setQueryData(["message", "archived"], {
+        ...item,
+        id: "archived",
+        threadId: "archived-thread",
+      });
+      optimistic(client, { threadId: "archived-thread", action: "archive", view: "l1" }).commit();
+    });
+    vi.mocked(sentApi.thread).mockResolvedValue({
+      messages: [
+        item,
+        {
+          ...item,
+          id: "reply",
+          textBody: "New reply after archive",
+          plainText: "New reply after archive",
+        },
+      ],
+    });
+    await vi.advanceTimersByTimeAsync(1400);
+    expect(sentApi.thread).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(4200);
+    expect(sentApi.thread).toHaveBeenCalledWith(item.threadId, false, expect.any(AbortSignal));
+    expect(container.querySelector(".email-body")?.textContent).toContain(
+      "New reply after archive",
+    );
+  });
   it("starts detail and thread together, paints the cached header and then a real thread body", async () => {
     const detail = deferred<MessageDetail>();
     const thread = deferred<{ messages: MessageDetail[] }>();

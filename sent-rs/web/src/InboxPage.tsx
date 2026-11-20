@@ -105,7 +105,7 @@ export function InboxPage(props: { accounts: Account[] }) {
   const messages = createQuery(() => ({
     queryKey: ["messages", route.view ?? "l1", accountId()],
     queryFn: () => sentApi.messages(query()),
-    refetchInterval: () => (quietUntil(client) > Date.now() ? false : 4000),
+    refetchInterval: quietUntil(client) > Date.now() ? false : 4000,
     reconcile: "threadId",
   }));
   const detail = createMemo(() => viewDetails[route.view ?? "l1"] ?? viewDetails.all);
@@ -449,7 +449,7 @@ function Reader(props: {
     queryKey: ["thread", threadId(), trash()],
     queryFn: ({ signal }) => sentApi.thread(threadId() ?? "", trash(), signal),
     enabled: Boolean(threadId()),
-    refetchInterval: () => (quietUntil(queryClient) > Date.now() ? false : 4000),
+    refetchInterval: quietUntil(queryClient) > Date.now() ? false : 4000,
   }));
   const orderedMessages = createMemo(
     () => thread.data?.messages ?? (detail.data ? [detail.data] : []),

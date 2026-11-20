@@ -1,5 +1,6 @@
 import type { ConversationSummary, MessageSummary, Tier } from "@sent/shared";
 import type { QueryClient, QueryKey } from "@tanstack/solid-query";
+import { createSignal, type Signal } from "solid-js";
 import type { CacheResponse, MessagePatch } from "./api";
 
 type Mail = MessageSummary & Partial<Pick<MessagePatch, "archived" | "deleted" | "classified">>;
@@ -52,26 +53,33 @@ const states = new WeakMap<
     prefetchUntil: number;
     pending: number;
     keys: Map<string, QueryKey>;
+    clock: Signal<number>;
   }
 >();
 function state(client: QueryClient) {
   let value = states.get(client);
   if (!value) {
-    value = { until: 0, prefetchUntil: 0, pending: 0, keys: new Map() };
+    value = { until: 0, prefetchUntil: 0, pending: 0, keys: new Map(), clock: createSignal(0) };
     states.set(client, value);
   }
   return value;
 }
-export const quietUntil = (client: QueryClient) =>
-  state(client).pending ? Infinity : state(client).until;
+export const quietUntil = (client: QueryClient) => {
+  const value = state(client);
+  value.clock[0]();
+  return value.pending ? Infinity : value.until;
+};
 export const prefetchQuietUntil = (client: QueryClient) => state(client).prefetchUntil;
 function reconcile(client: QueryClient, keys: QueryKey[]) {
   const value = state(client);
   value.until = Date.now() + 1500;
+  value.clock[1]((tick) => tick + 1);
   for (const key of keys) value.keys.set(JSON.stringify(key), key);
   clearTimeout(value.timer);
   value.timer = setTimeout(() => {
     if (value.pending) return;
+    value.until = 0;
+    value.clock[1]((tick) => tick + 1);
     const keys = [...value.keys.values()];
     value.keys.clear();
     for (const queryKey of keys)
@@ -410,6 +418,7 @@ export function optimistic(client: QueryClient, change: Change) {
     revisions.fields.set(item.id, owned);
   }
   value.until = Date.now() + 1500;
+  value.clock[1]((tick) => tick + 1);
   if (change.action === "archive" || change.action === "delete")
     value.prefetchUntil = Date.now() + 1500;
   const entries = apply(client, change);
