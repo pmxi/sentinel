@@ -10,7 +10,7 @@ import { Archive, Flag, Mail, MailOpen, Paperclip, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { sentApi } from "./api";
-import { useCommands } from "./commands";
+import { useCommands, useFrameCommands } from "./commands";
 import { replySeed, useCompose } from "./compose";
 import { nextMessageIndex } from "./keyboard";
 import { MessagePreview, RankingReason, ReaderInsights } from "./MessageInsights";
@@ -676,6 +676,7 @@ function EmptyReader() {
 
 function EmailFrame({ title, html }: { title: string; html: string }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
+  useFrameCommands(frameRef);
 
   useEffect(() => {
     const frame = frameRef.current;

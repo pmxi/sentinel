@@ -2,6 +2,7 @@ import { Command as CommandIcon, Search } from "lucide-react";
 import {
   createContext,
   type ReactNode,
+  type RefObject,
   useCallback,
   useContext,
   useEffect,
@@ -15,6 +16,7 @@ import { type Command, filterCommands, isShortcutEvent, isTypingTarget } from ".
 type CommandContextValue = {
   register(scope: string, commands: () => Command[]): () => void;
   refresh(): void;
+  forwardKey(event: KeyboardEvent): void;
   openPalette(): void;
 };
 const CommandContext = createContext<CommandContextValue | null>(null);
@@ -37,6 +39,27 @@ export function useCommands(scope: string, commands: Command[]) {
   }, [refresh, signature]);
 }
 
+// Original HTML lives in a same-origin sandbox. Its keyboard events do not
+// bubble to the app window, so attach the same guarded dispatcher to that window.
+export function useFrameCommands(frame: RefObject<HTMLIFrameElement | null>) {
+  const { forwardKey } = useCommandPalette();
+  useEffect(() => {
+    const element = frame.current;
+    let frameWindow: Window | null = null;
+    const attach = () => {
+      frameWindow?.removeEventListener("keydown", forwardKey);
+      frameWindow = element?.contentWindow ?? null;
+      frameWindow?.addEventListener("keydown", forwardKey);
+    };
+    element?.addEventListener("load", attach);
+    attach();
+    return () => {
+      element?.removeEventListener("load", attach);
+      frameWindow?.removeEventListener("keydown", forwardKey);
+    };
+  }, [forwardKey, frame]);
+}
+
 export function CommandProvider({ children }: { children: ReactNode }) {
   const registry = useRef(new Map<string, () => Command[]>());
   const [open, setOpen] = useState(false);
@@ -44,6 +67,8 @@ export function CommandProvider({ children }: { children: ReactNode }) {
   const [, setRevision] = useState(0);
   const refresh = useCallback(() => setRevision((value) => value + 1), []);
   const compose = useCompose();
+  const dispatch = useRef<(event: KeyboardEvent) => void>(() => {});
+  const forwardKey = useCallback((event: KeyboardEvent) => dispatch.current(event), []);
   const register = useCallback((scope: string, commands: () => Command[]) => {
     registry.current.set(scope, commands);
     return () => {
@@ -55,8 +80,8 @@ export function CommandProvider({ children }: { children: ReactNode }) {
     [],
   );
   const context = useMemo(
-    () => ({ register, refresh, openPalette: () => setOpen(true) }),
-    [register, refresh],
+    () => ({ register, refresh, forwardKey, openPalette: () => setOpen(true) }),
+    [register, refresh, forwardKey],
   );
 
   useEffect(() => {
@@ -114,9 +139,11 @@ export function CommandProvider({ children }: { children: ReactNode }) {
       }
     };
     window.addEventListener("keydown", listener);
+    dispatch.current = listener;
     window.addEventListener("blur", resetPrefix);
     return () => {
       window.removeEventListener("keydown", listener);
+      dispatch.current = () => {};
       window.removeEventListener("blur", resetPrefix);
       window.clearTimeout(timer);
     };

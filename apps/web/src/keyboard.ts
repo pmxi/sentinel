@@ -15,10 +15,12 @@ export function isShortcutEvent(
 }
 
 export function isTypingTarget(target: EventTarget | null): boolean {
+  // instanceof Element fails for nodes belonging to the original-email iframe.
+  const element = target as Element | null;
   return (
-    target instanceof Element &&
+    typeof element?.closest === "function" &&
     Boolean(
-      target.closest(
+      element.closest(
         "input, textarea, select, [contenteditable]:not([contenteditable='false']), [role='textbox']",
       ),
     )
