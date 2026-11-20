@@ -415,6 +415,17 @@ function Reader({
       { onSuccess: shouldClose ? close : undefined },
     );
   };
+  const triageAction = (action: "archive" | "delete") => {
+    if (message) triage.perform(message.id, action, advance, restore, message.threadId);
+  };
+  const reply = (all = false) => {
+    if (message && account)
+      compose.openCompose({
+        ...replySeed(message, account, all),
+        onSent: advance,
+        onUndo: restore,
+      });
+  };
   const forward = () => {
     if (!message) return;
     compose.openCompose({
@@ -433,7 +444,7 @@ function Reader({
       label: "Archive message",
       group: "Message",
       keys: ["e"],
-      run: () => doAction("archive", true),
+      run: () => triageAction("archive"),
       disabled: unavailable,
     },
     {
@@ -441,7 +452,7 @@ function Reader({
       label: "Move message to Trash",
       group: "Message",
       keys: ["#"],
-      run: () => doAction("delete", true),
+      run: () => triageAction("delete"),
       disabled: unavailable,
     },
     {
@@ -449,9 +460,7 @@ function Reader({
       label: "Reply",
       group: "Message",
       keys: ["r"],
-      run: () => {
-        if (message && account) compose.openCompose(replySeed(message, account));
-      },
+      run: () => reply(),
       disabled: !message || !account,
     },
     {
@@ -459,9 +468,7 @@ function Reader({
       label: "Reply all",
       group: "Message",
       keys: ["a"],
-      run: () => {
-        if (message && account) compose.openCompose(replySeed(message, account, true));
-      },
+      run: () => reply(true),
       disabled: !message || !account,
     },
     {
@@ -534,9 +541,7 @@ function Reader({
             className="icon-button"
             title="Archive latest message"
             aria-label="Archive latest message"
-            onClick={() =>
-              triage.perform(message.id, "archive", advance, restore, message.threadId)
-            }
+            onClick={() => triageAction("archive")}
           >
             <Archive size={18} />
           </button>
@@ -544,7 +549,7 @@ function Reader({
             className="icon-button"
             title="Delete latest message"
             aria-label="Delete latest message"
-            onClick={() => triage.perform(message.id, "delete", advance, restore, message.threadId)}
+            onClick={() => triageAction("delete")}
           >
             <Trash2 size={18} />
           </button>
@@ -640,30 +645,8 @@ function Reader({
           <MessageAttachments message={message} />
         </section>
         <div className="reply-actions">
-          <button
-            onClick={() =>
-              account &&
-              compose.openCompose({
-                ...replySeed(message, account),
-                onSent: advance,
-                onUndo: restore,
-              })
-            }
-          >
-            Reply
-          </button>
-          <button
-            onClick={() =>
-              account &&
-              compose.openCompose({
-                ...replySeed(message, account, true),
-                onSent: advance,
-                onUndo: restore,
-              })
-            }
-          >
-            Reply all
-          </button>
+          <button onClick={() => reply()}>Reply</button>
+          <button onClick={() => reply(true)}>Reply all</button>
           <button onClick={forward}>Forward</button>
         </div>
       </article>
