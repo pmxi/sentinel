@@ -20,7 +20,8 @@ class BackupRestoreTests(unittest.TestCase):
 
     def run_script(self, script, *args, config=None, cwd=None):
         env = dict(os.environ, SENT_DATABASE_PATH=str(self.database),
-                   SENT_BACKUP_DIR=str(self.backups))
+                   SENT_BACKUP_DIR=str(self.backups),
+                   SENT_SERVER_BIN=os.environ.get("SENT_SERVER_BIN", str(SCRIPTS.parent / "target/debug/sent-server")))
         env.update(config or {})
         return subprocess.run(["sh", str(SCRIPTS / script), *map(str, args)],
                               env={key: value for key, value in env.items() if value is not None},
@@ -110,11 +111,28 @@ class BackupRestoreTests(unittest.TestCase):
         nested = self.root / "nested"
         nested.mkdir()
         check("dotenv", {"SENT_DATABASE_PATH": None}, nested)
+        env_file.write_text(f'SENT_BACKUP_TEST_DIRECTORY="{self.root}"\n'
+                            'SENT_DATABASE_PATH=${SENT_BACKUP_TEST_DIRECTORY}/configured.sqlite\n'
+                            'SENT_DATABASE_PATH=missing-duplicate.sqlite\n')
+        check("dotenv", {"SENT_DATABASE_PATH": None, "SENT_BACKUP_TEST_DIRECTORY": None}, nested)
         env_file.write_text('SENT_DATABASE_PATH="missing.sqlite"\n')
         self.assertNotEqual(self.run_script("backup.sh", config={"SENT_DATABASE_PATH": None}, cwd=self.root).returncode, 0)
         self.assertNotEqual(self.run_script("backup.sh", config={"SENT_DATABASE_PATH": ""}, cwd=self.root).returncode, 0)
         env_file.unlink()
         check("default", {"SENT_DATABASE_PATH": None}, self.root)
+
+    def test_restore_refuses_the_configured_database_even_when_missing(self):
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("create table fixture(value text)")
+        target = self.root / "missing.sqlite"
+        env_file = self.root / ".env"
+        env_file.write_text(f'SENT_DATABASE_PATH="{target}"\n'
+                            'SENT_DATABASE_PATH=other.sqlite\n')
+        result = self.run_script("restore.sh", self.database, target,
+                                 config={"SENT_DATABASE_PATH": None}, cwd=self.root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("configured application database", result.stderr)
+        self.assertFalse(target.exists())
 
     def test_backup_and_restore_do_not_require_hard_links(self):
         tools = self.root / "tools"

@@ -9,6 +9,11 @@ umask 077
 }
 backup=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 target=$2
+database=$("${SENT_SERVER_BIN:-sent-server}" --print-database-path)
+if [ "$(realpath -m "$target")" = "$(realpath -m "$database")" ]; then
+  echo 'Restore to a new path outside the configured application database.' >&2
+  exit 1
+fi
 for path in "$target" "$target-wal" "$target-shm"; do
   if [ -e "$path" ] || [ -L "$path" ]; then
     echo 'Refusing to replace an existing database or sidecar.' >&2

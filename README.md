@@ -482,12 +482,16 @@ then the nearest `.env` in the current directory or its parents, then defaults
 to `./data/sent.sqlite`. A missing configured database is an error, not a reason
 to fall back. Set `SENT_BACKUP_DIR` to override `./backups`; backups are private and retained for
 14 days. Retention applies only to its `sent-script-backup-*.sqlite` files,
-never the source database. Node.js 20.12+ (for dotenv parsing) and the `sqlite3`
-command-line tool are required. No Compose database
+never the source database. Both scripts use `sent-server --print-database-path`,
+which runs the app's exact configuration loader (including first-wins duplicate
+assignments and variable expansion), without starting services or opening the
+database. A built `sent-server` on PATH and the `sqlite3` command-line tool are
+required. Override the executable with `SENT_SERVER_BIN`, for example
+`SENT_SERVER_BIN=./target/release/sent-server scripts/backup.sh`. No Compose database
 service is used.
 
 Restore to a **new explicit path**; the script refuses existing targets or
-sidecars, including a running application's database:
+sidecars and the configured application database path, even if missing:
 
 ```sh
 scripts/restore.sh /path/to/sent-backup.sqlite ./restore-check/sent.sqlite

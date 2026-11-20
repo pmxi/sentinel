@@ -10,8 +10,16 @@ mod live;
 mod sync;
 mod validation;
 
+fn main() -> Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--print-database-path") {
+        println!("{}", Config::from_env()?.database_path);
+        return Ok(());
+    }
+    run()
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn run() -> Result<()> {
     let config = Config::from_env()?;
     Config::required(&config.password_hash, "SENT_PASSWORD_HASH")?;
     let secret = Config::required(&config.session_secret, "SESSION_SECRET")?;
