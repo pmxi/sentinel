@@ -186,7 +186,9 @@ service worker or persisted shell metadata across samples.
 
 `warm_mailbox` separately measures a warm in-app navigation from L1 to Sent.
 Untimed setup waits for an advertised SQLite replica and its recent-body sync to be ready (bounded to
-120 seconds), and for pending network activity to settle. Builds without a
+300 seconds), and for pending network activity to settle. The same five-minute
+budget covers the untimed network-idle and shell preparation for replica actions;
+the shell-only `warm_reload` setup retains its 30-second bound. Builds without a
 replica, including Node, use the same navigation without a replica wait. The
 paint condition requires the first row to change, so old L1 rows cannot complete
 the measurement. Fresh contexts still do not share storage across samples: this
