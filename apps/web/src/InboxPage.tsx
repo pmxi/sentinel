@@ -17,7 +17,7 @@ import { MessagePreview, RankingReason, ReaderInsights } from "./MessageInsights
 import { ReaderText } from "./ReaderText";
 import { nextMessageId, useTriage } from "./triage";
 
-function useMessageNavigation(messages: MessageSummary[]) {
+function useMessageNavigation<Message extends MessageSummary>(messages: Message[]) {
   const location = useLocation();
   const navigate = useNavigate();
   const [, setParams] = useSearchParams();
