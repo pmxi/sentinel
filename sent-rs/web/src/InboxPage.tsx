@@ -30,7 +30,7 @@ import { optimistic, quietUntil } from "./mail-cache";
 import { useMailbox } from "./mailbox";
 import { cachedRow, headerData, usePrefetch } from "./prefetch";
 import { ReaderText } from "./ReaderText";
-import { localBodyPending, messageRead, replicaReady, threadRead } from "./replica";
+import { localBodyPending, messageRead, replicaFor, replicaReady, threadRead } from "./replica";
 import { useLocation, useNavigate, useParams, useSearchParams } from "./router";
 import { nextMessageId, useTriage, visibleConversations } from "./triage";
 
@@ -580,6 +580,10 @@ function Reader(props: {
   const orderedMessages = createMemo(
     () => thread.data?.messages ?? (detail.data ? [detail.data] : []),
   );
+  createEffect(() => {
+    if (replicaReady(queryClient))
+      replicaFor(queryClient)?.opened(orderedMessages().map((message) => message.id));
+  });
   const readerLoading = createMemo(
     () =>
       !thread.data &&

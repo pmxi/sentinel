@@ -113,6 +113,9 @@ function AuthenticatedApp(props: { children?: JSX.Element }) {
       ? "opfs"
       : "memory";
     document.documentElement.dataset.sentReplicaSession = replica.id;
+    document.documentElement.dataset.sentReplicaBodies = replica.status().bodiesReady
+      ? "ready"
+      : "syncing";
   });
   onCleanup(() => {
     void replica.close();
@@ -120,6 +123,7 @@ function AuthenticatedApp(props: { children?: JSX.Element }) {
       delete document.documentElement.dataset.sentReplica;
       delete document.documentElement.dataset.sentReplicaStorage;
       delete document.documentElement.dataset.sentReplicaSession;
+      delete document.documentElement.dataset.sentReplicaBodies;
     }
   });
   const metadata = readShellMetadata();

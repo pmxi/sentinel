@@ -1,6 +1,7 @@
 // @vitest-environment node
 import sqlite3InitModule from "@sqlite.org/sqlite-wasm";
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { RECENT_BODY_DAYS, recentBodyCutoff } from "./replica-policy";
 import { ReplicaStore } from "./replica-store";
 import {
   MAX_BODY_BYTES,
@@ -59,8 +60,78 @@ beforeAll(async () => {
 beforeEach(() => {
   store = new ReplicaStore(new sqlite.oo1.DB(":memory:", "c"));
 });
-afterEach(() => store.db.close());
+afterEach(() => {
+  vi.restoreAllMocks();
+  store.db.close();
+});
 describe("real SQLite replica", () => {
+  it("background-caches the inclusive recent window and expires only unopened older bodies", () => {
+    const now = Date.UTC(2026, 10, 20);
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const dated = (id: string, days: number) => {
+      const value = new Date(now - days * 86400000).toISOString();
+      return row(id, {
+        receivedAt: value,
+        sortReceivedAt: value.replace(/(\.\d{3})Z$/, "$1000Z"),
+        bodyAvailable: true,
+        textBody: `Body ${id}`,
+      });
+    };
+    const recent = dated("recent", 1),
+      boundary = dated("boundary", RECENT_BODY_DAYS),
+      old = dated("old", RECENT_BODY_DAYS + 1);
+    expect(boundary.sortReceivedAt).toBe(recentBodyCutoff(now));
+    seed([recent, boundary, old]);
+    expect(new Set(store.recentBodies())).toEqual(new Set(["recent", "boundary"]));
+    store.bodies([recent, boundary], false);
+    expect(store.recentBodies()).toEqual([]);
+    expect(store.detail("old")?.hasBody).toBe(false);
+    store.opened(["recent"]);
+    store.bodies([old], true);
+    vi.mocked(Date.now).mockReturnValue(now + (RECENT_BODY_DAYS + 1) * 86400000);
+    store.recentBodies();
+    expect(store.detail("boundary")?.hasBody).toBe(false);
+    expect(store.detail("recent")?.hasBody).toBe(true);
+    expect(store.detail("old")?.hasBody).toBe(true);
+    expect(store.count()).toBe(3);
+  });
+  it("stops retrying missing, oversized and superseded background bodies until their version changes", () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.UTC(2026, 10, 20));
+    seed([row("a"), row("b"), row("c")]);
+    store.bodies([], false, ["a"]);
+    store.bodies([row("b", { bodyAvailable: false })], false);
+    store.bodies(
+      [row("c", { bodyVersion: "stale", bodyAvailable: true, textBody: "Stale" })],
+      false,
+    );
+    expect(store.recentBodies()).toEqual([]);
+    expect(store.detail("c")?.hasBody).toBe(false);
+    expect(store.db.selectValue("select body_version from messages where id='c'")).toBe("v1");
+    store.delta(delta([row("a", { bodyVersion: "v2" })]));
+    expect(store.recentBodies()).toEqual(["a"]);
+  });
+  it("measures physical row and body pages including indexes and free pages", () => {
+    seed([row("a")]);
+    const empty = store.storageStats();
+    store.bodies([row("a", { bodyAvailable: true, textBody: "x".repeat(16384) })]);
+    const full = store.storageStats();
+    expect(full.bodyCount).toBe(1);
+    expect(full.bodyPayloadBytes).toBe(16384);
+    expect(full.bodyAllocatedBytes).toBeGreaterThan(empty.bodyAllocatedBytes);
+    expect(full.databaseBytes).toBe(
+      full.rowAllocatedBytes + full.bodyAllocatedBytes + full.freeBytes,
+    );
+  });
+  it("does not evict recent background bodies to meet the older-body cache budget", () => {
+    vi.spyOn(Date, "now").mockReturnValue(Date.UTC(2026, 10, 20));
+    const rows = Array.from({ length: 129 }, (_, index) =>
+      row(String(index), { bodyAvailable: true, textBody: "x".repeat(MAX_BODY_BYTES) }),
+    );
+    seed(rows);
+    store.bodies(rows, false);
+    expect(store.db.selectValue("select count(*) from bodies")).toBe(129);
+    expect(store.storageStats().bodyPayloadBytes).toBeGreaterThan(MAX_BODY_CACHE_BYTES);
+  });
   it("ranks mailbox headers through a covering index instead of scanning full metadata", () => {
     seed([row("a"), row("b", { direction: "outbound" })]);
     const exec = vi.spyOn(store.db, "exec");
@@ -97,7 +168,12 @@ describe("real SQLite replica", () => {
   });
   it("evicts old bodies at the total cache limit", () => {
     const rows = Array.from({ length: 129 }, (_, index) =>
-      row(String(index), { bodyAvailable: true, textBody: "x".repeat(MAX_BODY_BYTES) }),
+      row(String(index), {
+        receivedAt: "2000-01-01T00:00:00.000Z",
+        sortReceivedAt: "2000-01-01T00:00:00.000000Z",
+        bodyAvailable: true,
+        textBody: "x".repeat(MAX_BODY_BYTES),
+      }),
     );
     seed(rows);
     store.bodies(rows);

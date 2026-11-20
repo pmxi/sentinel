@@ -56,6 +56,18 @@ server.stdout.pipe(log);
 server.stderr.pipe(log);
 const db = new Client({ connectionString: database });
 await db.connect();
+const recent = (
+  await db.query(
+    "select m.id from messages m join classifications c on c.message_id=m.id where m.direction='inbound' and not m.archived and not m.deleted limit 1",
+  )
+).rows[0];
+await db.query(
+  "update messages set received_at=now()-interval '30 days',text_body='Recent background body: this message is cached before it is ever opened.',html_body=null where id=$1",
+  [recent.id],
+);
+await db.query("update classifications set manual_tier=1,plain_text=null where message_id=$1", [
+  recent.id,
+]);
 let browser;
 try {
   for (let attempt = 0; ; attempt++) {
@@ -72,13 +84,42 @@ try {
       process.env.SENT_CHROMIUM_PATH ??
       require("./bench/node_modules/playwright").chromium.executablePath(),
   });
-  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } }),
-    page = await context.newPage();
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  await context.addInitScript(() => {
+    const NativeWorker = window.Worker;
+    window.Worker = class extends NativeWorker {
+      constructor(url, options) {
+        super(url, options);
+        if (String(url).includes("replica-worker")) {
+          let id = -1;
+          window.__replicaStats = () =>
+            new Promise((resolve, reject) => {
+              const call = id--;
+              const listener = (event) => {
+                if (event.data.id !== call) return;
+                this.removeEventListener("message", listener);
+                if (event.data.error) reject(new Error(event.data.error));
+                else resolve(event.data.result);
+              };
+              this.addEventListener("message", listener);
+              this.postMessage({ id: call, method: "stats", args: [] });
+            });
+        }
+      }
+    };
+  });
+  const page = await context.newPage();
   page.setDefaultTimeout(30_000);
   const errors = [],
-    requests = [];
+    requests = [],
+    bodyRequests = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  page.on("request", (request) => requests.push(new URL(request.url()).pathname));
+  page.on("request", (request) => {
+    const target = new URL(request.url());
+    requests.push(target.pathname);
+    if (target.pathname === "/api/sync/bodies")
+      bodyRequests.push(...target.searchParams.get("ids").split(","));
+  });
   await page.goto(`${url}/inbox/l1`);
   const login = async () => {
     await page.getByLabel("Password").fill(password);
@@ -92,6 +133,13 @@ try {
   assert.notEqual(await page.locator("html").getAttribute("data-sent-replica"), "ready");
   console.log("PASS mailbox paints before background snapshot is ready");
   await page.waitForFunction(() => document.documentElement.dataset.sentReplica === "ready");
+  await page.waitForFunction(() => document.documentElement.dataset.sentReplicaBodies === "ready");
+  const initialStats = await page.evaluate(() => window.__replicaStats());
+  assert.equal(initialStats.recentBodyCount, 1);
+  assert.equal(initialStats.olderBodyCount, 0);
+  assert(bodyRequests.length > 0);
+  assert(bodyRequests.every((id) => id === recent.id));
+  console.log("PASS recent bodies sync before open; all older rows remain body-free until opened");
   assert.equal(await page.locator("html").getAttribute("data-sent-replica-storage"), "opfs");
   const session = await page.locator("html").getAttribute("data-sent-replica-session");
   const start = requests.length;
@@ -109,6 +157,8 @@ try {
     return Boolean(body?.textContent?.trim()) && !body?.textContent?.includes("Loading message");
   });
   const text = await page.locator(".latest-message .email-body").innerText();
+  await page.waitForLoadState("networkidle");
+  assert((await page.evaluate(() => window.__replicaStats())).olderBodyCount > 0);
   assert(text.length > 20);
   assert(requests.some((path) => path === "/api/sync/bodies"));
   await context.setOffline(true);

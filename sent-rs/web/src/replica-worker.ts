@@ -40,11 +40,21 @@ async function dispatch(method: string, args: unknown[]) {
     case "list":
       return store.list(args[0] as Parameters<ReplicaStore["list"]>[0]);
     case "detail":
-      return store.detail(String(args[0]));
+      return store.detail(String(args[0]), Boolean(args[1]));
     case "thread":
-      return store.thread(String(args[0]), Boolean(args[1]));
+      return store.thread(String(args[0]), Boolean(args[1]), Boolean(args[2]));
     case "bodies":
-      return store.bodies(args[0] as ReplicaRow[]);
+      return store.bodies(
+        args[0] as ReplicaRow[],
+        args[1] !== false,
+        args[2] as string[] | undefined,
+      );
+    case "recent":
+      return store.recentBodies();
+    case "stats":
+      return store.storageStats();
+    case "opened":
+      return store.opened(args[0] as string[]);
     case "begin":
       return store.begin(String(args[0]), args[1] as ReplicaChange);
     case "settle":

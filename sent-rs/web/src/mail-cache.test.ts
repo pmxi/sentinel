@@ -22,6 +22,7 @@ const row = {
 const clients: QueryClient[] = [];
 function fixture() {
   vi.useFakeTimers();
+  vi.setSystemTime(new Date(row.receivedAt).getTime() + 3600000);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   clients.push(client);
   for (const key of [
@@ -226,41 +227,42 @@ describe("bounded prefetch", () => {
     client.clear();
     const body = headerData(row) as NonNullable<ReturnType<typeof headerData>>;
     const thread = vi.spyOn(sentApi, "thread").mockResolvedValue({ messages: [body] });
-    vi.spyOn(sentApi, "message").mockResolvedValue(
-      headerData(row) as NonNullable<ReturnType<typeof headerData>>,
-    );
+    const request = vi
+      .spyOn(sentApi, "message")
+      .mockResolvedValue(headerData(row) as NonNullable<ReturnType<typeof headerData>>);
     const queue = prefetchQueue(client, false);
     queue.add([{ ...row, id: "old", threadId: "old-thread" }]);
     queue.prioritize([row]);
     await vi.advanceTimersByTimeAsync(1);
-    expect(thread).toHaveBeenCalledWith("thread", false, expect.anything());
-    expect(thread).toHaveBeenCalledTimes(1);
+    expect(request).toHaveBeenCalledWith("one", expect.anything());
+    expect(request).toHaveBeenCalledTimes(1);
+    expect(thread).not.toHaveBeenCalled();
     queue.stop();
   });
   it("seeds header fields without fabricating a body", () => {
     expect(headerData(row)).toMatchObject({ id: "one", threadId: "thread", textBody: "" });
     expect(headerData()).toBeUndefined();
   });
-  it("deduplicates, caps background concurrency at one and seeds details from threads", async () => {
+  it("deduplicates and caps recent-message prefetch concurrency without fetching older thread bodies", async () => {
     const client = fixture();
     client.clear();
-    let resolve!: (value: Awaited<ReturnType<typeof sentApi.thread>>) => void;
-    const thread = vi.spyOn(sentApi, "thread").mockReturnValue(
+    let resolve!: (value: Awaited<ReturnType<typeof sentApi.message>>) => void;
+    const thread = vi.spyOn(sentApi, "thread");
+    const detail = vi.spyOn(sentApi, "message").mockReturnValue(
       new Promise((yes) => {
         resolve = yes;
-      }) as ReturnType<typeof sentApi.thread>,
+      }) as ReturnType<typeof sentApi.message>,
     );
     const body = headerData(row) as NonNullable<ReturnType<typeof headerData>>;
-    const detail = vi.spyOn(sentApi, "message").mockResolvedValue(body);
     const queue = prefetchQueue(client, false);
     queue.add([row, row, { ...row, id: "two", threadId: "other" }]);
     await vi.advanceTimersByTimeAsync(120);
-    expect(thread).toHaveBeenCalledTimes(1);
-    expect(detail).not.toHaveBeenCalled();
-    resolve({ messages: [body] });
+    expect(thread).not.toHaveBeenCalled();
+    expect(detail).toHaveBeenCalledTimes(1);
+    resolve(body);
     await vi.advanceTimersByTimeAsync(1);
     expect(client.getQueryData(["message", "one"])).toMatchObject({ id: "one" });
-    expect(detail).not.toHaveBeenCalled();
+    expect(detail).toHaveBeenCalledTimes(1);
     queue.stop();
   });
   it("swallows failed prefetch and can be disposed before it starts", async () => {
@@ -271,13 +273,28 @@ describe("bounded prefetch", () => {
     const queue = prefetchQueue(client, false);
     queue.add([row]);
     await vi.advanceTimersByTimeAsync(121);
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).not.toHaveBeenCalled();
     expect(detail).toHaveBeenCalledTimes(1);
     queue.stop();
     const stopped = prefetchQueue(client, false);
     stopped.add([row]);
     stopped.stop();
     await vi.advanceTimersByTimeAsync(200);
-    expect(request).toHaveBeenCalledTimes(1);
+    expect(request).not.toHaveBeenCalled();
+    expect(detail).toHaveBeenCalledTimes(1);
+  });
+  it("never downloads old bodies speculatively", async () => {
+    const client = fixture();
+    client.clear();
+    const detail = vi.spyOn(sentApi, "message"),
+      thread = vi.spyOn(sentApi, "thread"),
+      queue = prefetchQueue(client, false);
+    const old = { ...row, receivedAt: "2000-01-01T00:00:00Z" };
+    queue.add([old]);
+    queue.prioritize([old]);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(detail).not.toHaveBeenCalled();
+    expect(thread).not.toHaveBeenCalled();
+    queue.stop();
   });
 });

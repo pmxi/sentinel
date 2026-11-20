@@ -64,6 +64,8 @@ export class MailboxReplica {
   private channel?: BroadcastChannel;
   private persistent = false;
   private hydrated = createSignal(false);
+  private bodiesHydrated = createSignal(false);
+  private syncingBodies = false;
   private closing?: Promise<void>;
   constructor(
     private client: QueryClient,
@@ -209,7 +211,10 @@ export class MailboxReplica {
       )
         this.fail();
     } finally {
-      if (!this.closed) this.timer = setTimeout(() => void this.poll(), 4000);
+      if (!this.closed) {
+        void this.syncRecentBodies();
+        this.timer = setTimeout(() => void this.poll(), 4000);
+      }
     }
   }
   async list(params: URLSearchParams) {
@@ -220,6 +225,37 @@ export class MailboxReplica {
       limit: Number(params.get("limit") ?? 75),
     });
   }
+  private async syncRecentBodies() {
+    if (
+      this.syncingBodies ||
+      this.closed ||
+      !this.ready() ||
+      navigator.onLine === false ||
+      !this.verified() ||
+      !this.canPoll()
+    )
+      return;
+    this.syncingBodies = true;
+    try {
+      while (!this.closed && this.canPoll()) {
+        const ids = await this.call<string[]>("recent");
+        if (!ids.length) {
+          this.bodiesHydrated[1](true);
+          return;
+        }
+        this.bodiesHydrated[1](false);
+        await this.ensureBodies(ids, this.controller.signal, false);
+      }
+    } catch (error) {
+      if (!(error instanceof ApiError) && !(error instanceof TypeError) && !this.closed)
+        this.fail();
+    } finally {
+      this.syncingBodies = false;
+    }
+  }
+  opened(ids: string[]) {
+    if (ids.length && this.ready()) void this.call("opened", ids).catch(() => this.fail());
+  }
   private seed(key: QueryKey, rows: ReplicaDetail[], thread = false) {
     const messages = rows.map((row) => ({
       ...row.message,
@@ -227,7 +263,7 @@ export class MailboxReplica {
     }));
     this.client.setQueryData(key, thread ? { messages } : (messages[0] ?? null));
   }
-  private async ensureBodies(ids: string[], signal?: AbortSignal) {
+  private async ensureBodies(ids: string[], signal?: AbortSignal, opened = true) {
     const pending: Promise<void>[] = [],
       fresh = ids.filter((id) => !this.bodies.has(id));
     for (let index = 0; index < fresh.length; index += 16) {
@@ -235,9 +271,9 @@ export class MailboxReplica {
       const request = (async () => {
         const result = await api<{ messages: ReplicaRow[] }>(
           `/api/sync/bodies?ids=${batch.join(",")}`,
-          { signal, cache: "no-store" },
+          { signal, cache: "no-store", priority: opened ? "high" : "low" },
         );
-        await this.call("bodies", result.messages);
+        await this.call("bodies", result.messages, opened, batch);
       })();
       const tracked = request.finally(() => {
         for (const id of batch) this.bodies.delete(id);
@@ -252,12 +288,12 @@ export class MailboxReplica {
       }
     await Promise.all(pending);
   }
-  async message(id: string, signal?: AbortSignal): Promise<MessageDetail> {
-    let row = await this.call<ReplicaDetail | undefined>("detail", id);
+  async message(id: string, signal?: AbortSignal, prefetch = false): Promise<MessageDetail> {
+    let row = await this.call<ReplicaDetail | undefined>("detail", id, !prefetch);
     if (row?.hasBody) return row.message;
     if (row) this.seed(["message", id], [row]);
-    await this.ensureBodies([id], signal);
-    row = await this.call("detail", id);
+    await this.ensureBodies([id], signal, !prefetch);
+    row = await this.call("detail", id, !prefetch);
     if (row?.hasBody) return row.message;
     return sentApi.message(id, signal);
   }
@@ -266,13 +302,13 @@ export class MailboxReplica {
     trash: boolean,
     signal?: AbortSignal,
   ): Promise<{ messages: MessageDetail[] }> {
-    let rows = await this.call<ReplicaDetail[]>("thread", id, trash);
+    let rows = await this.call<ReplicaDetail[]>("thread", id, trash, true);
     if (!rows.length) return sentApi.thread(id, trash, signal);
     const missing = rows.filter((row) => !row.hasBody).map((row) => row.message.id);
     if (missing.length) {
       this.seed(["thread", id, trash], rows, true);
       await this.ensureBodies(missing, signal);
-      rows = await this.call("thread", id, trash);
+      rows = await this.call("thread", id, trash, true);
     }
     if (rows.some((row) => !row.hasBody)) return sentApi.thread(id, trash, signal);
     return { messages: rows.map((row) => row.message) };
@@ -337,6 +373,7 @@ export class MailboxReplica {
   status() {
     return {
       ready: this.ready() && this.hydrated[0](),
+      bodiesReady: this.bodiesHydrated[0](),
       persistent: this.persistent,
       session: this.id,
     };
@@ -387,11 +424,16 @@ export async function mailboxRead(
     }
   return sentApi.messages(params, signal);
 }
-export async function messageRead(client: QueryClient, id: string, signal?: AbortSignal) {
+export async function messageRead(
+  client: QueryClient,
+  id: string,
+  signal?: AbortSignal,
+  prefetch = false,
+) {
   const replica = replicas.get(client);
   if (replica?.ready())
     try {
-      return await replica.message(id, signal);
+      return await replica.message(id, signal, prefetch);
     } catch (error) {
       if (
         signal?.aborted ||

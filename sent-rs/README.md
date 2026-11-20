@@ -269,10 +269,20 @@ New authenticated endpoints, without changing existing endpoint JSON:
   commits from timestamp ordering, catch classification/outbox-only changes and
   detect hard-deleted records/accounts as well as tombstones. No PostgreSQL
   migration or shared TS schema change is needed.
-- `GET /api/sync/bodies?ids=...`: lazy body reads on open/prefetch, at most 16
+- `GET /api/sync/bodies?ids=...`: background recent-body and on-open older-body reads, at most 16
   messages and 256 KiB of combined body text per message. Oversized bodies use the
   existing network reader without persistence. Cached bodies are versioned and
-  evicted above a 32 MiB total budget.
+  retained for the recent window; older, opened bodies use a 32 MiB LRU budget.
+
+Every message's row stays local regardless of age. `RECENT_BODY_DAYS` in
+`web/src/replica-policy.ts` is the single 90-day cutoff setting. Eligible full
+bodies sync in low-priority background batches after the row snapshot is ready.
+Older bodies are fetched only on open, then cached. Recent-body prefetch never
+downloads an older conversation member speculatively. Unopened background bodies
+expire when they age out; explicitly opened bodies can remain in the older LRU.
+Attachments (file contents) and embeddings are never stored in SQLite. Attachment
+metadata/counts remain available for the existing UI. The original per-message
+256 KiB body limit still applies; larger messages retain the network reader path.
 
 Tradeoff: each delta scans the current header inventory on the server; it is not
 an indexed, durable event log. The server retains 16 bounded cursor generations,
