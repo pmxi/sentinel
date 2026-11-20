@@ -25,8 +25,18 @@ export function ReaderMenu(props: {
     const dismiss = (event: PointerEvent) => {
       if (event.target instanceof Node && !menu.contains(event.target)) menu.open = false;
     };
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !menu.open) return;
+      event.preventDefault();
+      menu.open = false;
+      trigger.focus();
+    };
     document.addEventListener("pointerdown", dismiss);
-    onCleanup(() => document.removeEventListener("pointerdown", dismiss));
+    document.addEventListener("keydown", dismissOnEscape);
+    onCleanup(() => {
+      document.removeEventListener("pointerdown", dismiss);
+      document.removeEventListener("keydown", dismissOnEscape);
+    });
   });
   return (
     <details

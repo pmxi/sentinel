@@ -49,18 +49,31 @@ describe("reader More actions", () => {
     expect(props.onTier).toHaveBeenCalledWith(3);
     expect(details.open).toBe(false);
   });
-  it("dismisses Escape without letting it close the conversation", () => {
-    const { details } = menu();
-    const back = vi.fn();
-    window.addEventListener("keydown", back);
-    cleanups.push(() => window.removeEventListener("keydown", back));
-    details.open = true;
-    const event = new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true });
-    (details.querySelector("summary") as HTMLElement).dispatchEvent(event);
-    expect(details.open).toBe(false);
-    expect(event.defaultPrevented).toBe(true);
-    expect(back).not.toHaveBeenCalled();
-  });
+  it.each(["summary", "body"])(
+    "dismisses Escape from %s without closing the conversation",
+    (target) => {
+      const { details } = menu();
+      const back = vi.fn();
+      const backShortcut = (event: KeyboardEvent) => {
+        if (!event.defaultPrevented) back();
+      };
+      window.addEventListener("keydown", backShortcut);
+      cleanups.push(() => window.removeEventListener("keydown", backShortcut));
+      details.open = true;
+      const event = new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      });
+      (target === "body"
+        ? document.body
+        : (details.querySelector("summary") as HTMLElement)
+      ).dispatchEvent(event);
+      expect(details.open).toBe(false);
+      expect(event.defaultPrevented).toBe(true);
+      expect(back).not.toHaveBeenCalled();
+    },
+  );
   it("dismisses when clicking outside or tabbing out", () => {
     const { details } = menu();
     details.open = true;

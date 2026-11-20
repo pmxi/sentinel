@@ -835,16 +835,35 @@ function Reader(props: {
       <Match when={readerLoading()}>
         {
           <section class="reader">
-            <div class="reader-skeleton" />
+            <header class="reader-toolbar">
+              <button
+                class="icon-button back-button"
+                aria-label="Back to mail"
+                title="Back to mail"
+                onClick={props.close}
+              >
+                <ChevronLeft size={20} aria-hidden="true" />
+              </button>
+            </header>
+            <div class="message-reader">
+              <div class="reader-skeleton" />
+            </div>
           </section>
         }
       </Match>
       <Match when={!message()}>
         {
           <section class="reader">
-            <button class="back-button" onClick={props.close}>
-              Back
-            </button>
+            <header class="reader-toolbar">
+              <button
+                class="icon-button back-button"
+                aria-label="Back to mail"
+                title="Back to mail"
+                onClick={props.close}
+              >
+                <ChevronLeft size={20} aria-hidden="true" />
+              </button>
+            </header>
             <div class="empty-list">Message unavailable.</div>
           </section>
         }
