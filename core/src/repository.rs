@@ -12,9 +12,17 @@ use std::collections::HashMap;
 #[derive(Clone)]
 pub struct Repository(pub SqlitePool);
 
+#[derive(Clone)]
 pub struct ReplicaInventory {
     pub messages: Vec<Value>,
     pub accounts: Vec<Value>,
+}
+
+pub struct ReplicaUpdate {
+    pub mark: (i64, i64),
+    pub full: bool,
+    pub ids: Vec<Uuid>,
+    pub inventory: ReplicaInventory,
 }
 
 #[derive(Default)]
@@ -322,22 +330,28 @@ impl Repository {
                 row.get::<String, _>("id"),
             )
         });
+        if !rows.is_empty() {
+            crate::live::notify_messages(&mut *tx, &[]).await?;
+        }
         tx.commit().await?;
         Ok(rows.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"accountId":r.get::<Uuid,_>("account_id"),"messageId":r.get::<Option<Uuid>,_>("message_id"),"action":r.get::<String,_>("action"),"payload":r.get::<Value,_>("payload")})).collect())
     }
 
     pub async fn record_send_attempt(&self, id: Uuid) -> Result<()> {
-        let result = sqlx::query("update mutation_outbox set payload=json_set(payload,'$.sendAttemptedAt',strftime('%Y-%m-%dT%H:%M:%f000Z','now')) where id=?1 and action='send' and status='processing' and json_extract(payload,'$.sendAttemptedAt') is null returning id").bind(id).execute(&self.0).await?;
+        let mut tx = self.0.begin().await?;
+        let result = sqlx::query("update mutation_outbox set payload=json_set(payload,'$.sendAttemptedAt',strftime('%Y-%m-%dT%H:%M:%f000Z','now')) where id=?1 and action='send' and status='processing' and json_extract(payload,'$.sendAttemptedAt') is null returning id").bind(id).execute(&mut *tx).await?;
         if result.rows_affected() != 1 {
             bail!("This send has already been attempted; automatic resend blocked");
         }
+        crate::live::notify_messages(&mut *tx, &[]).await?;
+        tx.commit().await?;
         Ok(())
     }
 
     pub async fn complete_mutation(&self, id: Uuid) -> Result<()> {
         let mut tx = self.0.begin_with("BEGIN IMMEDIATE").await?;
         sqlx::query("update mutation_outbox set status='complete',completed_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now'),last_error=null where id=?1").bind(id).execute(&mut *tx).await?;
-        crate::live::notify_changed(&mut *tx).await?;
+        crate::live::notify_mutation(&mut *tx, id).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -362,7 +376,7 @@ impl Repository {
                   .bind(payload).execute(&mut *tx).await?;
             }
         }
-        crate::live::notify_changed(&mut *tx).await?;
+        crate::live::notify_mutation(&mut *tx, id).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -375,13 +389,16 @@ impl Repository {
             .bind(id)
             .execute(&mut *tx)
             .await?;
-        crate::live::notify_changed(&mut *tx).await?;
+        crate::live::notify_messages(&mut *tx, &[id]).await?;
         tx.commit().await?;
         Ok(())
     }
 
     pub async fn heartbeat(&self, name: &str, metadata: Value) -> Result<()> {
-        sqlx::query("insert into worker_state(name,heartbeat_at,metadata) values(?1,strftime('%Y-%m-%dT%H:%M:%f000Z','now'),?2) on conflict(name) do update set heartbeat_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now'),metadata=excluded.metadata").bind(name).bind(metadata).execute(&self.0).await?;
+        let mut tx = self.0.begin().await?;
+        sqlx::query("insert into worker_state(name,heartbeat_at,metadata) values(?1,strftime('%Y-%m-%dT%H:%M:%f000Z','now'),?2) on conflict(name) do update set heartbeat_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now'),metadata=excluded.metadata").bind(name).bind(metadata).execute(&mut *tx).await?;
+        crate::live::notify_messages(&mut *tx, &[]).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -395,7 +412,7 @@ impl Repository {
         sqlx::query("insert into sync_cursors(account_id,cursor,backfill_complete,last_successful_at,updated_at) values(?1,?2,?3,strftime('%Y-%m-%dT%H:%M:%f000Z','now'),strftime('%Y-%m-%dT%H:%M:%f000Z','now')) on conflict(account_id) do update set cursor=excluded.cursor,backfill_complete=excluded.backfill_complete,last_successful_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now'),updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
             .bind(id).bind(cursor).bind(backfill_complete).execute(&mut *tx).await?;
         sqlx::query("update accounts set status='active',last_synced_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now'),last_error=null,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') where id=?1").bind(id).execute(&mut *tx).await?;
-        crate::live::notify_changed(&mut *tx).await?;
+        crate::live::notify_messages(&mut *tx, &[]).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -403,7 +420,7 @@ impl Repository {
     pub async fn fail_sync(&self, id: Uuid, error: &str, needs_reauth: bool) -> Result<()> {
         let mut tx = self.0.begin_with("BEGIN IMMEDIATE").await?;
         sqlx::query("update accounts set status=?2,last_error=?3,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') where id=?1").bind(id).bind(if needs_reauth {"needs_reauth"} else {"error"}).bind(error.chars().take(2000).collect::<String>()).execute(&mut *tx).await?;
-        crate::live::notify_changed(&mut *tx).await?;
+        crate::live::notify_messages(&mut *tx, &[]).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -515,6 +532,26 @@ impl Repository {
         bodies: bool,
         cache: &mut BodyVersionCache,
     ) -> Result<ReplicaInventory> {
+        let mut tx = self.0.begin().await?;
+        let inventory = self
+            .replica_inventory_on(&mut tx, ids, bodies, cache)
+            .await?;
+        tx.commit().await?;
+        Ok(inventory)
+    }
+
+    async fn replica_inventory_on(
+        &self,
+        connection: &mut sqlx::SqliteConnection,
+        ids: Option<&[Uuid]>,
+        bodies: bool,
+        cache: &mut BodyVersionCache,
+    ) -> Result<ReplicaInventory> {
+        let filter = if ids.is_some() {
+            "m.id in (select value from json_each(?1))"
+        } else {
+            "?1 is null"
+        };
         let fits = "length(cast(m.text_body as blob))+coalesce(length(cast(m.html_body as blob)),0)+coalesce(length(cast(c.plain_text as blob)),0)<=262144";
         let include = if bodies { fits } else { "false" };
         let selection = SELECT.replace(
@@ -535,12 +572,11 @@ impl Repository {
           from messages m join accounts a on a.id=m.account_id left join classifications c on c.message_id=m.id
           left join sent_body_revisions revisions on revisions.message_id=m.id
           left join cached_values cached on cached.key=m.id
-          where {VISIBLE} and (?1 is null or m.id in (select value from json_each(?1))) order by m.id");
-        let mut tx = self.0.begin().await?;
+          where {VISIBLE} and {filter} order by m.id");
         let mut rows = sqlx::query(&query)
             .bind(ids.map(|ids| json!(ids)))
             .bind(cache.parameters(ids))
-            .fetch(&mut *tx);
+            .fetch(&mut *connection);
         let mut versions = Vec::new();
         let mut messages = Vec::new();
         let mut computed = 0;
@@ -572,10 +608,9 @@ impl Repository {
             messages.push(value);
         }
         drop(rows);
-        let accounts = sqlx::query("select id,provider,email,display_name,status,last_synced_at from accounts order by created_at").fetch_all(&mut *tx).await?.iter().map(|row| json!({
+        let accounts = sqlx::query("select id,provider,email,display_name,status,last_synced_at from accounts order by created_at").fetch_all(&mut *connection).await?.iter().map(|row| json!({
             "id":row.get::<Uuid,_>("id"),"provider":row.get::<String,_>("provider"),"email":row.get::<String,_>("email"),"displayName":row.get::<String,_>("display_name"),"status":row.get::<String,_>("status"),"lastSyncedAt":date(row,"last_synced_at")
         })).collect();
-        tx.commit().await?;
         if ids.is_none() {
             cache.entries.clear();
         }
@@ -584,6 +619,52 @@ impl Repository {
             cache.remember(id, &revision, &version);
         }
         Ok(ReplicaInventory { messages, accounts })
+    }
+
+    pub async fn replica_update(
+        &self,
+        after: Option<(i64, i64)>,
+        cache: &mut BodyVersionCache,
+    ) -> Result<Option<ReplicaUpdate>> {
+        let mut tx = self.0.begin().await?;
+        let (latest, oldest): (i64, i64) = sqlx::query_as("select coalesce((select max(revision) from sent_live_changes),0),coalesce((select min(revision) from sent_live_changes),0)").fetch_one(&mut *tx).await?;
+        let legacy: i64 = sqlx::query_scalar("select revision from sent_live_signal where id=1")
+            .fetch_one(&mut *tx)
+            .await?;
+        let mark = (latest, legacy);
+        if after == Some(mark) {
+            tx.commit().await?;
+            return Ok(None);
+        }
+        let previous = after.map_or(0, |p| p.0);
+        let explicit: bool = sqlx::query_scalar(
+            "select exists(select 1 from sent_live_changes where revision>?1 and kind='full')",
+        )
+        .bind(previous)
+        .fetch_one(&mut *tx)
+        .await?;
+        let full = after
+            .is_none_or(|p| p.1 != legacy || p.0 > latest || (oldest > 0 && p.0 < oldest - 1))
+            || explicit;
+        let ids: Vec<Uuid> = if full {
+            vec![]
+        } else {
+            sqlx::query_scalar("select message_id from sent_live_changes where revision>?1 and message_id is not null union select id from messages where thread_id in (select thread_id from sent_live_changes where revision>?1 and kind='thread')")
+                .bind(previous).fetch_all(&mut *tx).await?
+        };
+        if full {
+            cache.clear();
+        }
+        let inventory = self
+            .replica_inventory_on(&mut tx, (!full).then_some(ids.as_slice()), false, cache)
+            .await?;
+        tx.commit().await?;
+        Ok(Some(ReplicaUpdate {
+            mark,
+            full,
+            ids,
+            inventory,
+        }))
     }
 
     pub async fn get_message(&self, id: Uuid) -> Result<Option<Value>> {
@@ -738,7 +819,7 @@ impl Repository {
             sqlx::query("insert into drafts(account_id,to_addresses,cc_addresses,bcc_addresses,subject,body,reply_to_message_id,forward_of_message_id,id) values(?1,?2,?3,?4,?5,?6,?7,?8,?9) returning *")
                 .bind(input.account_id).bind(json!(input.to)).bind(json!(input.cc)).bind(json!(input.bcc)).bind(input.subject).bind(input.body).bind(input.reply_to_message_id).bind(input.forward_of_message_id).bind(Uuid::new_v4()).fetch_one(&mut *tx).await?
         };
-        crate::live::notify_changed(&mut *tx).await?;
+        crate::live::notify_messages(&mut *tx, &[]).await?;
         tx.commit().await?;
         Ok(draft(&row))
     }
@@ -749,7 +830,7 @@ impl Repository {
             .bind(id)
             .execute(&mut *tx)
             .await?;
-        crate::live::notify_changed(&mut *tx).await?;
+        crate::live::notify_messages(&mut *tx, &[]).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -770,7 +851,7 @@ impl Repository {
             .execute(&mut *tx)
             .await?;
         }
-        crate::live::notify_changed(&mut *tx).await?;
+        crate::live::notify_messages(&mut *tx, &[id]).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -812,7 +893,7 @@ impl Repository {
         .bind(message_id)
         .execute(&mut *tx)
         .await?;
-        crate::live::notify_changed(&mut *tx).await?;
+        crate::live::notify_messages(&mut *tx, &[message_id]).await?;
         tx.commit().await?;
         Ok(id)
     }
@@ -875,7 +956,7 @@ impl Repository {
         if inserted == 0 {
             bail!("This action is already pending");
         }
-        crate::live::notify_changed(&mut *tx).await?;
+        crate::live::notify_threads(&mut *tx, &[thread_id]).await?;
         tx.commit().await?;
         Ok(group_id)
     }
@@ -900,7 +981,7 @@ impl Repository {
             .bind(draft_id)
             .execute(&mut *tx)
             .await?;
-        crate::live::notify_changed(&mut *tx).await?;
+        crate::live::notify_messages(&mut *tx, &[]).await?;
         tx.commit().await?;
         Ok(id)
     }
@@ -913,6 +994,9 @@ impl Repository {
         }
         let mut result = Value::Null;
         for row in rows {
+            if let Some(message) = row.get::<Option<Uuid>, _>("message_id") {
+                crate::live::notify_messages(&mut *tx, &[message]).await?;
+            }
             let action: String = row.get("action");
             let payload: Value = row.get("payload");
             if action == "send" {
@@ -941,7 +1025,7 @@ impl Repository {
                 .execute(&mut *tx)
                 .await?;
         }
-        crate::live::notify_changed(&mut *tx).await?;
+        crate::live::notify_messages(&mut *tx, &[]).await?;
         tx.commit().await?;
         Ok(result)
     }

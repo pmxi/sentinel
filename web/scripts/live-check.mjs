@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { createWriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { createServer as httpServer, request } from "node:http";
-import { createRequire } from "node:module";
+import { TestDatabase } from "./sqlite-test-db.mjs";
 import { createServer } from "node:net";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
@@ -17,13 +17,8 @@ const root = spawnSync("git", ["rev-parse", "--show-toplevel"], {
   encoding: "utf8",
 }).stdout.trim();
 const rust = root;
-const require = createRequire(join(root, "web/package.json"));
-const { Client } = require("pg");
-const database = process.env.SENT_TEST_DATABASE_URL;
-assert(database, "Set SENT_TEST_DATABASE_URL");
-const parsed = new URL(database);
-assert(["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname));
-assert(/^\/sent_test_[a-zA-Z0-9_]+$/.test(parsed.pathname));
+const database = process.env.SENT_TEST_DATABASE_PATH;
+const db = new TestDatabase(database);
 const output = join(homedir(), "live-check", String(Date.now()));
 await mkdir(output, { recursive: true });
 const reservation = createServer().listen(0, "127.0.0.1");
@@ -35,7 +30,7 @@ const url = `http://127.0.0.1:${port}`,
 const secret = "sent-live-local-test-session-secret-123";
 const env = {
   ...process.env,
-  DATABASE_URL: database,
+  SENT_DATABASE_PATH: database,
   SENT_FAKE_PROVIDERS: "true",
   OPENAI_API_KEY: "",
   SESSION_SECRET: secret,
@@ -61,7 +56,6 @@ const server = spawn(join(rust, "target/release/sent-server"), [], {
 });
 server.stdout.pipe(log);
 server.stderr.pipe(log);
-const db = new Client({ connectionString: database });
 await db.connect();
 const { id: account, email } = (await db.query("select id,email from accounts order by id limit 1"))
   .rows[0];
@@ -73,7 +67,7 @@ async function insert(prefix = "Live mail") {
   try {
     const date = (
       await db.query(
-        "select greatest(now(),max(received_at)+interval '1 second') as date from messages",
+        "select max(strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ',max(received_at),'+1 second')) as date from messages",
       )
     ).rows[0].date;
     await db.query(
@@ -97,7 +91,7 @@ async function insert(prefix = "Live mail") {
       "insert into classifications(message_id,model_tier,reasoning,model,prompt_version) values($1,1,'Live test','fake','fake')",
       [id],
     );
-    await db.query("select pg_notify('sent_mailbox_changed','changed')");
+    await db.signal([id]);
     await db.query("commit");
     return subject;
   } catch (error) {
@@ -205,7 +199,7 @@ try {
     1,
   );
   for (let index = 0; index < 3; index++)
-    await db.query("select pg_notify('sent_mailbox_changed','changed')");
+    await db.signal(subjects.map((subject) => subject.slice(-36)));
   await page.waitForLoadState("networkidle");
   for (const subject of subjects) assert.equal(await row(page, subject).count(), 1);
   console.log("PASS bursts coalesce and repeated notifications never duplicate rows");
@@ -269,14 +263,12 @@ try {
   await row(page, offline).waitFor({ state: "visible" });
   await page.waitForFunction(() => document.documentElement.dataset.sentLive === "ready");
   console.log("PASS offline/online reconnect catches missed changes");
-  const listeners = (
-    await db.query(
-      "select pid from pg_stat_activity where datname=current_database() and query like 'LISTEN%sent_mailbox_changed%'",
-    )
-  ).rows;
-  assert.equal(listeners.length, 1);
-  await db.query("select pg_terminate_backend($1)", [listeners[0].pid]);
-  await page.waitForFunction(() => document.documentElement.dataset.sentLive === "polling");
+  await db.query("alter table worker_state rename to worker_state_live_hold");
+  try {
+    await page.waitForFunction(() => document.documentElement.dataset.sentLive === "polling");
+  } finally {
+    await db.query("alter table worker_state_live_hold rename to worker_state");
+  }
   await page.waitForFunction(
     () => document.documentElement.dataset.sentLive === "ready",
     undefined,
@@ -284,15 +276,7 @@ try {
   );
   const recovered = await insert("Live listener recovered");
   await row(page, recovered).waitFor({ state: "visible" });
-  assert.equal(
-    (
-      await db.query(
-        "select count(*) from pg_stat_activity where datname=current_database() and query like 'LISTEN%sent_mailbox_changed%'",
-      )
-    ).rows[0].count,
-    "1",
-  );
-  console.log("PASS dedicated LISTEN connection recovers without restarting shared Postgres");
+  console.log("PASS dedicated data_version observer reconnects after a SQLite query failure");
   let deliverLogout;
   const released = new Promise((done) => {
     deliverLogout = done;

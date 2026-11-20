@@ -102,6 +102,7 @@ async fn coalesce(changed: &Notify) {
     changed.notified().await;
     tokio::time::sleep(Duration::from_millis(50)).await;
     let _ = tokio::time::timeout(Duration::ZERO, changed.notified()).await;
+    crate::app::trace_live("coalesced", json!({}));
 }
 
 pub async fn start(state: Arc<State>) -> Result<(), sqlx::Error> {
@@ -122,15 +123,24 @@ pub async fn start(state: Arc<State>) -> Result<(), sqlx::Error> {
             {
                 continue;
             }
-            match publisher.inventory(None, false).await {
-                Ok((inventory, _snapshot_guard)) => {
-                    let cursor = publisher.sync_feed.lock().unwrap().publish(&inventory);
-                    if publisher.live.available.load(Ordering::Acquire)
+            match publisher.refresh_feed().await {
+                Ok(_guard) => {
+                    let cursor = publisher
+                        .sync_feed
+                        .lock()
+                        .unwrap()
+                        .current_cursor()
+                        .expect("initialized");
+                    let same = matches!(&*publisher.live.updates.borrow(), Update::Changed { cursor: old, .. } if old == &cursor);
+                    if !same
+                        && publisher.live.available.load(Ordering::Acquire)
                         && publisher.live.updates.receiver_count() > 0
                     {
                         publisher.live.updates.send_replace(Update::Changed {
                             cursor,
-                            inventory: Arc::new(inventory),
+                            inventory: Arc::new(
+                                publisher.sync_feed.lock().unwrap().published_inventory(),
+                            ),
                         });
                     }
                 }
@@ -147,15 +157,25 @@ pub async fn start(state: Arc<State>) -> Result<(), sqlx::Error> {
             let result: Result<(),sqlx::Error> = async {
                 let mut listener = state.repository.0.acquire().await?;
                 let mut version: i64 = sqlx::query_scalar("pragma data_version").fetch_one(&mut *listener).await?;
+                let mut logged: i64 = sqlx::query_scalar("select coalesce(max(revision),0) from sent_live_changes").fetch_one(&mut *listener).await?;
                 state.clear_inventory_cache().await;
                 state.live.availability(true);
                 state.live.changed.notify_one();
                 backoff = 1;
                 let mut ticks = tokio::time::interval(Duration::from_millis(150));
+                let mut prune_ticks = 0u32;
                 loop {
                     ticks.tick().await;
-                    let current: i64 = sqlx::query_scalar("pragma data_version").fetch_one(&mut *listener).await?;
-                    let revocations: Vec<(String,i64)> = sqlx::query_as("select substr(name,17),cast(json_extract(metadata,'$.expires') as integer) from worker_state where name like 'session-revoked:%' and cast(json_extract(metadata,'$.expires') as integer)>cast(strftime('%s','now') as integer)").fetch_all(&mut *listener).await?;
+                    prune_ticks += 1;
+                    if prune_ticks == 400 {
+                        sqlx::query("delete from sent_live_changes where revision<(select coalesce(max(revision),0)-32768 from sent_live_changes)").execute(&mut *listener).await?;
+                        prune_ticks = 0;
+                    }
+                    let mut check = sqlx::Connection::begin(&mut *listener).await?;
+                    let current: i64 = sqlx::query_scalar("pragma data_version").fetch_one(&mut *check).await?;
+                    let revision: i64 = sqlx::query_scalar("select coalesce(max(revision),0) from sent_live_changes").fetch_one(&mut *check).await?;
+                    let revocations: Vec<(String,i64)> = sqlx::query_as("select substr(name,17),cast(json_extract(metadata,'$.expires') as integer) from worker_state where name like 'session-revoked:%' and cast(json_extract(metadata,'$.expires') as integer)>cast(strftime('%s','now') as integer)").fetch_all(&mut *check).await?;
+                    check.commit().await?;
                     for (key, expires) in revocations {
                         let known = state.live.revoked.lock().unwrap().contains_key(&key);
                         if !known {
@@ -163,6 +183,11 @@ pub async fn start(state: Arc<State>) -> Result<(), sqlx::Error> {
                         }
                     }
                     if current != version {
+                        crate::app::trace_live("data_changed", json!({}));
+                        if revision == logged {
+                            state.clear_inventory_cache().await;
+                        }
+                        logged = revision;
                         version = current;
                         state.live.changed.notify_one();
                     }
@@ -242,6 +267,7 @@ async fn send(socket: &mut WebSocket, value: Value) -> bool {
     send_text(socket, value.to_string()).await
 }
 async fn send_update(socket: &mut WebSocket, value: String, revision: u64) -> bool {
+    crate::app::trace_live("socket_send", json!({"bytes":value.len()}));
     let Ok(mut value) = serde_json::from_str::<Value>(&value) else {
         return false;
     };

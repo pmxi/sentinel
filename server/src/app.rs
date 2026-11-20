@@ -40,6 +40,18 @@ pub struct State {
     pub(crate) sync_feed: Mutex<crate::sync::Feed>,
     pub(crate) live: crate::live::Hub,
     inventory_cache: tokio::sync::Mutex<sent_core::repository::BodyVersionCache>,
+    feed_revision: tokio::sync::Mutex<Option<(i64, i64)>>,
+}
+
+pub(crate) fn trace_live(event: &str, detail: Value) {
+    if std::env::var_os("SENT_TRACE_LIVE").is_some() {
+        eprintln!(
+            "LIVE_TRACE {} {} {}",
+            Utc::now().timestamp_micros(),
+            event,
+            detail
+        );
+    }
 }
 
 impl State {
@@ -54,6 +66,7 @@ impl State {
             sync_feed: Mutex::new(crate::sync::Feed::default()),
             live: crate::live::Hub::default(),
             inventory_cache: tokio::sync::Mutex::default(),
+            feed_revision: tokio::sync::Mutex::default(),
         }
     }
     pub(crate) fn secret(&self) -> &str {
@@ -85,7 +98,36 @@ impl State {
         Ok((inventory, cache))
     }
     pub(crate) async fn clear_inventory_cache(&self) {
+        let mut revision = self.feed_revision.lock().await;
         self.inventory_cache.lock().await.clear();
+        *revision = None;
+    }
+    pub(crate) async fn refresh_feed(
+        &self,
+    ) -> anyhow::Result<tokio::sync::MutexGuard<'_, Option<(i64, i64)>>> {
+        let mut revision = self.feed_revision.lock().await;
+        let mut cache = self.inventory_cache.lock().await;
+        let started = Instant::now();
+        trace_live("inventory_begin", json!({}));
+        if let Some(update) = self
+            .repository
+            .replica_update(*revision, &mut cache)
+            .await?
+        {
+            trace_live(
+                "inventory_ready",
+                json!({"full":update.full,"ids":update.ids.len(),"rows":update.inventory.messages.len(),"bodyHashes":cache.computed(),"ms":started.elapsed().as_secs_f64()*1000.0}),
+            );
+            let mark = update.mark;
+            let started = Instant::now();
+            self.sync_feed.lock().unwrap().apply(update);
+            trace_live(
+                "feed_ready",
+                json!({"ms":started.elapsed().as_secs_f64()*1000.0}),
+            );
+            *revision = Some(mark);
+        }
+        Ok(revision)
     }
     fn cookie(&self, token: Option<&str>) -> String {
         let secure = if self.config.public_url.starts_with("https:") {

@@ -101,11 +101,14 @@ impl Repository {
     }
 
     pub async fn update_credentials(&self, id: Uuid, encrypted: &str) -> Result<()> {
+        let mut tx = self.0.begin().await?;
         sqlx::query("update accounts set encrypted_credentials=?2,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') where id=?1")
             .bind(id)
             .bind(encrypted)
-            .execute(&self.0)
+            .execute(&mut *tx)
             .await?;
+        crate::live::notify_messages(&mut *tx, &[]).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -148,7 +151,7 @@ impl Repository {
             r.get::<String, _>("subject") != message.subject
                 || r.get::<String, _>("text_body") != message.text_body
         });
-        crate::live::notify_changed(&mut *tx).await?;
+        crate::live::notify_messages(&mut *tx, &[id]).await?;
         tx.commit().await?;
         Ok((id, changed))
     }
@@ -157,7 +160,7 @@ impl Repository {
         if !ids.is_empty() {
             let mut tx = self.0.begin_with("BEGIN IMMEDIATE").await?;
             sqlx::query("update messages set tombstone=true,deleted=true,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') where account_id=?1 and provider_message_id in (select value from json_each(?2))").bind(account_id).bind(json!(ids)).execute(&mut *tx).await?;
-            crate::live::notify_changed(&mut *tx).await?;
+            crate::live::notify_provider_messages(&mut *tx, account_id, ids).await?;
             tx.commit().await?;
         }
         Ok(())
@@ -181,7 +184,7 @@ impl Repository {
         let mut tx = self.0.begin_with("BEGIN IMMEDIATE").await?;
         sqlx::query("insert into classification_failures(message_id,last_error) values(?1,?2) on conflict(message_id) do update set attempts=classification_failures.attempts+1,last_error=excluded.last_error,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
             .bind(id).bind(error.chars().take(2000).collect::<String>()).execute(&mut *tx).await?;
-        crate::live::notify_changed(&mut *tx).await?;
+        crate::live::notify_messages(&mut *tx, &[id]).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -196,7 +199,7 @@ impl Repository {
         let mut tx = self.0.begin_with("BEGIN IMMEDIATE").await?;
         sqlx::query("insert into embeddings(message_id,embedding,model,content_hash) values(?1,?2,?3,?4) on conflict(message_id) do update set embedding=excluded.embedding,model=excluded.model,content_hash=excluded.content_hash,created_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
             .bind(id).bind(crate::db::embedding_blob(embedding)?).bind(model).bind(hash).execute(&mut *tx).await?;
-        crate::live::notify_changed(&mut *tx).await?;
+        crate::live::notify_messages(&mut *tx, &[id]).await?;
         tx.commit().await?;
         Ok(())
     }
