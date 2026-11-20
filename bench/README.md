@@ -156,9 +156,12 @@ Override any of these flat JSON fields; unknown fields and empty values are erro
 
 `rowSubject` is relative to each row; other selectors are document-relative.
 Subjects are trimmed and leading Re/Fw/Fwd prefixes stripped. Subjects must uniquely
-identify visible conversations; next-row subjects must differ. The list must expose
-enough rows for the varied index (up to 50), remain visible with the reader open,
-and keyboard navigation must follow list order. Body must contain nonempty text,
+identify visible conversations; next-row subjects must differ. The list must remain
+visible with the reader open, and keyboard navigation must follow list order.
+Virtual lists expose zero-based `data-index` attributes on rows. Untimed setup
+scrolls `.message-list` until the target row (and its neighbor for `next_email`)
+exists and is visible; non-virtual lists retain their normal DOM order. No setup
+is added to the timed region. Body must contain nonempty text,
 or a readable same-origin iframe containing text. Search is submit-on-Enter, not
 live-as-you-type; first matching row must contain the submitted term. Loading
 placeholders must not match the row/body selectors. Keys are Playwright key strings;
