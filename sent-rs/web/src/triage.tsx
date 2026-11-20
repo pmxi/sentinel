@@ -1,5 +1,5 @@
 import type { MutationReceipt } from "@sent/shared";
-import { useQueryClient } from "@tanstack/solid-query";
+import { createMutation, useQueryClient } from "@tanstack/solid-query";
 import { Archive, Check, Trash2, X } from "lucide-solid";
 import {
   createContext,
@@ -12,6 +12,7 @@ import {
   useContext,
 } from "solid-js";
 import { sentApi } from "./api";
+import { optimistic } from "./mail-cache";
 
 type Notice = {
   id: string;
@@ -21,6 +22,7 @@ type Notice = {
   receipt?: MutationReceipt;
   onUndo?: () => void;
   error?: boolean;
+  transaction?: ReturnType<typeof optimistic>;
 };
 type TriageContextValue = {
   hiddenThreadIds: Set<string>;
@@ -53,7 +55,49 @@ export function TriageProvider(props: { children: JSX.Element }) {
   const remove = (id: string) => setNotices((items) => items.filter((item) => item.id !== id));
   const update = (id: string, changes: Partial<Notice>) =>
     setNotices((items) => items.map((item) => (item.id === id ? { ...item, ...changes } : item)));
-  const perform: TriageContextValue["perform"] = async (
+  type Input = {
+    id: string;
+    threadId: string;
+    action: "archive" | "delete";
+    view: string;
+    accountId?: string;
+    restore(): void;
+    transaction?: ReturnType<typeof optimistic>;
+    request?: ReturnType<typeof sentApi.threadAction>;
+  };
+  const prepare = (input: Input) => {
+    input.transaction ??= optimistic(client, {
+      threadId: input.threadId,
+      action: input.action,
+      view: input.view,
+      accountId: input.accountId,
+    });
+    update(input.id, { transaction: input.transaction });
+    return input.transaction;
+  };
+  const mutation = createMutation(() => ({
+    mutationFn: (input: Input) =>
+      input.request ??
+      sentApi.threadAction(input.threadId, input.action, input.view, input.accountId),
+    onMutate: prepare,
+    onSuccess: (receipt, input, transaction) => {
+      transaction?.commit(receipt);
+      update(input.id, {
+        receipt,
+        label: input.action === "archive" ? "Archived" : "Moved to Trash",
+      });
+    },
+    onError: (error, input, transaction) => {
+      transaction?.rollback();
+      update(input.id, {
+        threadId: undefined,
+        error: true,
+        label: error instanceof Error ? error.message : "Action failed",
+      });
+      input.restore();
+    },
+  }));
+  const perform: TriageContextValue["perform"] = (
     threadId,
     action,
     advance,
@@ -73,20 +117,11 @@ export function TriageProvider(props: { children: JSX.Element }) {
         onUndo: restore,
       },
     ]);
+    const input: Input = { id, threadId, action, view, accountId, restore };
+    prepare(input);
     advance();
-    try {
-      const receipt = await sentApi.threadAction(threadId, action, view, accountId);
-      update(id, { receipt, label: action === "archive" ? "Archived" : "Moved to Trash" });
-      void refresh();
-    } catch (error) {
-      update(id, {
-        threadId: undefined,
-        error: true,
-        label: error instanceof Error ? error.message : "Action failed",
-      });
-      restore();
-      void refresh();
-    }
+    input.request = sentApi.threadAction(threadId, action, view, accountId);
+    mutation.mutate(input);
   };
   const sent: TriageContextValue["sent"] = (receipt, onUndo) => {
     setNotices((items) => [
@@ -97,8 +132,9 @@ export function TriageProvider(props: { children: JSX.Element }) {
   const undo = async (notice: Notice) => {
     if (!notice.receipt) return;
     try {
-      await sentApi.undo(notice.receipt.mutationId);
-      await refresh();
+      const response = await sentApi.undo(notice.receipt.mutationId);
+      if (notice.transaction) notice.transaction.rollback(response);
+      else await refresh();
       remove(notice.id);
       notice.onUndo?.();
     } catch (error) {
@@ -131,7 +167,7 @@ export function TriageProvider(props: { children: JSX.Element }) {
                 undo={() => undo(notice)}
                 dismiss={() => remove(notice.id)}
                 expire={async () => {
-                  await refresh();
+                  if (!notice.transaction) await refresh();
                   remove(notice.id);
                 }}
               />

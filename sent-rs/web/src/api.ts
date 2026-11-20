@@ -16,6 +16,15 @@ export class ApiError extends Error {
   }
 }
 
+export type MessagePatch = Pick<
+  MessageDetail,
+  "id" | "threadId" | "read" | "flagged" | "tier" | "modelTier" | "reasoning" | "syncPending"
+> & { archived: boolean; deleted: boolean; classified: boolean };
+export type CacheResponse = { patches?: MessagePatch[] };
+export type CachedMessage = MessageDetail &
+  Partial<Pick<MessagePatch, "archived" | "deleted" | "classified">>;
+const cacheHeaders = { "x-sent-cache": "1" };
+
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.method && !["GET", "HEAD"].includes(init.method)) headers.set("x-sent-request", "1");
@@ -39,24 +48,34 @@ export const sentApi = {
   logout: () => api<{ ok: true }>("/api/auth/logout", { method: "POST" }),
   accounts: () => api<{ accounts: Account[] }>("/api/accounts"),
   messages: (query: URLSearchParams) => api<MessageListResponse>(`/api/messages?${query}`),
-  message: (id: string) => api<MessageDetail>(`/api/messages/${id}`),
-  thread: (id: string, trash = false) =>
-    api<{ messages: MessageDetail[] }>(`/api/threads/${id}?trash=${trash}`),
+  message: (id: string, signal?: AbortSignal) =>
+    api<CachedMessage>(`/api/messages/${id}`, { signal, headers: cacheHeaders }),
+  thread: (id: string, trash = false, signal?: AbortSignal) =>
+    api<{ messages: CachedMessage[] }>(`/api/threads/${id}?trash=${trash}`, {
+      signal,
+      headers: cacheHeaders,
+    }),
   action: (id: string, action: string, undoable = false) =>
-    api<import("@sent/shared").MutationReceipt>(`/api/messages/${id}/action`, {
+    api<import("@sent/shared").MutationReceipt & CacheResponse>(`/api/messages/${id}/action`, {
       method: "POST",
+      headers: cacheHeaders,
       body: JSON.stringify({ action, undoable }),
     }),
   threadAction: (id: string, action: "archive" | "delete", view: string, accountId?: string) =>
-    api<import("@sent/shared").MutationReceipt>(`/api/threads/${id}/action`, {
+    api<import("@sent/shared").MutationReceipt & CacheResponse>(`/api/threads/${id}/action`, {
       method: "POST",
+      headers: cacheHeaders,
       body: JSON.stringify({ action, view, accountId, undoable: true }),
     }),
   undo: (id: string) =>
-    api<{ draft: Draft | null }>(`/api/mutations/${id}/undo`, { method: "POST" }),
+    api<{ draft: Draft | null } & CacheResponse>(`/api/mutations/${id}/undo`, {
+      method: "POST",
+      headers: cacheHeaders,
+    }),
   tier: (id: string, tier: Tier | null) =>
-    api<{ ok: true }>(`/api/messages/${id}/tier`, {
+    api<{ ok: true } & CacheResponse>(`/api/messages/${id}/tier`, {
       method: "PUT",
+      headers: cacheHeaders,
       body: JSON.stringify({ tier }),
     }),
   search: (query: URLSearchParams) => api<SearchResponse>(`/api/search?${query}`),

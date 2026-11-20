@@ -160,6 +160,16 @@ fn detail(row: &PgRow) -> Value {
     value
 }
 
+fn cached_detail(row: &PgRow, state: bool) -> Value {
+    let mut value = detail(row);
+    if state {
+        value["archived"] = json!(row.get::<bool, _>("archived"));
+        value["deleted"] = json!(row.get::<bool, _>("deleted"));
+        value["classified"] = json!(row.get::<bool, _>("classified"));
+    }
+    value
+}
+
 fn conversation(row: &PgRow) -> Value {
     let mut value = summary(row);
     let unread: i32 = row.get("unread_count");
@@ -332,20 +342,28 @@ impl Repository {
     }
 
     pub async fn get_message(&self, id: Uuid) -> Result<Option<Value>> {
+        self.get_message_with_state(id, false).await
+    }
+
+    pub async fn get_message_with_state(&self, id: Uuid, state: bool) -> Result<Option<Value>> {
         let sql = format!(
-            "select {SELECT},m.to_addresses,m.cc_addresses,m.bcc_addresses,m.sent_at,m.text_body,m.html_body,m.internet_message_id from messages m join accounts a on a.id=m.account_id left join classifications c on c.message_id=m.id where m.id=$1 and not m.tombstone"
+            "select {SELECT},m.archived,m.deleted,c.message_id is not null classified,m.to_addresses,m.cc_addresses,m.bcc_addresses,m.sent_at,m.text_body,m.html_body,m.internet_message_id from messages m join accounts a on a.id=m.account_id left join classifications c on c.message_id=m.id where m.id=$1 and not m.tombstone"
         );
         Ok(sqlx::query(&sql)
             .bind(id)
             .fetch_optional(&self.0)
             .await?
             .as_ref()
-            .map(detail))
+            .map(|row| cached_detail(row, state)))
     }
 
     pub async fn get_thread(&self, id: Uuid, trash: bool) -> Result<Value> {
+        self.get_thread_with_state(id, trash, false).await
+    }
+
+    pub async fn get_thread_with_state(&self, id: Uuid, trash: bool, state: bool) -> Result<Value> {
         let sql = format!(
-            "select {SELECT},m.to_addresses,m.cc_addresses,m.bcc_addresses,m.sent_at,m.text_body,m.html_body,m.internet_message_id from messages m join accounts a on a.id=m.account_id left join classifications c on c.message_id=m.id where m.thread_id=$1 and not m.tombstone and m.deleted=$2 order by m.received_at,m.id"
+            "select {SELECT},m.archived,m.deleted,c.message_id is not null classified,m.to_addresses,m.cc_addresses,m.bcc_addresses,m.sent_at,m.text_body,m.html_body,m.internet_message_id from messages m join accounts a on a.id=m.account_id left join classifications c on c.message_id=m.id where m.thread_id=$1 and not m.tombstone and m.deleted=$2 order by m.received_at,m.id"
         );
         Ok(json!(
             sqlx::query(&sql)
@@ -354,9 +372,25 @@ impl Repository {
                 .fetch_all(&self.0)
                 .await?
                 .iter()
-                .map(detail)
+                .map(|row| cached_detail(row, state))
                 .collect::<Vec<_>>()
         ))
+    }
+
+    pub async fn mutation_message_ids(&self, id: Uuid) -> Result<Vec<Uuid>> {
+        Ok(sqlx::query_scalar("select message_id from mutation_outbox where (id=$1 or payload->>'groupId'=$1::text) and message_id is not null")
+            .bind(id).fetch_all(&self.0).await?)
+    }
+
+    pub async fn message_states(&self, ids: &[Uuid]) -> Result<Value> {
+        let rows = sqlx::query("select m.id,m.thread_id,m.read,m.flagged,m.archived,m.deleted,c.message_id is not null classified,c.model_tier,c.manual_tier,c.model,c.reasoning,exists(select 1 from mutation_outbox o where o.message_id=m.id and o.status in ('pending','processing')) sync_pending from messages m left join classifications c on c.message_id=m.id where m.id=any($1) and not m.tombstone")
+            .bind(ids).fetch_all(&self.0).await?;
+        Ok(json!(rows.iter().map(|row| {
+            let model: Option<i32> = row.get("model_tier");
+            let manual: Option<i32> = row.get("manual_tier");
+            let manual_only = row.get::<Option<String>, _>("model").as_deref() == Some("manual");
+            json!({"id":row.get::<Uuid,_>("id"),"threadId":row.get::<Uuid,_>("thread_id"),"read":row.get::<bool,_>("read"),"flagged":row.get::<bool,_>("flagged"),"archived":row.get::<bool,_>("archived"),"deleted":row.get::<bool,_>("deleted"),"classified":row.get::<bool,_>("classified"),"tier":manual.or(model),"modelTier":if manual_only {None}else{model},"reasoning":row.get::<Option<String>,_>("reasoning"),"syncPending":row.get::<bool,_>("sync_pending")})
+        }).collect::<Vec<_>>()))
     }
 
     pub async fn search(&self, input: &SearchInput, embedding: Option<Vec<f64>>) -> Result<Value> {
@@ -396,7 +430,7 @@ impl Repository {
         } else {
             query
         };
-        let rows = query.fetch_all(&self.0).await?;
+        let rows = query.persistent(false).fetch_all(&self.0).await?;
         Ok(
             json!({"messages":rows.iter().map(conversation).collect::<Vec<_>>(),"mode":if embedding.is_some(){"hybrid"}else{"lexical"}}),
         )
