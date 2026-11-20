@@ -19,9 +19,11 @@ use uuid::Uuid;
 #[derive(Default)]
 pub struct Feed {
     generations: VecDeque<Generation>,
+    sequence: u64,
 }
 struct Generation {
     id: Uuid,
+    sequence: u64,
     touched: Instant,
     hashes: Arc<HashMap<String, String>>,
     snapshot: Option<Arc<Vec<Value>>>,
@@ -122,8 +124,10 @@ impl Feed {
         snapshot: Option<Arc<Vec<Value>>>,
     ) -> Uuid {
         let id = Uuid::new_v4();
+        self.sequence += 1;
         self.generations.push_back(Generation {
             id,
+            sequence: self.sequence,
             touched: Instant::now(),
             hashes,
             snapshot,
@@ -171,14 +175,16 @@ impl Feed {
     ) -> Result<String, ()> {
         let before = self
             .find(decode(from, false).map_err(|_| ())?.generation)
-            .map_err(|_| ())?
-            .hashes
-            .clone();
+            .map_err(|_| ())?;
+        let sequence = before.sequence;
+        let before = before.hashes.clone();
         let current = self
             .find(decode(to, false).map_err(|_| ())?.generation)
-            .map_err(|_| ())?
-            .hashes
-            .clone();
+            .map_err(|_| ())?;
+        if current.sequence < sequence {
+            return Err(());
+        }
+        let current = current.hashes.clone();
         let upserts: Vec<_> = inventory
             .messages
             .iter()
@@ -264,11 +270,12 @@ impl Feed {
             .collect();
         deletions.sort();
         let accounts = inventory.accounts.clone();
-        let id = if upserts.is_empty() && deletions.is_empty() {
-            cursor.generation
+        let hashes = if upserts.is_empty() && deletions.is_empty() {
+            before
         } else {
-            self.insert(inventory, false)
+            Arc::new(current)
         };
+        let id = self.record(hashes, inventory.accounts, None);
         Ok(
             json!({"upserts":upserts,"deletions":deletions,"accounts":accounts,"cursor":encode(id,None)}),
         )
@@ -413,6 +420,47 @@ mod tests {
         assert!(feed.live_delta("invalid", &to, &changed).is_err());
     }
     #[test]
+    fn a_stale_live_snapshot_cannot_undo_a_newer_http_sync() {
+        let mut feed = Feed::default();
+        let old = inventory(vec![]);
+        let published = feed.publish(&old);
+        let current = inventory(vec![row("new-mail", false)]);
+        let http = feed
+            .delta(
+                decode(&published, false).unwrap_or_else(|_| panic!()),
+                inventory(vec![row("new-mail", false)]),
+            )
+            .unwrap_or_else(|_| panic!());
+        let cursor = http["cursor"].as_str().unwrap();
+        assert!(
+            feed.live_delta(cursor, &published, &old).is_err(),
+            "A matching from cursor must not permit deleting newly HTTP-synced mail"
+        );
+        assert!(feed.live_delta(&published, cursor, &current).is_ok());
+    }
+    #[test]
+    fn an_unchanged_http_observation_also_supersedes_stale_live_frames() {
+        let mut feed = Feed::default();
+        let first = feed.publish(&inventory(vec![row("new-mail", false)]));
+        let stale = feed.publish(&inventory(vec![]));
+        let http = feed
+            .delta(
+                decode(&first, false).unwrap_or_else(|_| panic!()),
+                inventory(vec![row("new-mail", false)]),
+            )
+            .unwrap_or_else(|_| panic!());
+        let cursor = http["cursor"].as_str().unwrap();
+        assert!(http["upserts"].as_array().unwrap().is_empty());
+        assert!(http["deletions"].as_array().unwrap().is_empty());
+        assert_ne!(
+            cursor, first,
+            "Even a no-op HTTP read must reject previously sent live frames"
+        );
+        assert!(feed.live_delta(cursor, &stale, &inventory(vec![])).is_err());
+        let next = feed.publish(&inventory(vec![]));
+        assert!(feed.live_delta(cursor, &next, &inventory(vec![])).is_ok());
+    }
+    #[test]
     fn large_deltas_fall_back_to_hints_before_allocating_unbounded_frames() {
         let mut feed = Feed::default();
         let first = feed.insert(inventory(vec![]), true);
@@ -490,7 +538,7 @@ mod tests {
                 inventory(vec![]),
             )
             .unwrap_or_else(|_| panic!());
-        assert_eq!(delta["cursor"], page["cursor"]);
+        assert_ne!(delta["cursor"], page["cursor"]);
         assert_eq!(delta["upserts"], json!([]));
         assert!(decode("bad", false).is_err());
         assert!(feed.find(Uuid::new_v4()).is_err());

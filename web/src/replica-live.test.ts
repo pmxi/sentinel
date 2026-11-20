@@ -1,4 +1,5 @@
 import { QueryClient } from "@tanstack/solid-query";
+import { createEffect, createRoot } from "solid-js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./api";
 import { MailboxReplica } from "./replica";
@@ -62,6 +63,37 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 describe("replica live synchronization", () => {
+  it("re-announces the current cursor reactively after every HTTP sync", async () => {
+    const { replica, worker } = await setup();
+    const cursors: (string | undefined)[] = [];
+    let stop!: () => void;
+    createRoot((dispose) => {
+      stop = dispose;
+      createEffect(() => {
+        cursors.push(replica.syncCursor());
+      });
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(cursors).toEqual(["base"]);
+      vi.mocked(api).mockResolvedValue({ ...empty("http-new"), upserts: [row("new-mail")] });
+      replica.wake();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(cursors).toEqual(["base", "http-new"]);
+      vi.mocked(api).mockResolvedValue(empty("http-verified"));
+      replica.wake();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(cursors).toEqual(["base", "http-new", "http-verified"]);
+      await replica.receiveLive({
+        from: "http-new",
+        delta: { ...empty("stale-socket"), deletions: ["new-mail"] },
+      });
+      expect(replica.syncCursor()).toBe("http-verified");
+      expect([...worker.rows.keys()]).toEqual(["new-mail"]);
+    } finally {
+      stop();
+    }
+  });
   it("applies matching deltas and refreshes caches without a delta request, with no duplicate rows", async () => {
     const { client, replica, worker } = await setup();
     const delta = { ...empty("pushed"), upserts: [row("new")] };

@@ -323,10 +323,8 @@ async fn serve(mut socket: WebSocket, state: Arc<State>, session: auth::Session)
                                 let update = updates.borrow().clone();
                                 if let Update::Changed { cursor: target, inventory } = update {
                                     let value = update_frame(&mut state.sync_feed.lock().unwrap(), cursor.as_deref(), &target, &inventory, true);
-                                    if let Some(value) = value {
-                                        if !send_text(&mut socket, value).await { return; }
-                                        cursor = Some(target);
-                                    }
+                                    if let Some(value) = value
+                                        && !send_text(&mut socket, value).await { return; }
                                 }
                             }
                             Some("pong") => {}
@@ -347,10 +345,8 @@ async fn serve(mut socket: WebSocket, state: Arc<State>, session: auth::Session)
                     Update::Changed { cursor: target, inventory } => {
                         let value = update_frame(&mut state.sync_feed.lock().unwrap(), cursor.as_deref(), &target, &inventory, false);
                         drop(inventory);
-                        if let Some(value) = value {
-                            if !send_text(&mut socket, value).await { return; }
-                            if cursor.is_some() { cursor = Some(target); }
-                        }
+                        if let Some(value) = value
+                            && !send_text(&mut socket, value).await { return; }
                     }
                     _ => {}
                 }

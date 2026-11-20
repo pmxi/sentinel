@@ -87,7 +87,13 @@ export class MailboxReplica {
   private timer?: ReturnType<typeof setTimeout>;
   private startup?: ReturnType<typeof setTimeout>;
   private controller = new AbortController();
-  private cursor?: string;
+  private cursorState = createSignal<string>();
+  private get cursor() {
+    return this.cursorState[0]();
+  }
+  private set cursor(value: string | undefined) {
+    this.cursorState[1](value);
+  }
   private revision = 0;
   private bodies = new Map<string, Promise<void>>();
   private channel?: BroadcastChannel;
