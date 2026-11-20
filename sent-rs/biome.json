@@ -1,0 +1,7 @@
+{
+  "root": false,
+  "extends": ["../biome.json"],
+  "files": {
+    "includes": ["!**/target", "!**/parity-logs"]
+  }
+}
