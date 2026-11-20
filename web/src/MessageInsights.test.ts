@@ -70,10 +70,11 @@ describe("AI insights", () => {
     expect(html).not.toContain("Why Updates");
   });
 
-  it("shows full summary and expanded reasoning at the top of the reader", () => {
+  it("shows an on-demand summary without an AI badge or expanded reasoning", () => {
     const html = renderToStaticMarkup(createElement(ReaderInsights, { message }));
-    expect(html).toContain('aria-label="AI insights"');
-    expect(html).toContain('open=""');
+    expect(html).toContain('aria-label="Message summary"');
+    expect(html).not.toContain('open=""');
+    expect(html).not.toContain("AI insights");
     expect(html).toContain(message.aiSummary);
     expect(html).toContain(message.reasoning);
   });

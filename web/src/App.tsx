@@ -247,7 +247,13 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
       keys: ["/"],
       run: () => {
         setMenuOpen(false);
-        searchInput.current?.focus();
+        // The phone reader has its own toolbar; reveal search before focusing it.
+        if (
+          window.matchMedia("(max-width: 700px)").matches &&
+          new URLSearchParams(location.search).has("message")
+        )
+          navigate("/search");
+        queueMicrotask(() => searchInput.current?.focus());
       },
     },
     ...(
