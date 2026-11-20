@@ -2120,7 +2120,6 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tokio",
- "uuid",
 ]
 
 [[package]]
@@ -2159,7 +2158,6 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
- "uuid",
 ]
 
 [[package]]

@@ -3,76 +3,7 @@ use crate::{ingest::StoredAccount, normalize::gmail_message};
 use reqwest::Method;
 use std::collections::BTreeSet;
 
-pub(super) async fn response_json(response: reqwest::Response) -> Result<Value> {
-    let status = response.status();
-    let text = response.text().await?;
-    ensure!(
-        status.is_success(),
-        "Provider HTTP {}: {}",
-        status.as_u16(),
-        text.chars().take(500).collect::<String>()
-    );
-    if text.is_empty() {
-        Ok(Value::Null)
-    } else {
-        Ok(serde_json::from_str(&text)?)
-    }
-}
-
-pub fn encode_segment(id: &str) -> String {
-    id.bytes()
-        .map(|b| {
-            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
-                (b as char).to_string()
-            } else {
-                format!("%{b:02X}")
-            }
-        })
-        .collect()
-}
-
 impl Providers {
-    pub(super) async fn api(
-        &self,
-        token: &str,
-        method: Method,
-        url: &str,
-        body: Option<Value>,
-    ) -> Result<Value> {
-        let mut request = self
-            .http
-            .request(method, url)
-            .bearer_auth(token)
-            .header("Prefer", "IdType=\"ImmutableId\"");
-        if let Some(body) = body {
-            request = request.json(&body);
-        }
-        response_json(request.send().await?).await
-    }
-
-    pub async fn sync(&self, account: &StoredAccount, cursor: Option<&str>) -> Result<SyncPage> {
-        if self.config.fake_providers {
-            return Ok(SyncPage {
-                messages: vec![],
-                deleted_provider_message_ids: vec![],
-                next_cursor: cursor.map(str::to_owned),
-                backfill_complete: true,
-            });
-        }
-        let token = self
-            .access_token(
-                account.id,
-                &account.provider,
-                &account.encrypted_credentials,
-            )
-            .await?;
-        if account.provider == "gmail" {
-            self.gmail_sync(&token, account, cursor).await
-        } else {
-            self.microsoft_sync(&token, account, cursor).await
-        }
-    }
-
     async fn gmail_backfill(
         &self,
         token: &str,
@@ -139,7 +70,7 @@ impl Providers {
         })
     }
 
-    async fn gmail_sync(
+    pub(super) async fn gmail_sync(
         &self,
         token: &str,
         account: &StoredAccount,
@@ -225,74 +156,5 @@ impl Providers {
             next_cursor: Some(format!("history:{latest}")),
             backfill_complete: true,
         })
-    }
-
-    pub async fn apply_action(
-        &self,
-        account: &StoredAccount,
-        id: &str,
-        action: &str,
-    ) -> Result<()> {
-        if self.config.fake_providers {
-            return Ok(());
-        }
-        let token = self
-            .access_token(
-                account.id,
-                &account.provider,
-                &account.encrypted_credentials,
-            )
-            .await?;
-        if account.provider == "gmail" {
-            let body = match action {
-                "mark_read" => json!({"removeLabelIds":["UNREAD"]}),
-                "mark_unread" => json!({"addLabelIds":["UNREAD"]}),
-                "flag" => json!({"addLabelIds":["STARRED"]}),
-                "unflag" => json!({"removeLabelIds":["STARRED"]}),
-                "archive" => json!({"removeLabelIds":["INBOX"]}),
-                "delete" => json!({"addLabelIds":["TRASH"]}),
-                _ => bail!("Invalid action"),
-            };
-            self.api(
-                &token,
-                Method::POST,
-                &format!(
-                    "{}/users/me/messages/{}/modify",
-                    self.endpoints.gmail,
-                    encode_segment(id)
-                ),
-                Some(body),
-            )
-            .await?;
-        } else {
-            let url = format!(
-                "{}/me/messages/{}",
-                self.endpoints.graph,
-                encode_segment(id)
-            );
-            let (method, url, body) = match action {
-                "delete" => (Method::DELETE, url, None),
-                "archive" => (
-                    Method::POST,
-                    format!("{url}/move"),
-                    Some(json!({"destinationId":"archive"})),
-                ),
-                "mark_read" | "mark_unread" => (
-                    Method::PATCH,
-                    url,
-                    Some(json!({"isRead":action=="mark_read"})),
-                ),
-                "flag" | "unflag" => (
-                    Method::PATCH,
-                    url,
-                    Some(
-                        json!({"flag":{"flagStatus":if action=="flag"{"flagged"}else{"notFlagged"}}}),
-                    ),
-                ),
-                _ => bail!("Invalid action"),
-            };
-            self.api(&token, method, &url, body).await?;
-        }
-        Ok(())
     }
 }

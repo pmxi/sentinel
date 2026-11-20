@@ -66,15 +66,3 @@ pub async fn notify_provider_messages<'e>(
         .bind(account).bind(serde_json::json!(ids)).execute(executor).await?;
     Ok(())
 }
-
-pub async fn notify_logout<'e>(
-    executor: impl Executor<'e, Database = Sqlite>,
-    session: &str,
-    expires: i64,
-) -> Result<()> {
-    sqlx::query("insert into worker_state(name,metadata) values(?1,?2) on conflict(name) do update set metadata=excluded.metadata")
-        .bind(format!("session-revoked:{session}")).bind(serde_json::json!({"expires":expires}))
-        .execute(executor)
-        .await?;
-    Ok(())
-}

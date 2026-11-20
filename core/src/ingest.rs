@@ -95,7 +95,6 @@ impl Repository {
             .bind(id)
             .execute(&mut *tx)
             .await?;
-        crate::live::notify_changed(&mut *tx).await?;
         tx.commit().await?;
         Ok(id)
     }
@@ -202,20 +201,5 @@ impl Repository {
         crate::live::notify_messages(&mut *tx, &[id]).await?;
         tx.commit().await?;
         Ok(())
-    }
-
-    pub async fn newest_unclassified(&self, limit: i64, email: Option<&str>) -> Result<Vec<Uuid>> {
-        Ok(sqlx::query("select m.id from messages m join accounts a on a.id=m.account_id left join classifications c on c.message_id=m.id where c.message_id is null and not m.tombstone and m.direction='inbound' and (?2 is null or lower(a.email)=lower(?2)) order by m.received_at desc limit ?1")
-            .bind(limit).bind(email).fetch_all(&self.0).await?.iter().map(|r|r.get("id")).collect())
-    }
-
-    pub async fn newest_inbound(&self, limit: i64, email: Option<&str>) -> Result<Vec<Uuid>> {
-        Ok(sqlx::query("select m.id from messages m join accounts a on a.id=m.account_id where not m.tombstone and m.direction='inbound' and (?2 is null or lower(a.email)=lower(?2)) order by m.received_at desc,m.id desc limit ?1")
-            .bind(limit).bind(email).fetch_all(&self.0).await?.iter().map(|r|r.get("id")).collect())
-    }
-
-    pub async fn unembedded(&self, limit: i64, after_id: Option<Uuid>) -> Result<Vec<Uuid>> {
-        Ok(sqlx::query("select m.id from messages m left join embeddings e on e.message_id=m.id where e.message_id is null and not m.tombstone and (?2 is null or m.id>?2) order by m.id limit ?1")
-            .bind(limit).bind(after_id).fetch_all(&self.0).await?.iter().map(|r|r.get("id")).collect())
     }
 }

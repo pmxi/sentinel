@@ -1,4 +1,3 @@
-use super::gmail::encode_segment;
 use super::*;
 use crate::{ingest::StoredAccount, repository::Address};
 use reqwest::Method;
@@ -86,10 +85,10 @@ impl Providers {
         );
         let bytes = STANDARD.decode(&attachment.content_base64)?;
         if bytes.len() < 3 * 1024 * 1024 {
-            self.api(token,Method::POST,&url,Some(json!({"@odata.type":"#microsoft.graph.fileAttachment","name":attachment.filename,"contentType":attachment.content_type,"contentBytes":attachment.content_base64}))).await?;
+            self.graph_api(token,Method::POST,&url,Some(json!({"@odata.type":"#microsoft.graph.fileAttachment","name":attachment.filename,"contentType":attachment.content_type,"contentBytes":attachment.content_base64}))).await?;
             return Ok(());
         }
-        let session=self.api(token,Method::POST,&format!("{url}/createUploadSession"),Some(json!({"AttachmentItem":{"attachmentType":"file","name":attachment.filename,"contentType":attachment.content_type,"size":bytes.len()}}))).await?;
+        let session=self.graph_api(token,Method::POST,&format!("{url}/createUploadSession"),Some(json!({"AttachmentItem":{"attachmentType":"file","name":attachment.filename,"contentType":attachment.content_type,"size":bytes.len()}}))).await?;
         let upload = session["uploadUrl"]
             .as_str()
             .context("Missing attachment upload URL")?;
@@ -209,7 +208,7 @@ impl Providers {
             format!("{}/me/messages", self.endpoints.graph)
         };
         let draft = self
-            .api(
+            .graph_api(
                 &token,
                 Method::POST,
                 &url,
@@ -230,7 +229,7 @@ impl Providers {
         );
         let prepare = async {
             if source.is_some() {
-                self.api(&token, Method::PATCH, &draft_url, Some(body))
+                self.graph_api(&token, Method::PATCH, &draft_url, Some(body))
                     .await?;
             }
             for attachment in &message.attachments {
@@ -240,10 +239,12 @@ impl Providers {
         }
         .await;
         if let Err(error) = prepare {
-            let _ = self.api(&token, Method::DELETE, &draft_url, None).await;
+            let _ = self
+                .graph_api(&token, Method::DELETE, &draft_url, None)
+                .await;
             return Err(error);
         }
-        self.api(&token, Method::POST, &format!("{draft_url}/send"), None)
+        self.graph_api(&token, Method::POST, &format!("{draft_url}/send"), None)
             .await?;
         Ok(id.into())
     }

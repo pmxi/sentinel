@@ -105,6 +105,62 @@ async fn migrations_handle_empty_directories_and_roll_back_errors() -> Result<()
 }
 
 #[tokio::test]
+async fn live_signal_migration_upgrades_existing_databases_without_losing_accounts() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let pool = db::pool(
+        directory.path().join("upgrade.sqlite").to_str().unwrap(),
+        true,
+    )
+    .await?;
+    sqlx::raw_sql(include_str!("../../migrations/0001_initial.sql"))
+        .execute(&pool)
+        .await?;
+    sqlx::query("insert into sent_migrations(filename) values('0001_initial.sql')")
+        .execute(&pool)
+        .await?;
+    let repo = Repository(pool.clone());
+    assert_eq!(repo.list_accounts().await?, json!([]));
+    assert!(
+        repo.replica_inventory(None, false)
+            .await?
+            .accounts
+            .is_empty()
+    );
+    let id = repo
+        .upsert_account("gmail", "upgrade@example.test", "Existing", "fake")
+        .await?;
+    let before = repo.list_accounts().await?;
+    db::migrate(
+        &pool,
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../migrations"),
+    )
+    .await?;
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>(
+            "select count(*) from sqlite_master where name='sent_live_signal'"
+        )
+        .fetch_one(&pool)
+        .await?,
+        0
+    );
+    assert_eq!(repo.list_accounts().await?, before);
+    assert_eq!(
+        json!(repo.replica_inventory(None, false).await?.accounts),
+        before
+    );
+    assert_eq!(before[0]["id"], json!(id));
+    repo.upsert_account("gmail", "upgrade@example.test", "Updated", "fake")
+        .await?;
+    assert_eq!(repo.list_accounts().await?[0]["displayName"], "Updated");
+    db::migrate(
+        &pool,
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../migrations"),
+    )
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
 async fn sqlite_schema_search_and_vectors() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let pool = db::pool(directory.path().join("sent.sqlite").to_str().unwrap(), true).await?;

@@ -1,4 +1,3 @@
-use super::gmail::encode_segment;
 use super::*;
 use crate::{
     ingest::{NormalizedMessage, StoredAccount},
@@ -54,7 +53,7 @@ impl Providers {
     }
 
     async fn graph(&self, token: &str, path: &str) -> Result<Value> {
-        self.api(token, Method::GET, &self.graph_url(path), None)
+        self.graph_api(token, Method::GET, &self.graph_url(path), None)
             .await
     }
 
@@ -142,6 +141,9 @@ impl Providers {
         cursor: Option<&str>,
     ) -> Result<SyncPage> {
         let mut state: Option<Cursor> = cursor.map(serde_json::from_str).transpose()?;
+        if let Some(state) = &state {
+            ensure!(state.version == 1, "Unsupported Microsoft cursor version");
+        }
         let sent = if let Some(id) = state.as_ref().and_then(|s| s.sent_folder_id.clone()) {
             id
         } else {

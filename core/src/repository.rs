@@ -319,6 +319,15 @@ fn draft(row: &SqliteRow) -> Value {
         "createdAt":date(row,"created_at"),"updatedAt":date(row,"updated_at")})
 }
 
+async fn account_values<'e>(
+    executor: impl sqlx::Executor<'e, Database = sqlx::Sqlite>,
+) -> Result<Vec<Value>> {
+    Ok(sqlx::query("select id,provider,email,display_name,status,last_synced_at from accounts order by created_at")
+        .fetch_all(executor).await?.iter().map(|row| json!({
+            "id":row.get::<Uuid,_>("id"),"provider":row.get::<String,_>("provider"),"email":row.get::<String,_>("email"),"displayName":row.get::<String,_>("display_name"),"status":row.get::<String,_>("status"),"lastSyncedAt":date(row,"last_synced_at")
+        })).collect())
+}
+
 impl Repository {
     pub async fn claim_mutations(&self, limit: i64) -> Result<Vec<Value>> {
         let mut tx = self.0.begin_with("BEGIN IMMEDIATE").await?;
@@ -425,16 +434,7 @@ impl Repository {
         Ok(())
     }
     pub async fn list_accounts(&self) -> Result<Value> {
-        let rows = sqlx::query("select id,provider,email,display_name,status,last_synced_at from accounts order by created_at").fetch_all(&self.0).await?;
-        Ok(json!(
-            rows.iter()
-                .map(
-                    |r| json!({"id":r.get::<Uuid,_>("id"), "provider":r.get::<String,_>("provider"),
-            "email":r.get::<String,_>("email"), "displayName":r.get::<String,_>("display_name"),
-            "status":r.get::<String,_>("status"), "lastSyncedAt":date(r,"last_synced_at")})
-                )
-                .collect::<Vec<_>>()
-        ))
+        Ok(json!(account_values(&self.0).await?))
     }
 
     pub async fn list_messages(&self, input: ListInput) -> Result<Value> {

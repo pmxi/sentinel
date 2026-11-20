@@ -31,7 +31,6 @@ struct Job {
     key: Key,
     attempt: u8,
     next_at: DateTime<Utc>,
-    created_at: DateTime<Utc>,
 }
 
 impl Job {
@@ -40,7 +39,6 @@ impl Job {
             key: Key { kind, id },
             attempt: 0,
             next_at: Utc::now(),
-            created_at: Utc::now(),
         }
     }
     fn retry(&mut self) -> bool {
@@ -78,7 +76,6 @@ fn finished(jobs: &mut HashMap<Key, Job>, key: Key, result: Result<Option<SyncRe
                 }
                 if !sync.complete {
                     job.attempt = 0;
-                    job.created_at = Utc::now();
                     job.next_at = Utc::now() + Duration::seconds(5);
                     jobs.insert(key, job);
                 }
@@ -340,7 +337,10 @@ mod tests {
             kind: Kind::Embed,
             id: message
         }));
-        let saved = serde_json::to_value(jobs.values().collect::<Vec<_>>()).unwrap();
+        let mut saved = serde_json::to_value(jobs.values().collect::<Vec<_>>()).unwrap();
+        for job in saved.as_array_mut().unwrap() {
+            job["created_at"] = json!(Utc::now());
+        }
         let restored: Vec<Job> = serde_json::from_value(saved).unwrap();
         assert_eq!(restored.len(), 2);
         for job in restored {
