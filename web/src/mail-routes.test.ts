@@ -8,7 +8,7 @@ vi.mock("./App", () => ({
   InboxRoute: () => {
     const location = useLocation();
     const params = useParams();
-    return `${location.pathname}|${params.view ?? "inbox"}`;
+    return `${location.pathname}${location.search}${location.hash}|${params.view ?? "inbox"}`;
   },
 }));
 
@@ -25,6 +25,25 @@ describe("mail routes", () => {
       );
       try {
         await vi.waitFor(() => expect(container.textContent).toBe("/inbox|inbox"));
+      } finally {
+        dispose();
+      }
+    },
+  );
+
+  it.each(["/", "/missing", "/inbox/unknown", "/inbox/l1", "/inbox/l2", "/inbox/l3"])(
+    "preserves search parameters and hash when redirecting %s",
+    async (path) => {
+      const suffix = "?message=thread%2F123&account=account%2B1#conversation";
+      const history = createMemoryHistory();
+      history.set({ value: path + suffix, replace: true, scroll: false });
+      const container = document.createElement("div");
+      const dispose = render(
+        () => createComponent(MemoryRouter, { history, children: inboxRoutes }),
+        container,
+      );
+      try {
+        await vi.waitFor(() => expect(container.textContent).toBe(`/inbox${suffix}|inbox`));
       } finally {
         dispose();
       }
