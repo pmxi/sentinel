@@ -197,7 +197,7 @@ describe("reader triage shortcuts", () => {
       Array.from(container.querySelectorAll<HTMLElement>(".message-list-item")).map(
         (item) => item.style.transform,
       );
-    expect(transforms()).toEqual(["translateY(0px)", "translateY(124px)"]);
+    expect(transforms()).toEqual(["translateY(0px)", "translateY(150px)"]);
     const search = container.querySelector<HTMLInputElement>('input[aria-label="Search mail"]');
     if (!search) throw new Error("Missing search input");
     search.value = "second";
@@ -206,7 +206,7 @@ describe("reader triage shortcuts", () => {
     await vi.waitFor(() =>
       expect(container.querySelector('button[data-thread-id="second-thread-1"]')).not.toBeNull(),
     );
-    expect(transforms()).toEqual(["translateY(0px)", "translateY(124px)"]);
+    expect(transforms()).toEqual(["translateY(0px)", "translateY(150px)"]);
   });
   it("finishes a boundary j after a slow next page is delivered", async () => {
     const first = {
