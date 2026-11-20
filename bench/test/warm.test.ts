@@ -1,6 +1,34 @@
 import type { Page } from "playwright";
 import { describe, expect, it, vi } from "vitest";
-import { prepareWarmReload } from "../src/warm.ts";
+import { prepareWarmMailbox, prepareWarmReload } from "../src/warm.ts";
+
+describe("warm mailbox preparation", () => {
+  it.each([null, "loading", "ready"])(
+    "waits for a replica only when advertised: %s",
+    async (marker) => {
+      const page = {
+        waitForLoadState: vi.fn().mockResolvedValue(undefined),
+        evaluate: vi.fn().mockResolvedValue({ registered: false, controlled: false }),
+        locator: vi.fn().mockReturnValue({ getAttribute: vi.fn().mockResolvedValue(marker) }),
+        waitForFunction: vi.fn().mockResolvedValue(undefined),
+      };
+      await prepareWarmMailbox(page as unknown as Page);
+      expect(page.waitForFunction).toHaveBeenCalledTimes(marker ? 1 : 0);
+      expect(page.waitForLoadState).toHaveBeenCalledTimes(marker ? 2 : 1);
+    },
+  );
+  it("records failed replica preparation as a sample failure", async () => {
+    const page = {
+      waitForLoadState: vi.fn().mockResolvedValue(undefined),
+      evaluate: vi.fn().mockResolvedValue({ registered: false, controlled: false }),
+      locator: vi.fn().mockReturnValue({ getAttribute: vi.fn().mockResolvedValue("loading") }),
+      waitForFunction: vi.fn().mockRejectedValue(new Error("Replica readiness timed out")),
+    };
+    await expect(prepareWarmMailbox(page as unknown as Page)).rejects.toThrow(
+      "Replica readiness timed out",
+    );
+  });
+});
 
 describe("warm reload preparation", () => {
   it("bounds a failed install's never-settling readiness and can prepare the next sample", async () => {

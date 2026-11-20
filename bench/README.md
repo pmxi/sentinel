@@ -177,6 +177,14 @@ login's cookies. All original actions explicitly block service workers, includin
 the HTTP-cache-warm `inbox_load` reload. They cannot measure a previously installed
 service worker or persisted shell metadata across samples.
 
+`warm_mailbox` separately measures a warm in-app navigation from L1 to Sent.
+Untimed setup waits for an advertised SQLite replica to be ready (bounded to
+120 seconds), and for pending network activity to settle. Builds without a
+replica, including Node, use the same navigation without a replica wait. The
+paint condition requires the first row to change, so old L1 rows cannot complete
+the measurement. Fresh contexts still do not share storage across samples: this
+action warms within each sample. Original timed action paths are unchanged.
+
 `warm_reload` is a separate action allowing service workers. Untimed setup waits
 for network idle and any existing registration to become ready/controlling, then
 measures a reload with the same paint observer as `inbox_load`. Apps without a

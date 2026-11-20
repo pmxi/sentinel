@@ -1,5 +1,17 @@
 import type { Page } from "playwright";
 
+export async function prepareWarmMailbox(page: Page) {
+  await prepareWarmReload(page);
+  if (await page.locator("html").getAttribute("data-sent-replica")) {
+    await page.waitForFunction(
+      () => document.documentElement.dataset.sentReplica === "ready",
+      undefined,
+      { timeout: 120_000 },
+    );
+    await page.waitForLoadState("networkidle");
+  }
+}
+
 export async function prepareWarmReload(page: Page) {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {

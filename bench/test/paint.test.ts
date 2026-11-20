@@ -8,11 +8,12 @@ function fixture(platform = "Linux") {
   const listeners = new Map<string, (event: KeyboardEvent) => void>();
   const frames: (() => void)[] = [];
   let rowCount = 10;
+  let rowText = "Old";
   vi.stubGlobal("window", {});
   vi.stubGlobal("navigator", { platform });
   vi.stubGlobal("performance", { timeOrigin: 1000, now: () => 100 });
   vi.stubGlobal("document", {
-    querySelectorAll: () => Array.from({ length: rowCount }, () => ({})),
+    querySelectorAll: () => Array.from({ length: rowCount }, () => ({ textContent: rowText })),
     addEventListener: (type: string, listener: (event: KeyboardEvent) => void) =>
       listeners.set(type, listener),
   });
@@ -44,11 +45,25 @@ function fixture(platform = "Linux") {
     setRows: (count: number) => {
       rowCount = count;
     },
+    setText: (value: string) => {
+      rowText = value;
+    },
     load: () => listeners.get("load")?.({} as KeyboardEvent),
   };
 }
 
 describe("paint trigger keys", () => {
+  it("does not time the old list as a completed warm mailbox navigation", () => {
+    const { press, paint, load, setText } = fixture();
+    window.__sentBench.arm({ kind: "list", before: "Old" }, { type: "keydown", key: "Enter" });
+    press({});
+    paint();
+    expect(window.__sentBench.result).toBeNull();
+    setText("New");
+    load();
+    paint();
+    expect(window.__sentBench.result).toBe(50);
+  });
   it("starts Control+Enter at Enter, not modifier-down or an unmodified Enter", () => {
     const { arm, press, paint } = fixture();
     arm("Control+Enter");

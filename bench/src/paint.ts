@@ -43,7 +43,8 @@ export function installPaintObserver(selectors: Selectors) {
   };
   const done = () => {
     const rows = [...document.querySelectorAll(selectors.rows)];
-    if (condition.kind === "list") return rows.length >= 10;
+    if (condition.kind === "list")
+      return rows.length >= 10 && (!condition.before || text(rows[0] ?? null) !== condition.before);
     if (condition.kind === "archive")
       return !rows.some(
         (row) => normalize(text(row.querySelector(selectors.rowSubject))) === condition.subject,
