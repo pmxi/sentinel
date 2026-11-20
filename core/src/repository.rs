@@ -838,7 +838,7 @@ impl Repository {
     }
 
     pub async fn health(&self) -> Result<Value> {
-        let row = sqlx::query("select (select max(heartbeat_at) from worker_state) worker_heartbeat,(select count(*) from mutation_outbox where status='failed') failed_mutations,(select count(*) from classification_failures) classification_failures,count(*) accounts,count(*) filter(where status='needs_reauth') needs_reauth,min(last_synced_at) oldest_successful_sync_at,count(*) filter(where last_synced_at is null or last_synced_at<now()-interval '3 minutes') stale from accounts").fetch_one(&self.0).await?;
+        let row = sqlx::query("select (select max(heartbeat_at) from worker_state where name not like 'session-revoked:%') worker_heartbeat,(select count(*) from mutation_outbox where status='failed') failed_mutations,(select count(*) from classification_failures) classification_failures,count(*) accounts,count(*) filter(where status='needs_reauth') needs_reauth,min(last_synced_at) oldest_successful_sync_at,count(*) filter(where last_synced_at is null or last_synced_at<now()-interval '3 minutes') stale from accounts").fetch_one(&self.0).await?;
         let heartbeat: Option<DateTime<Utc>> = row.get("worker_heartbeat");
         let failed: i64 = row.get("failed_mutations");
         let needs: i64 = row.get("needs_reauth");

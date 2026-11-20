@@ -203,12 +203,16 @@ pub async fn upgrade(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
-    let Some(session) = auth::cookie(&headers)
-        .and_then(|token| auth::session_info(token, state.secret()))
-        .filter(|session| state.live.valid(session))
+    let Some(session) =
+        auth::cookie(&headers).and_then(|token| auth::session_info(token, state.secret()))
     else {
         return StatusCode::UNAUTHORIZED.into_response();
     };
+    match state.session_valid(&session).await {
+        Ok(true) => {}
+        Ok(false) => return StatusCode::UNAUTHORIZED.into_response(),
+        Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
+    }
     if !origin_allowed(&headers, &state.config.public_url) {
         return StatusCode::FORBIDDEN.into_response();
     }
@@ -267,9 +271,16 @@ async fn serve(mut socket: WebSocket, state: Arc<State>, session: auth::Session)
         return;
     }
     loop {
-        if !state.live.valid(&session) {
-            close(&mut socket, 4401, "Session ended").await;
-            return;
+        match state.session_valid(&session).await {
+            Ok(true) => {}
+            Ok(false) => {
+                close(&mut socket, 4401, "Session ended").await;
+                return;
+            }
+            Err(_) => {
+                close(&mut socket, 1013, "Authentication unavailable").await;
+                return;
+            }
         }
         if !state.live.available.load(Ordering::Acquire) {
             close(&mut socket, 1013, "Listener unavailable").await;
