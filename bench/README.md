@@ -172,12 +172,24 @@ Playwright chord such as `Control+Enter`; modifier-down events do not start it.
 
 ## Caveats
 
+`cold_start` uses a new browser context for every sample, restoring only the API
+login's cookies. All original actions explicitly block service workers, including
+the HTTP-cache-warm `inbox_load` reload. They cannot measure a previously installed
+service worker or persisted shell metadata across samples.
+
+`warm_reload` is a separate action allowing service workers. Untimed setup waits
+for network idle and any existing registration to become ready/controlling, then
+measures a reload with the same paint observer as `inbox_load`. Apps without a
+worker (including Node/React) simply use their warm HTTP cache. Samples record
+`serviceWorker: true` only when the measured document came from a worker. This
+does not change the original actions' timed regions or storage isolation.
+
 - Search is lexical: seeded data has no embeddings and OpenAI is disabled.
 - Worker is not running: archive persists optimistically and stays pending in the
   mutation outbox. Reader opening can also enqueue mark-read actions.
 - Archive and read state accumulate; reseed between full runs/build comparisons.
 - Two warmups are browser/server warmup, not shared client-cache warmup; only the
-  explicit reload action warms the HTTP cache within a sample.
+  explicit reload actions warm client caches within a sample.
 - A local machine is not the production box. Host contention, browser version,
   server caches, build mode, and corpus affect results. Compare identical profiles,
   iterations, seed, hardware, and conditions; 3 iterations is only a smoke check.

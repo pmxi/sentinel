@@ -226,6 +226,29 @@ pnpm --dir sent-rs/web build
 pnpm --dir sent-rs/web dev
 ```
 
+Production builds include a hand-written service worker (HTTPS or localhost only).
+It verifies and precaches `index.html` and hashed assets, serves only this static
+shell cache-first, and never intercepts `/api/*`. Build-content hashes version the
+cache; activation deletes older shell caches and claims clients. Controlled tabs
+reload once when a new worker activates, unless a composer is open. Updates flush
+pending draft text and wait until the composer closes, retaining in-memory
+attachments; failed saves leave it open for retry. Startup and returning to a visible tab
+check for updates with the worker HTTP cache bypassed. HTML network responses
+remain `no-cache`; `sw.js` is `no-store` and ignores conditional validators so
+even equal-sized builds published within one filesystem timestamp activate.
+
+`localStorage` holds only a last-verified-session marker and account metadata, not
+mail or credentials. It can paint the shell before fresh API responses arrive,
+including offline. Every startup revalidates the session; an API 401, logout, or
+another tab clearing this metadata returns to login and clears private query data.
+
+After the production web and Rust release builds, run the isolated Playwright
+offline/update/auth check (it resets only the named local `sent_test_*` database):
+
+```sh
+SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_sw pnpm --dir sent-rs/web sw:check
+```
+
 For the reproducible real-browser comparison, build both frontends and the Rust
 binaries first. Start Chrome with CDP on `http://localhost:29229`, then run:
 

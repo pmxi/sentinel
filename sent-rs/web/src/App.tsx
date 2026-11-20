@@ -8,6 +8,7 @@ import {
   createSignal,
   type JSX,
   onCleanup,
+  onMount,
   untrack,
   useContext,
 } from "solid-js";
@@ -17,6 +18,14 @@ import { ComposeProvider, useCompose } from "./compose";
 import { InboxPage, SearchResults } from "./InboxPage";
 import { LoginPage } from "./LoginPage";
 import { Link, NavLink, useLocation, useNavigate } from "./router";
+import {
+  forgetShellMetadata,
+  readShellMetadata,
+  rememberAccounts,
+  rememberSession,
+  SHELL_METADATA_KEY,
+  UNAUTHORIZED_EVENT,
+} from "./shell-metadata";
 import { TriageProvider } from "./triage";
 
 const AccountsContext = createContext<Accessor<Account[]>>(() => []);
@@ -33,11 +42,36 @@ export function SettingsRoute() {
   return <SettingsPage accounts={accounts()} />;
 }
 export default function App(props: { children?: JSX.Element }) {
+  const client = useQueryClient();
+  const metadata = readShellMetadata();
   const session = createQuery(() => ({
     queryKey: ["session"],
     queryFn: sentApi.session,
     retry: false,
+    initialData: metadata ? { authenticated: true } : undefined,
+    initialDataUpdatedAt: 0,
+    networkMode: "always",
   }));
+  createEffect(() => {
+    if (session.isFetched && session.isSuccess && session.data.authenticated) rememberSession();
+  });
+  onMount(() => {
+    const unauthorized = () => {
+      forgetShellMetadata();
+      client.setQueryData(["session"], { authenticated: false });
+      client.removeQueries({ predicate: (query) => query.queryKey[0] !== "session" });
+    };
+    const storage = (event: StorageEvent) => {
+      if ((event.key === SHELL_METADATA_KEY || event.key === null) && !readShellMetadata())
+        unauthorized();
+    };
+    window.addEventListener(UNAUTHORIZED_EVENT, unauthorized);
+    window.addEventListener("storage", storage);
+    onCleanup(() => {
+      window.removeEventListener(UNAUTHORIZED_EVENT, unauthorized);
+      window.removeEventListener("storage", storage);
+    });
+  });
   return (
     <>
       {(() => {
@@ -47,8 +81,12 @@ export default function App(props: { children?: JSX.Element }) {
               <strong>Sent</strong>
             </div>
           );
-        if (session.error instanceof ApiError && session.error.status === 401) return <LoginPage />;
-        if (session.isError)
+        if (
+          session.data?.authenticated === false ||
+          (session.error instanceof ApiError && session.error.status === 401)
+        )
+          return <LoginPage />;
+        if (session.isError && !session.data)
           return (
             <div class="fatal-error">
               <strong>Sent couldn’t start.</strong>
@@ -61,7 +99,16 @@ export default function App(props: { children?: JSX.Element }) {
   );
 }
 function AuthenticatedApp(props: { children?: JSX.Element }) {
-  const accounts = createQuery(() => ({ queryKey: ["accounts"], queryFn: sentApi.accounts }));
+  const metadata = readShellMetadata();
+  const accounts = createQuery(() => ({
+    queryKey: ["accounts"],
+    queryFn: sentApi.accounts,
+    initialData: metadata ? { accounts: metadata.accounts } : undefined,
+    initialDataUpdatedAt: 0,
+  }));
+  createEffect(() => {
+    if (accounts.isFetched && accounts.isSuccess) rememberAccounts(accounts.data.accounts);
+  });
   return (
     <>
       {
@@ -79,6 +126,16 @@ function AuthenticatedApp(props: { children?: JSX.Element }) {
   );
 }
 function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
+  const [online, setOnline] = createSignal(navigator.onLine);
+  onMount(() => {
+    const update = () => setOnline(navigator.onLine);
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    onCleanup(() => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    });
+  });
   const [menuOpen, setMenuOpen] = createSignal(false);
   const [query, setQuery] = createSignal("");
   const location = useLocation();
@@ -222,7 +279,12 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
                 <kbd>/</kbd>
               </form>
             </header>
-            {props.accounts.length === 0 && location.pathname !== "/settings" && (
+            {!online() && (
+              <div class="connect-banner" role="status">
+                Offline. Reconnect to load mail.
+              </div>
+            )}
+            {online() && props.accounts.length === 0 && location.pathname !== "/settings" && (
               <div class="connect-banner">
                 <span>Connect an account to import mail.</span>
                 <Link href="/settings">Open settings →</Link>
@@ -298,6 +360,7 @@ function SettingsPage(props: { accounts: Account[] }) {
   const logout = createMutation(() => ({
     mutationFn: sentApi.logout,
     onSuccess: () => {
+      forgetShellMetadata();
       queryClient.clear();
       navigate("/");
       window.location.reload();

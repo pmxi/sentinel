@@ -55,6 +55,7 @@ function deferred<T>() {
 }
 const cleanups: (() => void)[] = [];
 afterEach(() => {
+  localStorage.clear();
   for (const cleanup of cleanups.splice(0).reverse()) cleanup();
   vi.restoreAllMocks();
   vi.useRealTimers();

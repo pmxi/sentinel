@@ -21,6 +21,7 @@ import {
   useContext,
 } from "solid-js";
 import { sentApi } from "./api";
+import { holdShellReload } from "./service-worker";
 import { useTriage } from "./triage";
 export type ComposeSeed = Partial<DraftInput> & {
   id?: string;
@@ -121,6 +122,57 @@ function Composer(props: { accounts: Account[]; seed: ComposeSeed; close(): void
     },
     onError: (cause: Error) => setError(cause.message),
   }));
+  let timer: number | undefined;
+  let inFlight: Promise<void> | undefined;
+  let savedContent = props.seed.id ? JSON.stringify({ ...untrack(draft), id: undefined }) : "";
+  let finished = false;
+  const flush = () => {
+    window.clearTimeout(timer);
+    if (inFlight) return inFlight;
+    const run = async () => {
+      while (!finished) {
+        const value = untrack(draft);
+        if (
+          !value.id &&
+          !value.subject &&
+          !value.body &&
+          !value.to.length &&
+          !value.cc.length &&
+          !value.bcc.length
+        )
+          return;
+        if (!value.accountId) throw new Error("Choose an account to save the draft.");
+        const content = JSON.stringify({ ...value, id: undefined });
+        if (content === savedContent) return;
+        await save.mutateAsync(value);
+        savedContent = content;
+      }
+    };
+    const pending = run();
+    inFlight = pending;
+    const clear = () => {
+      if (inFlight === pending) inFlight = undefined;
+    };
+    void pending.then(clear, clear);
+    return pending;
+  };
+  const flushOrError = async () => {
+    try {
+      await flush();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+      throw cause;
+    }
+  };
+  const releaseReload = holdShellReload(flushOrError);
+  onCleanup(releaseReload);
+  const close = async () => {
+    if (sending()) return;
+    try {
+      await flushOrError();
+      props.close();
+    } catch {}
+  };
   createEffect(() => {
     [accountId(), to(), subject(), body(), draftId(), draft(), save.mutate, sending()];
     const cleanup = untrack(() => {
@@ -129,7 +181,7 @@ function Composer(props: { accounts: Account[]; seed: ComposeSeed; close(): void
         hydrated.current = true;
         if (!to() && !subject() && !body() && !draftId()) return;
       }
-      const timer = window.setTimeout(() => save.mutate(draft()), 750);
+      timer = window.setTimeout(() => void flushOrError().catch(() => {}), 750);
       return () => window.clearTimeout(timer);
     });
     if (typeof cleanup === "function") onCleanup(cleanup);
@@ -151,13 +203,15 @@ function Composer(props: { accounts: Account[]; seed: ComposeSeed; close(): void
     }
     setSending(true);
     try {
-      const saved = await sentApi.saveDraft(draft());
-      const receipt = await sentApi.sendDraft(saved.id, files());
+      await flushOrError();
+      const id = draftId();
+      if (!id) throw new Error("Draft could not be saved.");
+      const receipt = await sentApi.sendDraft(id, files());
       triage.sent(receipt, () => {
         props.seed.onUndo?.();
         compose.openCompose({
           ...draft(),
-          id: saved.id,
+          id,
           files: files(),
           onSent: props.seed.onSent,
           onUndo: props.seed.onUndo,
@@ -167,6 +221,7 @@ function Composer(props: { accounts: Account[]; seed: ComposeSeed; close(): void
       await queryClient.invalidateQueries({ queryKey: ["drafts"] });
       void queryClient.invalidateQueries({ queryKey: ["messages"] });
       void queryClient.invalidateQueries({ queryKey: ["thread"] });
+      finished = true;
       props.close();
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -175,10 +230,22 @@ function Composer(props: { accounts: Account[]; seed: ComposeSeed; close(): void
     }
   };
   const discard = async () => {
-    const id = draftId();
-    if (id) await sentApi.deleteDraft(id);
-    await queryClient.invalidateQueries({ queryKey: ["drafts"] });
-    props.close();
+    if (sending()) return;
+    setSending(true);
+    finished = true;
+    window.clearTimeout(timer);
+    try {
+      if (inFlight) await inFlight;
+      const id = draftId();
+      if (id) await sentApi.deleteDraft(id);
+      await queryClient.invalidateQueries({ queryKey: ["drafts"] });
+      props.close();
+    } catch (cause) {
+      finished = false;
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setSending(false);
+    }
   };
   return (
     <>
@@ -186,7 +253,12 @@ function Composer(props: { accounts: Account[]; seed: ComposeSeed; close(): void
         <div class="composer" role="dialog" aria-label="Compose message">
           <header class="composer-header">
             <span>New message</span>
-            <button class="icon-button" onClick={props.close} aria-label="Close composer">
+            <button
+              class="icon-button"
+              onClick={() => void close()}
+              disabled={sending()}
+              aria-label="Close composer"
+            >
               <X size={19} />
             </button>
           </header>
