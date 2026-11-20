@@ -264,12 +264,18 @@ function MessageList(props: {
   onLoadMore?(): Promise<void>;
 }) {
   const [list, setList] = createSignal<HTMLDivElement>();
+  const itemKey = createMemo(() => {
+    const ids = props.messages.map((message) => message.threadId);
+    return (index: number) => ids[index];
+  });
   const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
     get count() {
       return props.messages.length;
     },
     getScrollElement: () => list() ?? null,
-    getItemKey: (index) => props.messages[index].threadId,
+    get getItemKey() {
+      return itemKey();
+    },
     estimateSize: () => 124,
     measureElement: (element, entry) =>
       entry?.borderBoxSize?.[0]?.blockSize || element.offsetHeight || 124,

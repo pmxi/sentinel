@@ -4,7 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { createComponent } from "solid-js";
 import { render } from "solid-js/web";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import App, { InboxRoute } from "./App";
+import App, { InboxRoute, SearchRoute } from "./App";
 import { sentApi } from "./api";
 import { optimistic } from "./mail-cache";
 import { TriageProvider, useTriage } from "./triage";
@@ -159,6 +159,55 @@ function press(key: string) {
 }
 
 describe("reader triage shortcuts", () => {
+  it("positions equal-count, equal-height replacement search results using their new thread keys", async () => {
+    const rows = (prefix: string) =>
+      Array.from({ length: 2 }, (_, index) => ({
+        ...message,
+        id: `${prefix}-${index}`,
+        threadId: `${prefix}-thread-${index}`,
+        subject: `${prefix} ${index}`,
+        read: true,
+        messageCount: 1,
+        unreadCount: 0,
+        participants: message.from,
+      }));
+    vi.spyOn(sentApi, "session").mockResolvedValue({ authenticated: true });
+    vi.spyOn(sentApi, "accounts").mockResolvedValue({ accounts: [account] });
+    vi.spyOn(sentApi, "search").mockImplementation(async (query) => ({
+      messages: rows(query.get("q") ?? ""),
+      mode: "lexical",
+    }));
+    vi.spyOn(sentApi, "thread").mockResolvedValue({ messages: [] });
+    vi.spyOn(sentApi, "message").mockResolvedValue({ ...message, read: true });
+    const history = createMemoryHistory();
+    history.set({ value: "/search?q=first", replace: true, scroll: false });
+    const container = mount(() =>
+      createComponent(MemoryRouter, {
+        history,
+        root: App,
+        get children() {
+          return createComponent(Route, { path: "/search", component: SearchRoute });
+        },
+      }),
+    );
+    await vi.waitFor(() =>
+      expect(container.querySelectorAll(".message-list-item")).toHaveLength(2),
+    );
+    const transforms = () =>
+      Array.from(container.querySelectorAll<HTMLElement>(".message-list-item")).map(
+        (item) => item.style.transform,
+      );
+    expect(transforms()).toEqual(["translateY(0px)", "translateY(124px)"]);
+    const search = container.querySelector<HTMLInputElement>('input[aria-label="Search mail"]');
+    if (!search) throw new Error("Missing search input");
+    search.value = "second";
+    search.dispatchEvent(new Event("input", { bubbles: true }));
+    search.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    await vi.waitFor(() =>
+      expect(container.querySelector('button[data-thread-id="second-thread-1"]')).not.toBeNull(),
+    );
+    expect(transforms()).toEqual(["translateY(0px)", "translateY(124px)"]);
+  });
   it("finishes a boundary j after a slow next page is delivered", async () => {
     const first = {
       ...message,
