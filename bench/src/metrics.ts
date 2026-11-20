@@ -13,6 +13,7 @@ export const ACTIONS = [
   "archive",
   "search_rare",
   "search_common",
+  "warm_reload",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 export type Profile = keyof typeof PROFILES;
@@ -38,6 +39,7 @@ export type Sample = {
   transferredBytes?: number | null;
   error?: string;
   evidence?: string;
+  serviceWorker?: boolean;
 };
 export type Results = {
   metadata: {
