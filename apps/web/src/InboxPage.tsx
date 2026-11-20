@@ -328,7 +328,9 @@ function Reader({
     refetchInterval: 4_000,
   });
   const orderedMessages = thread.data?.messages ?? (detail.data ? [detail.data] : []);
-  const message = orderedMessages.at(-1);
+  const readerLoading = detail.isLoading || (thread.isLoading && !hasShownFallback);
+  // Do not expose actions for the selected fallback while the newest reply is loading.
+  const message = readerLoading ? undefined : orderedMessages.at(-1);
   const conversation = orderedMessages.slice(0, -1);
   const {
     mutate: performAction,
@@ -468,7 +470,7 @@ function Reader({
     scrolledToNewest.current = true;
     newestRef.current.scrollIntoView({ block: "nearest" });
   }, [thread.data]);
-  if (detail.isLoading || (thread.isLoading && !hasShownFallback))
+  if (readerLoading)
     return (
       <section className="reader">
         <div className="reader-skeleton" />
