@@ -1573,7 +1573,7 @@ kbd {
     width: 250px;
     transform: translateX(-105%);
     transition: transform 0.2s ease;
-    box-shadow: 18px 0 50px rgba(40, 35, 28, 0.18);
+    box-shadow: 18px 0 50px #2021242e;
   }
   .sidebar.open {
     transform: none;
@@ -1589,7 +1589,7 @@ kbd {
     inset: 0;
     display: block;
     border: 0;
-    background: rgba(35, 31, 25, 0.26);
+    background: #20212442;
   }
   .topbar {
     padding: 0 12px;
