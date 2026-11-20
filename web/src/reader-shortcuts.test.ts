@@ -254,6 +254,27 @@ function press(key: string) {
 }
 
 describe("mail list presentation", () => {
+  it("keeps sorting status accessible without a visible label", async () => {
+    const container = await reader(true, false, "all", undefined, undefined, () => {
+      vi.mocked(sentApi.messages).mockResolvedValue({
+        messages: [
+          {
+            ...message,
+            tier: null,
+            modelTier: null,
+            messageCount: 1,
+            unreadCount: 0,
+            participants: message.from,
+          },
+        ],
+        nextCursor: null,
+      });
+    });
+    const row = container.querySelector(".message-row.unclassified");
+    expect(row?.querySelector(".message-time .visually-hidden")?.textContent).toBe("Sorting…");
+    expect(row?.querySelector(".message-time")?.textContent).toContain("Sorting…");
+  });
+
   it.each(["all", "l1", "l2", "l3", "sent", "trash", "unclassified"])(
     "uses mixed-tier highlights only in All mail, not %s-specific lists",
     async (view) => {
