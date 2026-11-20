@@ -306,7 +306,6 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
             </button>
             <nav>
               <NavItem href="/inbox" label="Inbox" icon={<Inbox size={17} />} />
-              <span class="nav-label secondary">Mail</span>
               <NavItem
                 href="/inbox/unclassified"
                 label="Awaiting sorting"

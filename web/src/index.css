@@ -372,15 +372,6 @@ kbd {
   flex-direction: column;
   gap: 3px;
 }
-.nav-label {
-  padding: 4px 11px 7px;
-  color: var(--muted);
-  font-size: 11px;
-  font-weight: 600;
-}
-.nav-label.secondary {
-  margin-top: 14px;
-}
 .sidebar nav a,
 .sidebar-bottom > a {
   min-height: 40px;

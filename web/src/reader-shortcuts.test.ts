@@ -297,6 +297,9 @@ describe("mail list presentation", () => {
         expect(container.querySelector('a[href="/inbox/l1"]')).toBeNull();
         expect(container.querySelector('a[href="/inbox/l2"]')).toBeNull();
         expect(container.querySelector('a[href="/inbox/l3"]')).toBeNull();
+        expect(
+          [...container.querySelectorAll(".sidebar nav > *")].map((item) => item.textContent),
+        ).toEqual(["Inbox", "Awaiting sorting", "All mail", "Sent", "Drafts", "Trash"]);
       }
     },
   );
