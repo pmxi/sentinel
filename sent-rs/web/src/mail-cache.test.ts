@@ -46,6 +46,31 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 describe("optimistic mailbox transactions", () => {
+  it.each([false, true])(
+    "restores overlapping automatic/manual reads when both fail (reverse=%s)",
+    (reverse) => {
+      const client = fixture();
+      const automatic = optimistic(client, { id: "one", action: "mark_read" });
+      const manual = optimistic(client, { id: "one", action: "mark_unread" });
+      for (const transaction of reverse ? [manual, automatic] : [automatic, manual])
+        transaction.rollback();
+      expect(client.getQueryData(["message", "one"])).toMatchObject({ read: false });
+      expect(
+        client.getQueryData<{ messages: ConversationSummary[] }>(["messages", "l1"])?.messages[0],
+      ).toMatchObject({ read: false, unreadCount: 2 });
+    },
+  );
+  it("preserves a successful manual read intent when the automatic request fails", () => {
+    const client = fixture();
+    const automatic = optimistic(client, { id: "one", action: "mark_read" });
+    const manual = optimistic(client, { id: "one", action: "mark_unread" });
+    manual.commit();
+    automatic.rollback();
+    expect(
+      client.getQueryData<{ messages: ConversationSummary[] }>(["messages", "l1"])?.messages[0]
+        .unreadCount,
+    ).toBe(2);
+  });
   it.each(["mark_read", "flag"])(
     "writes %s to list/detail/thread/search synchronously and rolls back",
     (action) => {

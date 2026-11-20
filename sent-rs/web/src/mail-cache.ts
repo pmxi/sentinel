@@ -15,15 +15,17 @@ type Change = {
   patch?: Patch;
 };
 type Entry = { key: QueryKey; before: unknown; after: unknown };
+type ReadOperation = { version: number; read: boolean; pending: boolean; failed: boolean };
+type ReadHistory = { before: boolean; operations: ReadOperation[] };
 const families = new Set(["messages", "message", "thread", "search"]);
 const versions = new WeakMap<
   QueryClient,
-  { next: number; fields: Map<string, Map<string, number>> }
+  { next: number; fields: Map<string, Map<string, number>>; reads: Map<string, ReadHistory> }
 >();
 function versionState(client: QueryClient) {
   let value = versions.get(client);
   if (!value) {
-    value = { next: 0, fields: new Map() };
+    value = { next: 0, fields: new Map(), reads: new Map() };
     versions.set(client, value);
   }
   return value;
@@ -352,6 +354,24 @@ export function optimistic(client: QueryClient, change: Change) {
   value.pending++;
   const revisions = versionState(client),
     version = ++revisions.next;
+  let readHistory: ReadHistory | undefined, readOperation: ReadOperation | undefined;
+  if (change.id && ["mark_read", "mark_unread"].includes(change.action ?? "")) {
+    const item = entities(client).get(change.id);
+    if (item) {
+      readHistory = revisions.reads.get(item.id);
+      if (!readHistory?.operations.some((operation) => operation.pending)) {
+        readHistory = { before: item.read, operations: [] };
+        revisions.reads.set(item.id, readHistory);
+      }
+      readOperation = {
+        version,
+        read: change.action === "mark_read",
+        pending: true,
+        failed: false,
+      };
+      readHistory.operations.push(readOperation);
+    }
+  }
   const fields =
     "tier" in change
       ? ["tier", "modelTier", "reasoning", "classified"]
@@ -389,9 +409,29 @@ export function optimistic(client: QueryClient, change: Change) {
   };
   return {
     commit(response?: CacheResponse) {
+      if (readOperation) readOperation.pending = false;
       finish(serverPatches(client, response, version));
     },
     rollback(response?: CacheResponse) {
+      if (change.id && readHistory && readOperation) {
+        readOperation.pending = false;
+        readOperation.failed = true;
+        const latest = readHistory.operations.findLast((operation) => !operation.failed);
+        revisions.fields.get(change.id)?.set("read", latest?.version ?? 0);
+        const item = entities(client).get(change.id);
+        const keys = item
+          ? apply(client, {
+              id: item.id,
+              patch: {
+                id: item.id,
+                threadId: item.threadId,
+                read: latest?.read ?? readHistory.before,
+              },
+            }).map((entry) => entry.key)
+          : [];
+        finish([...keys, ...serverPatches(client, response, version)]);
+        return;
+      }
       for (const entry of entries)
         client.setQueryData(entry.key, (current: unknown) =>
           inverse(current, entry.before, entry.after),

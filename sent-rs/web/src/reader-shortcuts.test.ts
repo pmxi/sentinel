@@ -157,6 +157,9 @@ describe("reader triage shortcuts", () => {
     const threadRequest = vi.spyOn(sentApi, "threadAction").mockReturnValue(pending.promise);
     const container = await reader();
     await vi.waitFor(() => expect(request).toHaveBeenCalledWith("first", "mark_read"));
+    expect(
+      container.querySelector<HTMLButtonElement>('button[title="Archive conversation"]')?.disabled,
+    ).toBe(false);
     expect(press(key).defaultPrevented).toBe(true);
     await vi.waitFor(() =>
       expect(threadRequest).toHaveBeenCalledWith("first-thread", action, "l1", undefined),

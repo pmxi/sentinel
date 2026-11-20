@@ -527,7 +527,12 @@ function Reader(props: {
     });
   };
   const unavailable = createMemo(
-    () => !message() || headerOnly() || action.isPending || (!thread.data && !thread.isError),
+    () =>
+      !message() ||
+      headerOnly() ||
+      action.isPending ||
+      tier.isPending ||
+      (!thread.data && !thread.isError),
   );
   useCommands("reader", () => [
     {
@@ -552,7 +557,7 @@ function Reader(props: {
       group: "Message",
       keys: ["r"],
       run: () => reply(),
-      disabled: !message() || headerOnly() || !account(),
+      disabled: unavailable() || !account(),
     },
     {
       id: "reply-all",
@@ -560,7 +565,7 @@ function Reader(props: {
       group: "Message",
       keys: ["a"],
       run: () => reply(true),
-      disabled: !message() || headerOnly() || !account(),
+      disabled: unavailable() || !account(),
     },
     {
       id: "forward",
@@ -568,7 +573,7 @@ function Reader(props: {
       group: "Message",
       keys: ["f"],
       run: forward,
-      disabled: !message() || headerOnly(),
+      disabled: unavailable(),
     },
     {
       id: "read",
@@ -647,14 +652,14 @@ function Reader(props: {
               </button>
               <div class="toolbar-actions">
                 <TierPicker
-                  disabled={headerOnly()}
+                  disabled={unavailable()}
                   tier={current().tier}
                   onChange={(value) => tier.mutate({ id: current().id, tier: value })}
                 />
                 <button
                   class="icon-button"
                   title="Archive conversation"
-                  disabled={headerOnly()}
+                  disabled={unavailable()}
                   aria-label="Archive conversation"
                   onClick={() => triageAction("archive")}
                 >
@@ -663,7 +668,7 @@ function Reader(props: {
                 <button
                   class="icon-button"
                   title="Delete conversation"
-                  disabled={headerOnly()}
+                  disabled={unavailable()}
                   aria-label="Delete conversation"
                   onClick={() => triageAction("delete")}
                 >
@@ -672,7 +677,7 @@ function Reader(props: {
                 <button
                   class="icon-button"
                   title={current().read ? "Mark unread" : "Mark read"}
-                  disabled={headerOnly()}
+                  disabled={unavailable()}
                   onClick={() => doAction(current().read ? "mark_unread" : "mark_read")}
                 >
                   {current().read ? <Mail size={18} /> : <MailOpen size={18} />}
@@ -680,7 +685,7 @@ function Reader(props: {
                 <button
                   class={`icon-button ${current().flagged ? "active" : ""}`}
                   title="Flag"
-                  disabled={headerOnly()}
+                  disabled={unavailable()}
                   onClick={() => doAction(current().flagged ? "unflag" : "flag")}
                 >
                   <Flag size={18} fill={current().flagged ? "currentColor" : "none"} />
@@ -781,13 +786,13 @@ function Reader(props: {
                 <MessageAttachments message={current()} />
               </section>
               <div class="reply-actions">
-                <button disabled={headerOnly()} onClick={() => reply()}>
+                <button disabled={unavailable()} onClick={() => reply()}>
                   Reply
                 </button>
-                <button disabled={headerOnly()} onClick={() => reply(true)}>
+                <button disabled={unavailable()} onClick={() => reply(true)}>
                   Reply all
                 </button>
-                <button disabled={headerOnly()} onClick={forward}>
+                <button disabled={unavailable()} onClick={forward}>
                   Forward
                 </button>
               </div>
