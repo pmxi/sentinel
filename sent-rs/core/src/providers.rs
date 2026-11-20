@@ -5,7 +5,10 @@ use crate::{
 use anyhow::{Context, Result, bail, ensure};
 use base64::{
     Engine,
-    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    engine::{
+        DecodePaddingMode,
+        general_purpose::{GeneralPurpose, GeneralPurposeConfig, STANDARD, URL_SAFE_NO_PAD},
+    },
 };
 use chrono::Utc;
 use serde_json::{Value, json};
@@ -464,7 +467,7 @@ impl Providers {
             .json::<Value>()
             .await?;
         let bytes = if provider == "gmail" {
-            URL_SAFE_NO_PAD.decode(
+            decode_gmail_attachment(
                 response["data"]
                     .as_str()
                     .context("Missing attachment data")?,
@@ -491,4 +494,29 @@ fn decode_jwt_payload(token: &str) -> Result<Value> {
     Ok(serde_json::from_slice(&URL_SAFE_NO_PAD.decode(
         token.split('.').nth(1).context("Invalid ID token")?,
     )?)?)
+}
+
+fn decode_gmail_attachment(data: &str) -> Result<Vec<u8>> {
+    Ok(GeneralPurpose::new(
+        &base64::alphabet::URL_SAFE,
+        GeneralPurposeConfig::new().with_decode_padding_mode(DecodePaddingMode::Indifferent),
+    )
+    .decode(data)?)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gmail_attachment_accepts_padded_and_unpadded_base64url() {
+        for data in ["Zg==", "Zg"] {
+            assert_eq!(decode_gmail_attachment(data).unwrap(), b"f");
+        }
+        for data in ["-_8=", "-_8"] {
+            assert_eq!(decode_gmail_attachment(data).unwrap(), [251, 255]);
+        }
+        assert!(decode_gmail_attachment("").unwrap().is_empty());
+        assert!(decode_gmail_attachment("invalid!").is_err());
+    }
 }
