@@ -64,7 +64,7 @@ def main():
             "pnpm": 'printf "pnpm %s\\n" "$*" >> "$TEST_CALLS"\nif [[ "$*" == "--dir web build" ]]; then\n  [[ "$NODE_ENV" == production ]]\n  mkdir -p web/dist && printf ok > web/dist/index.html\nfi\n',
             "cargo": 'printf "cargo %s\\n" "$*" >> "$TEST_CALLS"\n[[ "$CARGO_HOME" == "$SENT_DEPLOY_TOOLS/cargo" ]]\nfor arg; do case "$arg" in */cargo-target) target=$arg;; esac; done\nmkdir -p "$target/release"\nfor bin in sent-server sent-worker; do printf "#!/bin/sh\\n" > "$target/release/$bin"; chmod 700 "$target/release/$bin"; done\n',
             "systemctl": 'printf "systemctl %s\\n" "$*" >> "$TEST_CALLS"\nif [[ "$1" == show ]]; then if [[ -f "$TEST_LEGACY_UNITS" ]]; then echo loaded; else echo not-found; fi; fi\n',
-            "sudo": 'printf "sudo %s\\n" "$*" >> "$TEST_CALLS"\n[[ "$TEST_DENY_SUDO" != true ]]\nif [[ "$*" == "-n systemctl daemon-reload" ]]; then rm -f "$TEST_LEGACY_UNITS"; fi\n',
+            "sudo": 'printf "sudo %s\\n" "$*" >> "$TEST_CALLS"\nexit 1\n',
         }.items():
             path = tools / name
             path.write_text("#!/usr/bin/env bash\nset -eu\n" + body)
@@ -109,7 +109,7 @@ def main():
                    SENT_DEPLOY_ENV=str(env_file),
                    SENT_DEPLOY_TOOLS=str(tools.parent.parent), SENT_DEPLOY_HEALTH=url + "/health",
                    SENT_DEPLOY_CI_URL=url + "/ci", SENT_DEPLOY_TIMEOUT="1", SENT_DEPLOY_INTERVAL="0.1",
-                   TEST_DENY_SUDO="false", TEST_CALLS=str(calls), TEST_LEGACY_UNITS=str(base / "legacy-units"), SENT_DEPLOY_UNITS=str(units))
+                   TEST_CALLS=str(calls), TEST_LEGACY_UNITS=str(base / "legacy-units"), SENT_DEPLOY_UNITS=str(units))
 
         def commit():
             run("git", "-C", str(work), "add", ".")
@@ -224,26 +224,25 @@ def main():
             marker = base / "legacy-units"
             marker.touch()
             cleanup = commit()
-            env["TEST_DENY_SUDO"] = "true"
-            output = deploy(1)
-            assert (root / "current").resolve().name == fifth and marker.exists()
-            env["TEST_DENY_SUDO"] = "false"
             start = len(calls.read_text())
-            deploy(0, "force", cleanup)
+            output = deploy()
             operations = calls.read_text()[start:]
-            assert "sudo -n systemctl disable --now sent-backup.timer" in operations
-            assert "sudo -n systemctl stop sent-backup.service" in operations
-            assert "sudo -n rm -f /etc/systemd/system/sent-backup.timer /etc/systemd/system/sent-backup.service" in operations
-            assert not marker.exists()
+            assert "WARNING: legacy sent-backup system units remain installed" in output
+            assert "sudo systemctl disable --now sent-backup.timer && sudo systemctl stop sent-backup.service && sudo rm -f /etc/systemd/system/sent-backup.timer /etc/systemd/system/sent-backup.service && sudo systemctl daemon-reload" in output
+            assert "sudo " not in operations and marker.exists()
+            assert (root / "current").resolve().name == cleanup
             assert (units / "sent-sqlite-backup.timer").exists()
             assert "enable --now sent-sqlite-backup.timer" in operations
-            print("PASS legacy system backup cleanup fails closed without permission and removes units with permission")
+            print("PASS legacy system backup units warn with manual cleanup command without blocking deploy or invoking sudo")
+            marker.unlink()
             later = commit()
             start = len(calls.read_text())
-            deploy()
+            output = deploy()
             operations = calls.read_text()[start:]
             assert "sudo " not in operations and "sqlite-backup" in operations
-            print("PASS legacy cleanup is idempotent and SQLite backups remain enabled")
+            assert "WARNING:" not in output
+            assert (root / "current").resolve().name == later
+            print("PASS absent legacy units are silent and deployment succeeds with SQLite backups enabled")
             database_path = root / "data" / "sent.sqlite"
             database_path.unlink()
             output = deploy(1, "force", cleanup)

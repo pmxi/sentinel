@@ -388,14 +388,13 @@ keep that EnvironmentFile path; it no longer needs any legacy database variables
 Every release installs its units and launcher before restarting.
 
 When the old system-level `sent-backup.timer` or `sent-backup.service` is present,
-deploy stops/disables the timer, stops the service, removes both units from
-`/etc/systemd/system`, and reloads systemd. This one-time cleanup uses
-`sudo -n` and fails closed without authorization; it never affects the user-level
-SQLite backup timer. The deploy service must allow privilege elevation for this
-cleanup (unlike the server and worker). Before the first automated deployment,
-install the updated deploy unit and reload user systemd, or run the updated
-deployer manually with noninteractive sudo authorization for those cleanup
-commands. No administrator privileges are needed after the legacy units are gone.
+deploy logs a warning with this one-time administrator cleanup command and
+continues without privileges. The deploy service retains `NoNewPrivileges=true`.
+The user-level SQLite backup timer is unaffected.
+
+```sh
+sudo systemctl disable --now sent-backup.timer && sudo systemctl stop sent-backup.service && sudo rm -f /etc/systemd/system/sent-backup.timer /etc/systemd/system/sent-backup.service && sudo systemctl daemon-reload
+```
 
 ```sh
 journalctl --user -u sent-deploy -u sent-server -u sent-worker -f

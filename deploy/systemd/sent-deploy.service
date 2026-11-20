@@ -8,3 +8,4 @@ Type=oneshot
 ExecStart=%h/sent/bin/deploy.sh
 TimeoutStartSec=30min
 UMask=0077
+NoNewPrivileges=true

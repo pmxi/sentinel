@@ -169,13 +169,11 @@ for unit in sent-server.service sent-worker.service sent-deploy.service sent-dep
 done
 install -m 700 "$release/deploy/sent-run" "$ROOT/bin/sent-run.next"
 mv "$ROOT/bin/sent-run.next" "$ROOT/bin/sent-run"
-legacy_timer=$(systemctl show --property=LoadState --value sent-backup.timer)
-legacy_service=$(systemctl show --property=LoadState --value sent-backup.service)
-if [[ "$legacy_timer" != not-found || "$legacy_service" != not-found ]]; then
-  if [[ "$legacy_timer" != not-found ]]; then sudo -n systemctl disable --now sent-backup.timer; fi
-  if [[ "$legacy_service" != not-found ]]; then sudo -n systemctl stop sent-backup.service; fi
-  sudo -n rm -f /etc/systemd/system/sent-backup.timer /etc/systemd/system/sent-backup.service
-  sudo -n systemctl daemon-reload
+legacy_timer=$(systemctl show --property=LoadState --value sent-backup.timer 2>/dev/null || true)
+legacy_service=$(systemctl show --property=LoadState --value sent-backup.service 2>/dev/null || true)
+if [[ -n "$legacy_timer" && "$legacy_timer" != not-found ||
+      -n "$legacy_service" && "$legacy_service" != not-found ]]; then
+  log 'WARNING: legacy sent-backup system units remain installed. Run once: sudo systemctl disable --now sent-backup.timer && sudo systemctl stop sent-backup.service && sudo rm -f /etc/systemd/system/sent-backup.timer /etc/systemd/system/sent-backup.service && sudo systemctl daemon-reload'
 fi
 systemctl --user daemon-reload
 log 'Taking pre-migration SQLite backup'
