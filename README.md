@@ -19,6 +19,28 @@ The repository contains a responsive React client, a Fastify API, a separate Pos
 
 ## Local development
 
+### Keyboard workflow
+
+Open **Commands** in the sidebar, press **⌘K / Ctrl+K**, or press **?** to browse
+and search commands. Use ↑ / ↓ and Enter to run a command; Escape dismisses the palette.
+
+| Keys | Action |
+| --- | --- |
+| `j` / `k` | Focus next / previous message; switch messages if the reader is open |
+| Enter / Escape | Open focused message / return to the list |
+| `e` / `#` | Archive / move the open message to Trash |
+| `r` / `a` / `f` | Reply / reply all / forward |
+| `u` / `s` | Toggle read state / flag; marking unread returns to the list |
+| `c` / `/` | Compose / focus mail search |
+| `g` then `i` / `u` / `l` | Important / Updates / Low priority |
+| `g` then `a` / `s` / `d` / `t` | All mail / Sent / Drafts / Trash |
+
+Single-key shortcuts pause in text fields and selects. All shortcuts pause while
+composing so typing cannot trigger mail actions. Navigation stays within the currently
+loaded messages, including filtered inboxes and search results.
+
+### Setup
+
 Requirements: Node.js 24+, pnpm through Corepack, and Docker.
 
 1. Install dependencies.

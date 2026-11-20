@@ -10,7 +10,9 @@ import { Archive, Flag, Mail, MailOpen, Paperclip, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { sentApi } from "./api";
+import { useCommands, useFrameCommands } from "./commands";
 import { replySeed, useCompose } from "./compose";
+import { messageCursorIndex, nextMessageIndex } from "./keyboard";
 import { MessagePreview, RankingReason, ReaderInsights } from "./MessageInsights";
 import { ReaderText } from "./ReaderText";
 
@@ -162,6 +164,51 @@ function MessageList({
   selectedId: string | null;
   onSelect(message: MessageSummary): void;
 }) {
+  const list = useRef<HTMLDivElement>(null);
+  const [cursorThreadId, setCursorThreadId] = useState<string | null>(null);
+  const currentIndex = messageCursorIndex(messages, selectedId, cursorThreadId);
+  const move = (direction: number) => {
+    const index = nextMessageIndex(messages.length, currentIndex, direction);
+    const message = messages[index];
+    if (!message) return;
+    setCursorThreadId(message.threadId);
+    list.current
+      ?.querySelectorAll<HTMLButtonElement>(".message-row")
+      [index]?.focus({ preventScroll: true });
+    list.current
+      ?.querySelectorAll<HTMLButtonElement>(".message-row")
+      [index]?.scrollIntoView({ block: "nearest" });
+    if (selectedId && selectedId !== message.id) onSelect(message);
+  };
+  useCommands("list", [
+    {
+      id: "next",
+      label: "Next message",
+      group: "Mail",
+      keys: ["j"],
+      run: () => move(1),
+      disabled: !messages.length,
+    },
+    {
+      id: "previous",
+      label: "Previous message",
+      group: "Mail",
+      keys: ["k"],
+      run: () => move(-1),
+      disabled: !messages.length,
+    },
+    {
+      id: "open",
+      label: "Open selected message",
+      group: "Mail",
+      keys: ["Enter"],
+      run: () => {
+        const message = messages[currentIndex] ?? messages[0];
+        if (message) onSelect(message);
+      },
+      disabled: !messages.length || Boolean(selectedId),
+    },
+  ]);
   if (loading)
     return (
       <div className="message-loading">
@@ -184,13 +231,15 @@ function MessageList({
       </div>
     );
   return (
-    <div className="message-list">
+    <div className="message-list" ref={list}>
       {messages.map((message) => (
         <div
           className={`message-list-item ${selectedId === message.id ? "selected" : ""}`}
           key={message.threadId}
         >
           <button
+            aria-current={selectedId === message.id ? "true" : undefined}
+            onFocus={() => setCursorThreadId(message.threadId)}
             className={`message-row ${!message.read ? "unread" : ""} ${message.tier === null && message.direction === "inbound" ? "unclassified" : ""} ${selectedId === message.id ? "selected" : ""}`}
             onClick={() => onSelect(message)}
           >
@@ -275,9 +324,15 @@ function Reader({
     refetchInterval: 4_000,
   });
   const orderedMessages = thread.data?.messages ?? (detail.data ? [detail.data] : []);
-  const message = orderedMessages.at(-1);
+  const readerLoading = detail.isLoading || (thread.isLoading && !hasShownFallback);
+  // Do not expose actions for the selected fallback while the newest reply is loading.
+  const message = readerLoading ? undefined : orderedMessages.at(-1);
   const conversation = orderedMessages.slice(0, -1);
-  const { mutate: performAction } = useMutation({
+  const {
+    mutate: performAction,
+    isPending: actionPending,
+    error: actionError,
+  } = useMutation({
     mutationFn: ({ id, action }: { id: string; action: string }) => sentApi.action(id, action),
     onSuccess: (_result, { id, action }) => {
       const updateMessage = (item: MessageDetail): MessageDetail => {
@@ -312,6 +367,89 @@ function Reader({
       void queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
     },
   });
+  const account = accounts.find((item) => item.id === message?.account.id);
+  const doAction = (value: string, shouldClose = false) => {
+    if (!message) return;
+    performAction(
+      { id: message.id, action: value },
+      { onSuccess: shouldClose ? close : undefined },
+    );
+  };
+  const forward = () => {
+    if (!message) return;
+    compose.openCompose({
+      accountId: message.account.id,
+      subject: message.subject.toLowerCase().startsWith("fwd:")
+        ? message.subject
+        : `Fwd: ${message.subject}`,
+      body: `\n\n---------- Forwarded message ----------\nFrom: ${message.from[0]?.name || message.from[0]?.address}\nDate: ${new Date(message.receivedAt).toLocaleString()}\nSubject: ${message.subject}\n\n${message.textBody}`,
+      forwardOfMessageId: message.id,
+    });
+  };
+  const unavailable = !message || actionPending;
+  useCommands("reader", [
+    {
+      id: "archive",
+      label: "Archive message",
+      group: "Message",
+      keys: ["e"],
+      run: () => doAction("archive", true),
+      disabled: unavailable,
+    },
+    {
+      id: "delete",
+      label: "Move message to Trash",
+      group: "Message",
+      keys: ["#"],
+      run: () => doAction("delete", true),
+      disabled: unavailable,
+    },
+    {
+      id: "reply",
+      label: "Reply",
+      group: "Message",
+      keys: ["r"],
+      run: () => {
+        if (message && account) compose.openCompose(replySeed(message, account));
+      },
+      disabled: !message || !account,
+    },
+    {
+      id: "reply-all",
+      label: "Reply all",
+      group: "Message",
+      keys: ["a"],
+      run: () => {
+        if (message && account) compose.openCompose(replySeed(message, account, true));
+      },
+      disabled: !message || !account,
+    },
+    {
+      id: "forward",
+      label: "Forward message",
+      group: "Message",
+      keys: ["f"],
+      run: forward,
+      disabled: !message,
+    },
+    {
+      id: "read",
+      label: message?.read ? "Mark as unread" : "Mark as read",
+      group: "Message",
+      keys: ["u"],
+      run: () => doAction(message?.read ? "mark_unread" : "mark_read", Boolean(message?.read)),
+      disabled: unavailable,
+    },
+    {
+      id: "flag",
+      label: message?.flagged ? "Unflag message" : "Flag message",
+      group: "Message",
+      keys: ["s"],
+      run: () => doAction(message?.flagged ? "unflag" : "flag"),
+      disabled: unavailable,
+    },
+    { id: "back", label: "Back to message list", group: "Message", keys: ["Escape"], run: close },
+  ]);
   useEffect(() => {
     if (thread.isError) setHasShownFallback(true);
     // On a thread failure the selected message is still shown. Mark only what
@@ -328,7 +466,7 @@ function Reader({
     scrolledToNewest.current = true;
     newestRef.current.scrollIntoView({ block: "nearest" });
   }, [thread.data]);
-  if (detail.isLoading || (thread.isLoading && !hasShownFallback))
+  if (readerLoading)
     return (
       <section className="reader">
         <div className="reader-skeleton" />
@@ -343,12 +481,7 @@ function Reader({
         <div className="empty-list">Message unavailable.</div>
       </section>
     );
-  const account = accounts.find((item) => item.id === message.account.id);
   const hasPlainText = [message, ...conversation].some((item) => Boolean(item.plainText?.trim()));
-  const doAction = (value: string, shouldClose = false) => {
-    performAction({ id: message.id, action: value });
-    if (shouldClose) close();
-  };
   return (
     <section className="reader">
       <header className="reader-toolbar">
@@ -387,6 +520,11 @@ function Reader({
           </button>
         </div>
       </header>
+      {actionError && (
+        <p className="compose-error" role="alert">
+          {actionError.message}
+        </p>
+      )}
       <article className="message-reader">
         <header className="conversation-heading">
           <h2>{message.subject.replace(/^(?:(?:re|fw|fwd):\s*)+/i, "") || "(No subject)"}</h2>
@@ -464,20 +602,7 @@ function Reader({
           <button onClick={() => account && compose.openCompose(replySeed(message, account, true))}>
             Reply all
           </button>
-          <button
-            onClick={() =>
-              compose.openCompose({
-                accountId: message.account.id,
-                subject: message.subject.toLowerCase().startsWith("fwd:")
-                  ? message.subject
-                  : `Fwd: ${message.subject}`,
-                body: `\n\n---------- Forwarded message ----------\nFrom: ${message.from[0]?.name || message.from[0]?.address}\nDate: ${new Date(message.receivedAt).toLocaleString()}\nSubject: ${message.subject}\n\n${message.textBody}`,
-                forwardOfMessageId: message.id,
-              })
-            }
-          >
-            Forward
-          </button>
+          <button onClick={forward}>Forward</button>
         </div>
       </article>
     </section>
@@ -549,6 +674,7 @@ function EmptyReader() {
 
 function EmailFrame({ title, html }: { title: string; html: string }) {
   const frameRef = useRef<HTMLIFrameElement>(null);
+  useFrameCommands(frameRef);
 
   useEffect(() => {
     const frame = frameRef.current;

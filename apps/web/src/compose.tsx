@@ -20,7 +20,7 @@ import {
 import { sentApi } from "./api";
 
 export type ComposeSeed = Partial<DraftInput> & { id?: string };
-type ComposeContextValue = { openCompose(seed?: ComposeSeed): void };
+type ComposeContextValue = { openCompose(seed?: ComposeSeed): void; isOpen: boolean };
 const ComposeContext = createContext<ComposeContextValue | null>(null);
 
 export function useCompose(): ComposeContextValue {
@@ -56,7 +56,13 @@ export function ComposeProvider({
   children: ReactNode;
 }) {
   const [seed, setSeed] = useState<ComposeSeed | null>(null);
-  const context = useMemo(() => ({ openCompose: (value: ComposeSeed = {}) => setSeed(value) }), []);
+  const openCompose = useMemo(
+    () =>
+      (value: ComposeSeed = {}) =>
+        setSeed(value),
+    [],
+  );
+  const context = useMemo(() => ({ openCompose, isOpen: seed !== null }), [openCompose, seed]);
   return (
     <ComposeContext.Provider value={context}>
       {children}
