@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -36,8 +37,11 @@ def main():
         (work / "deploy").mkdir()
         shutil.copy(SOURCE, work / "deploy" / "deploy.sh")
         shutil.copy(SOURCE.parent / "sent-run", work / "deploy" / "sent-run")
+        shutil.copy(SOURCE.parent / "sqlite-backup.sh", work / "deploy" / "sqlite-backup.sh")
         (work / "deploy" / "systemd").mkdir()
         (work / "deploy" / "systemd" / "sent-server.service").write_text("[Service]\n")
+        for name in ("sent-sqlite-backup.service", "sent-sqlite-backup.timer"):
+            shutil.copy(SOURCE.parent / "systemd" / name, work / "deploy" / "systemd" / name)
         (work / "web").mkdir()
         (work / "Cargo.toml").write_text("[workspace]\n")
         (work / "migrations").mkdir()
@@ -46,13 +50,16 @@ def main():
         calls = base / "calls"
         for name, body in {
             "pnpm": 'printf "pnpm %s\\n" "$*" >> "$TEST_CALLS"\nif [[ "$*" == "--dir web build" ]]; then\n  [[ "$NODE_ENV" == production ]]\n  mkdir -p web/dist && printf ok > web/dist/index.html\nfi\n',
-            "cargo": 'printf "cargo %s\\n" "$*" >> "$TEST_CALLS"\n[[ "$CARGO_HOME" == "$SENT_DEPLOY_TOOLS/cargo" ]]\nfor arg; do case "$arg" in */cargo-target) target=$arg;; esac; done\nmkdir -p "$target/release"\nfor bin in sent-server sent-worker; do printf "#!/bin/sh\\n" > "$target/release/$bin"; chmod 700 "$target/release/$bin"; done\n',
+            "cargo": 'printf "cargo %s\\n" "$*" >> "$TEST_CALLS"\n[[ "$CARGO_HOME" == "$SENT_DEPLOY_TOOLS/cargo" ]]\nfor arg; do case "$arg" in */cargo-target) target=$arg;; esac; done\nmkdir -p "$target/release"\nfor bin in sent-server sent-worker; do printf "#!/bin/sh\\n" > "$target/release/$bin"; chmod 700 "$target/release/$bin"; done\nif [[ "$*" == *"--bin sent-import-postgres"* ]]; then cp test-importer "$target/release/sent-import-postgres"; chmod 700 "$target/release/sent-import-postgres"; fi\n',
             "pg_dump": '[[ "$PGPASSWORD" == "fake@password" && "$PGSSLMODE" == verify-full && "$PGSSLROOTCERT" == /fake/root.crt && "$PGSSLCERT" == /fake/client.crt && "$PGSSLKEY" == /fake/client.key ]]\nprintf "dump\\n" >> "$TEST_CALLS"\nfor arg; do case "$arg" in --file=*) printf fake > "${arg#--file=}";; esac; done\n',
             "systemctl": 'printf "systemctl %s\\n" "$*" >> "$TEST_CALLS"\n',
         }.items():
             path = tools / name
             path.write_text("#!/usr/bin/env bash\nset -eu\n" + body)
             path.chmod(0o700)
+        sqlite = tools / "sqlite3"
+        sqlite.write_text('#!/usr/bin/env python3\nimport os,sys,shlex\nfrom pathlib import Path\nwith open(os.environ["TEST_CALLS"], "a") as f: f.write("sqlite-backup\\n")\nPath(shlex.split(sys.argv[2])[1]).write_text("backup")\n')
+        sqlite.chmod(0o700)
         state = {"ci": "success", "bad": None, "api": 0, "sync": False, "accounts": 1, "stale": None}
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -204,6 +211,70 @@ def main():
             assert "already current" in deploy(0, "force", seventh)
             assert (root / "current").resolve().name == f"{seventh}-rust"
             print("PASS cutover commit deployed as TypeScript by the old script -> rebuilt as Rust, TypeScript kept as previous")
+            state["sync"] = False
+            (work / "server" / "src" / "bin").mkdir(parents=True)
+            (work / "server" / "src" / "bin" / "sent-import-postgres.rs").write_text("// marker\n")
+            (work / "test-importer").write_text('#!/usr/bin/env bash\nset -eu\n[[ -n "$DATABASE_URL" && -d "$MIGRATIONS_PATH" ]]\nprintf "import\\n" >> "$TEST_CALLS"\nprintf imported > "$1"\n')
+            failed_sqlite = commit()
+            state["bad"] = failed_sqlite
+            start = len(calls.read_text())
+            deploy(1)
+            operations = calls.read_text()[start:]
+            assert operations.index("systemctl --user stop") < operations.index("dump") < operations.index("import\n") < operations.index("systemctl --user restart")
+            assert not (root / "data" / "sent.sqlite").exists()
+            assert len(list((root / "data").glob("sent.sqlite.failed-*"))) == 1
+            assert (root / "current").resolve().name == f"{seventh}-rust"
+            print("PASS first SQLite failure: stop -> pg_dump -> import -> restart; database moved aside, Postgres release restored")
+            state["bad"] = None
+            first_sqlite = commit()
+            deploy()
+            assert (root / "data" / "sent.sqlite").read_text() == "imported"
+            assert f"SENT_DATABASE_PATH={root}/data/sent.sqlite\n" in (root / "current" / "runtime.env").read_text()
+            assert (units / "sent-sqlite-backup.timer").exists()
+            assert "enable --now sent-sqlite-backup.timer" in calls.read_text()
+            print("PASS successful first SQLite deploy imports again and installs/enables nightly backups")
+            deploy(0, "rollback")
+            assert (root / "current").resolve().name == f"{seventh}-rust"
+            assert "SENT_DATABASE_PATH" not in (root / "current" / "runtime.env").read_text()
+            deploy(0, "rollback")
+            assert (root / "current").resolve().name == first_sqlite
+            run("bash", str(SOURCE.parent / "sent-run"), "server", env=env)
+            runtime = root / "current" / "runtime.env"
+            saved_runtime = runtime.read_text()
+            runtime.write_text("WEB_DIST_PATH=/unused\nMIGRATIONS_PATH=/unused\n")
+            incomplete = subprocess.run(["bash", str(SOURCE.parent / "sent-run"), "server"], env=env, capture_output=True)
+            assert incomplete.returncode != 0 and b"cutover is incomplete" in incomplete.stderr
+            runtime.write_text(saved_runtime)
+            print("PASS launcher exports SQLite runtime configuration and refuses an incomplete cutover")
+            print("PASS rollback to Postgres release and back to SQLite without changing shared environment")
+            later_sqlite = commit()
+            start = len(calls.read_text())
+            deploy()
+            operations = calls.read_text()[start:]
+            assert "sqlite-backup" in operations and "dump\n" not in operations and "import\n" not in operations
+            assert len(list((root / "dumps").glob("*.sqlite"))) == 1
+            assert (root / "current").resolve().name == later_sqlite
+            print("PASS later SQLite deployment uses consistent SQLite backup, no pg_dump or import")
+            backup_root = base / "nightly"
+            (backup_root / "data").mkdir(parents=True)
+            (backup_root / "backups").mkdir()
+            with sqlite3.connect(backup_root / "data" / "sent.sqlite") as database:
+                database.execute("create table fixture(value text)")
+                database.execute("insert into fixture values ('preserved')")
+            expired = backup_root / "backups" / "expired.sqlite"
+            expired.write_text("old")
+            os.utime(expired, (time.time() - 15 * 86400,) * 2)
+            nightly_env = dict(os.environ, SENT_DEPLOY_ROOT=str(backup_root))
+            run("bash", str(SOURCE.parent / "sqlite-backup.sh"), env=nightly_env)
+            assert not expired.exists()
+            backups = list((backup_root / "backups").glob("*.sqlite"))
+            assert len(backups) == 1
+            with sqlite3.connect(backups[0]) as database:
+                assert database.execute("select value from fixture").fetchone()[0] == "preserved"
+            (backup_root / "data" / "sent.sqlite").write_text("not a database")
+            failed_backup = subprocess.run(["bash", str(SOURCE.parent / "sqlite-backup.sh")], env=nightly_env, capture_output=True)
+            assert failed_backup.returncode != 0 and not list((backup_root / "backups").glob("*.tmp"))
+            print("PASS nightly SQLite backup is readable, expires old backups, and cleans up failures")
         finally:
             server.shutdown()
 

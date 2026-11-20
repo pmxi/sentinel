@@ -17,6 +17,8 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
+sha2 = "0.10"
+rustix = { version = "1", features = ["fs"] }
 tower-http = { version = "0.6", features = ["fs"] }
 uuid.workspace = true
 

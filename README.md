@@ -74,7 +74,7 @@ the worker is a separate process.
 
 The migration runner uses `BEGIN IMMEDIATE` and `sent_migrations(filename, applied_at)`.
 The database file is created automatically, with WAL, foreign keys, a five-second busy timeout,
-and NORMAL synchronous mode. This fresh SQLite schema does not migrate existing Postgres data.
+and NORMAL synchronous mode. Existing Postgres data can be copied with `sent-import-postgres` (below).
 SQLx uses runtime queries; no database is needed to
 build. The `v1` AES-256-GCM credential envelope is compatible with Node's format.
 
@@ -333,13 +333,46 @@ After connecting each account in Settings, the worker pages through the entire a
 
 ## Production deployment
 
-**SQLite migration status:** `deploy/` and the backup/restore procedures below
-still describe the previous Postgres deployment and are not SQLite-compatible.
-Do not use them for the SQLite application until the deployment migration lands.
-For now, use the local setup above. `DATABASE_URL` is no longer read by the app;
-`SENT_DATABASE_PATH` defaults to `./data/sent.sqlite`.
+The application uses `SENT_DATABASE_PATH`, default `./data/sent.sqlite`.
+`DATABASE_URL` remains in the shared environment for the importer and rollback
+to old releases; the SQLite application ignores it. Never edit that shared URL
+as part of the cutover.
+
+### PostgreSQL importer
+
+Build with `cargo build --release --locked --bin sent-import-postgres`. Export
+`DATABASE_URL` securely, then run:
+
+```sh
+MIGRATIONS_PATH=./migrations target/release/sent-import-postgres /new/path/mail.sqlite
+target/release/sent-import-postgres --check /new/path/mail.sqlite
+```
+
+The parent directory must exist. The target and `<target>.tmp` must not exist.
+The importer opens PostgreSQL with `default_transaction_read_only=on`, takes a
+repeatable-read snapshot, applies SQLite migrations, and copies every application
+table in batches of 100. It copies credentials unchanged and converts existing
+3072-dimensional vectors to little-endian f32 without any AI calls. FTS triggers
+populate the search index. Per-table counts and SHA-256 hashes of all normalized
+rows (including every embedding byte), integrity and foreign-key checks must
+pass before an atomic no-replace rename publishes the file. Failed imports
+remove their temporary files. Output contains counts/timings, never mailbox data
+or connection diagnostics. `--check` opens SQLite read-only and exercises the
+actual list/detail/search, sync/replica, draft/account and health repository
+functions; it uses a stored embedding for hybrid search and makes no AI calls.
+
+An optional automated integration test reads `SENT_IMPORT_TEST_DATABASE_URL`.
+Point it only at an isolated database with the original PostgreSQL migrations
+and, optionally, `server/tests/postgres_fixture.sql` applied. Without this
+variable, that one PostgreSQL integration test skips; SQLite tests always run.
 
 ### Native production: pull-based push-to-deploy
+
+Before the first SQLite deployment, install this revision's `deploy/deploy.sh`
+as `~/sent/bin/deploy.sh` using the bootstrap command below. The previously
+installed PostgreSQL deployer cannot perform the import. The new launcher
+refuses to start a SQLite release without its importer, runtime database path,
+and existing database, rather than silently creating an empty mailbox.
 
 The production box runs user systemd units as `sentinel` (linger must already
 be enabled). Every 30 seconds `sent-deploy.timer` checks GitHub's `master` SHA.
@@ -354,14 +387,26 @@ Solid app is built with pnpm. The release's `runtime.env` points `WEB_DIST_PATH`
 `MIGRATIONS_PATH` at that release. The shared `/opt/sent/app/.env` is symlinked, never
 copied. Each release installs its systemd units and `~/sent/bin/sent-run`, which starts
 the Rust binaries or, for older TypeScript releases kept for rollback, their Node entry
-points. A custom-format `pg_dump` is taken (last 10 retained), then `~/sent/current`
+points. SQLite releases also build/copy `sent-import-postgres` and export
+`SENT_DATABASE_PATH=~/sent/data/sent.sqlite` through their `runtime.env`.
+On the first SQLite deploy, both services stop, then a custom-format `pg_dump`
+is taken and the importer copies the quiescent PostgreSQL database. PostgreSQL
+is never modified. Later SQLite deploys take a consistent `sqlite3 .backup`
+instead of a PostgreSQL dump; the latest ten deployment backups are retained.
+PostgreSQL releases still take `pg_dump`. Then `~/sent/current`
 switches atomically and both units restart; the Rust services apply pending migrations at
-startup, after the dump. Health requires active units, database
+startup, after the backup. Health requires active units, database
 connectivity and a worker heartbeat after restart, not `status: "ok"`.
 If sync was fresh before deployment, its oldest successful sync must also be
 after restart. Old builds without `sync` do not impose that condition.
 Health has a four-minute budget. Failure restores and checks the previous
-release; dumps are not automatically restored. Successful releases install
+release; backups are not automatically restored. A failed first SQLite deploy
+stops the new services and moves the imported file (and any WAL/SHM files) to
+`data/sent.sqlite.failed-<timestamp>-<pid>`, so a retry reimports PostgreSQL.
+Rolling back to a PostgreSQL release retains the untouched PostgreSQL mailbox,
+but **does not include writes made while running SQLite**. Do not resume SQLite
+after a period of PostgreSQL writes without explicitly reconciling or moving
+the old SQLite file aside and reimporting. Successful releases install
 their own deploy script and retain about five releases, protecting current
 and previous.
 
@@ -375,7 +420,7 @@ mkdir -p ~/sent/{bin,tools,releases,dumps,state} ~/.config/systemd/user
 export PATH="$HOME/sent/tools/node/bin:$PATH"
 corepack enable
 corepack prepare pnpm@11.21.0 --activate
-# Also required on PATH: git, curl, flock, tar, pg_dump (matching the DB major).
+# Also required on PATH: git, curl, flock, tar, sqlite3, pg_dump (matching the DB major).
 # git ls-remote https://github.com/pmxi/sentinel.git must work non-interactively.
 install -m 700 deploy/deploy.sh ~/sent/bin/deploy.sh
 install -m 700 deploy/sent-run ~/sent/bin/sent-run
@@ -421,6 +466,17 @@ Paths/endpoints can be overridden with `SENT_DEPLOY_ROOT`, `SENT_DEPLOY_REPO`,
 `SENT_DEPLOY_TIMEOUT` and `SENT_DEPLOY_INTERVAL` control health polling seconds.
 
 ## Backups
+
+SQLite releases install and enable the user-level `sent-sqlite-backup.timer`.
+It runs nightly at 03:30 with up to 30 minutes jitter, uses SQLite's consistent
+backup API through `sqlite3 .backup`, and retains 14 days in `~/sent/backups`
+with private permissions. Run `systemctl --user start sent-sqlite-backup.service`
+to test it. Copy backups off-host. To restore, stop both services, preserve the
+current database and its `-wal`/`-shm` sidecars, then install a backup as
+`~/sent/data/sent.sqlite`, run `sent-import-postgres --check`, and restart.
+Never copy a live SQLite database without using the backup API.
+
+### Legacy PostgreSQL backups (retained for rollback)
 
 `scripts/backup.sh` can run from cron or a systemd timer. It writes compressed PostgreSQL dumps to `./backups` by default and retains 14 days. Override the destination with `SENT_BACKUP_DIR`, ideally to encrypted storage copied off the host.
 

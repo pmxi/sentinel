@@ -24,7 +24,7 @@ pub fn embedding_blob(values: &[f64]) -> Result<Vec<u8>> {
         .collect())
 }
 
-pub async fn pool(path: &str, test: bool) -> Result<SqlitePool> {
+fn register_vectors() {
     static REGISTER: Once = Once::new();
     REGISTER.call_once(|| unsafe {
         let result = libsqlite3_sys::sqlite3_auto_extension(Some(std::mem::transmute::<
@@ -39,6 +39,25 @@ pub async fn pool(path: &str, test: bool) -> Result<SqlitePool> {
         )));
         assert_eq!(result, libsqlite3_sys::SQLITE_OK);
     });
+}
+
+pub async fn read_only_pool(path: &Path) -> Result<SqlitePool> {
+    register_vectors();
+    Ok(SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(
+            SqliteConnectOptions::new()
+                .filename(path)
+                .read_only(true)
+                .foreign_keys(true)
+                .busy_timeout(Duration::from_secs(5))
+                .pragma("query_only", "ON"),
+        )
+        .await?)
+}
+
+pub async fn pool(path: &str, test: bool) -> Result<SqlitePool> {
+    register_vectors();
     if let Some(parent) = Path::new(path)
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
