@@ -116,6 +116,21 @@ class BackupRestoreTests(unittest.TestCase):
         env_file.unlink()
         check("default", {"SENT_DATABASE_PATH": None}, self.root)
 
+    def test_backup_and_restore_do_not_require_hard_links(self):
+        tools = self.root / "tools"
+        tools.mkdir()
+        link = tools / "ln"
+        link.write_text("#!/bin/sh\nexit 91\n")
+        link.chmod(0o755)
+        with sqlite3.connect(self.database) as connection:
+            connection.execute("create table fixture(value text)")
+        config = {"PATH": str(tools) + os.pathsep + os.environ["PATH"]}
+        backed_up = self.run_script("backup.sh", config=config)
+        self.assertEqual(backed_up.returncode, 0, backed_up.stderr)
+        backup, = self.backups.glob("*.sqlite")
+        restored = self.run_script("restore.sh", backup, self.root / "restored.sqlite", config=config)
+        self.assertEqual(restored.returncode, 0, restored.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -27,5 +27,6 @@ sqlite3 -readonly "$backup" ".backup $temporary"
   echo 'Backup integrity check failed.' >&2
   exit 1
 }
-ln "$temporary" "$target"
+mv -n "$temporary" "$target"
+[ ! -e "$temporary" ] || { echo 'Restore destination already exists.' >&2; exit 1; }
 printf 'Restored SQLite backup to %s\n' "$target"
