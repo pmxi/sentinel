@@ -42,11 +42,13 @@ export const sentApi = {
   message: (id: string) => api<MessageDetail>(`/api/messages/${id}`),
   thread: (id: string, trash = false) =>
     api<{ messages: MessageDetail[] }>(`/api/threads/${id}?trash=${trash}`),
-  action: (id: string, action: string) =>
-    api<{ mutationId: string }>(`/api/messages/${id}/action`, {
+  action: (id: string, action: string, undoable = false) =>
+    api<import("@sent/shared").MutationReceipt>(`/api/messages/${id}/action`, {
       method: "POST",
-      body: JSON.stringify({ action }),
+      body: JSON.stringify({ action, undoable }),
     }),
+  undo: (id: string) =>
+    api<{ draft: Draft | null }>(`/api/mutations/${id}/undo`, { method: "POST" }),
   tier: (id: string, tier: Tier | null) =>
     api<{ ok: true }>(`/api/messages/${id}/tier`, {
       method: "PUT",
@@ -63,7 +65,10 @@ export const sentApi = {
   sendDraft: (id: string, files: File[]) => {
     const body = new FormData();
     for (const file of files) body.append("attachment", file);
-    return api<{ mutationId: string }>(`/api/drafts/${id}/send`, { method: "POST", body });
+    return api<import("@sent/shared").MutationReceipt>(`/api/drafts/${id}/send?undoable=true`, {
+      method: "POST",
+      body,
+    });
   },
   oauthUrl: (provider: "gmail" | "microsoft") =>
     api<{ url: string }>(`/api/oauth/${provider}/start`),

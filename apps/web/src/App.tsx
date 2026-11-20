@@ -17,6 +17,7 @@ import { CommandProvider, useCommandPalette, useCommands } from "./commands";
 import { ComposeProvider, useCompose } from "./compose";
 import { InboxPage, SearchResults } from "./InboxPage";
 import { LoginPage } from "./LoginPage";
+import { TriageProvider } from "./triage";
 
 export default function App() {
   const session = useQuery({ queryKey: ["session"], queryFn: sentApi.session, retry: false });
@@ -40,29 +41,31 @@ export default function App() {
 function AuthenticatedApp() {
   const accounts = useQuery({ queryKey: ["accounts"], queryFn: sentApi.accounts });
   return (
-    <ComposeProvider accounts={accounts.data?.accounts ?? []}>
-      <CommandProvider>
-        <Routes>
-          <Route element={<Shell accounts={accounts.data?.accounts ?? []} />}>
-            <Route index element={<Navigate to="/inbox/l1" replace />} />
-            <Route
-              path="/inbox/:view"
-              element={<InboxPage accounts={accounts.data?.accounts ?? []} />}
-            />
-            <Route
-              path="/search"
-              element={<SearchResults accounts={accounts.data?.accounts ?? []} />}
-            />
-            <Route path="/drafts" element={<DraftsPage />} />
-            <Route
-              path="/settings"
-              element={<SettingsPage accounts={accounts.data?.accounts ?? []} />}
-            />
-            <Route path="*" element={<Navigate to="/inbox/l1" replace />} />
-          </Route>
-        </Routes>
-      </CommandProvider>
-    </ComposeProvider>
+    <TriageProvider>
+      <ComposeProvider accounts={accounts.data?.accounts ?? []}>
+        <CommandProvider>
+          <Routes>
+            <Route element={<Shell accounts={accounts.data?.accounts ?? []} />}>
+              <Route index element={<Navigate to="/inbox/l1" replace />} />
+              <Route
+                path="/inbox/:view"
+                element={<InboxPage accounts={accounts.data?.accounts ?? []} />}
+              />
+              <Route
+                path="/search"
+                element={<SearchResults accounts={accounts.data?.accounts ?? []} />}
+              />
+              <Route path="/drafts" element={<DraftsPage />} />
+              <Route
+                path="/settings"
+                element={<SettingsPage accounts={accounts.data?.accounts ?? []} />}
+              />
+              <Route path="*" element={<Navigate to="/inbox/l1" replace />} />
+            </Route>
+          </Routes>
+        </CommandProvider>
+      </ComposeProvider>
+    </TriageProvider>
   );
 }
 

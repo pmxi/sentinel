@@ -18,8 +18,14 @@ import {
   useState,
 } from "react";
 import { sentApi } from "./api";
+import { useTriage } from "./triage";
 
-export type ComposeSeed = Partial<DraftInput> & { id?: string };
+export type ComposeSeed = Partial<DraftInput> & {
+  id?: string;
+  files?: File[];
+  onSent?: () => void;
+  onUndo?: () => void;
+};
 type ComposeContextValue = { openCompose(seed?: ComposeSeed): void; isOpen: boolean };
 const ComposeContext = createContext<ComposeContextValue | null>(null);
 
@@ -88,6 +94,8 @@ function Composer({
   close(): void;
 }) {
   const queryClient = useQueryClient();
+  const triage = useTriage();
+  const compose = useCompose();
   const [draftId, setDraftId] = useState(seed.id);
   const [accountId, setAccountId] = useState(seed.accountId ?? accounts[0]?.id ?? "");
   const [to, setTo] = useState(formatAddresses(seed.to));
@@ -95,7 +103,7 @@ function Composer({
   const [bcc, setBcc] = useState(formatAddresses(seed.bcc));
   const [subject, setSubject] = useState(seed.subject ?? "");
   const [body, setBody] = useState(seed.body ?? "");
-  const [files, setFiles] = useState<File[]>([]);
+  const [files, setFiles] = useState<File[]>(seed.files ?? []);
   const [showCopies, setShowCopies] = useState(Boolean(seed.cc?.length || seed.bcc?.length));
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
@@ -126,14 +134,14 @@ function Composer({
   });
 
   useEffect(() => {
-    if (!accountId) return;
+    if (!accountId || sending) return;
     if (!hydrated.current) {
       hydrated.current = true;
       if (!to && !subject && !body && !draftId) return;
     }
     const timer = window.setTimeout(() => saveDraft(draft), 750);
     return () => window.clearTimeout(timer);
-  }, [accountId, to, subject, body, draftId, draft, saveDraft]);
+  }, [accountId, to, subject, body, draftId, draft, saveDraft, sending]);
 
   const send = async () => {
     if (sending) return;
@@ -153,7 +161,18 @@ function Composer({
     setSending(true);
     try {
       const saved = await sentApi.saveDraft(draft);
-      await sentApi.sendDraft(saved.id, files);
+      const receipt = await sentApi.sendDraft(saved.id, files);
+      triage.sent(receipt, () => {
+        seed.onUndo?.();
+        compose.openCompose({
+          ...draft,
+          id: saved.id,
+          files,
+          onSent: seed.onSent,
+          onUndo: seed.onUndo,
+        });
+      });
+      seed.onSent?.();
       await queryClient.invalidateQueries({ queryKey: ["drafts"] });
       void queryClient.invalidateQueries({ queryKey: ["messages"] });
       void queryClient.invalidateQueries({ queryKey: ["thread"] });

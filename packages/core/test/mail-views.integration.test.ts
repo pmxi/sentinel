@@ -84,6 +84,111 @@ describe.skipIf(!databaseUrl)("mail views and send checkpoints in PostgreSQL", (
     });
   }
 
+  it.each(["archive", "delete"])("undoes %s before a worker can claim it", async (action) => {
+    const saved = await message("undo", 8);
+    const until = new Date(Date.now() + 5_000).toISOString();
+    const id = await repository.enqueueAction(saved.id, action, until);
+    expect(await repository.claimMutations()).toEqual([]);
+    const column = action === "archive" ? "archived" : "deleted";
+    expect(
+      (await getPool().query(`select ${column} from messages where id=$1`, [saved.id])).rows[0][
+        column
+      ],
+    ).toBe(true);
+    await repository.undoMutation(id);
+    expect(
+      (await getPool().query(`select ${column} from messages where id=$1`, [saved.id])).rows[0][
+        column
+      ],
+    ).toBe(false);
+    expect(await repository.claimMutations()).toEqual([]);
+    await expect(repository.undoMutation(id)).rejects.toThrow("Undo window expired");
+  });
+
+  it.each(["archive", "delete"])(
+    "rejects overlapping %s actions so undo preserves original state",
+    async (action) => {
+      const saved = await message("overlap", 8);
+      const until = new Date(Date.now() + 5_000).toISOString();
+      const results = await Promise.allSettled([
+        repository.enqueueAction(saved.id, action, until),
+        repository.enqueueAction(saved.id, action, until),
+      ]);
+      const queued = results.find((result) => result.status === "fulfilled");
+      expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+      expect(results.find((result) => result.status === "rejected")).toMatchObject({
+        reason: new Error("This action is already pending"),
+      });
+      if (queued?.status !== "fulfilled") throw new Error("Action was not queued");
+      await repository.undoMutation(queued.value);
+      const column = action === "archive" ? "archived" : "deleted";
+      expect(
+        (await getPool().query(`select ${column} from messages where id=$1`, [saved.id])).rows[0][
+          column
+        ],
+      ).toBe(false);
+      expect(await repository.claimMutations()).toEqual([]);
+    },
+  );
+
+  it("restores the original archived state instead of unarchiving on undo", async () => {
+    const saved = await message("already archived", 8, { archived: true });
+    const id = await repository.enqueueAction(
+      saved.id,
+      "archive",
+      new Date(Date.now() + 5_000).toISOString(),
+    );
+    await repository.undoMutation(id);
+    expect(
+      (await getPool().query("select archived from messages where id=$1", [saved.id])).rows[0]
+        .archived,
+    ).toBe(true);
+  });
+
+  it("rejects undo after expiry and lets the worker claim the action", async () => {
+    const saved = await message("expired", 8);
+    const id = await repository.enqueueAction(
+      saved.id,
+      "delete",
+      new Date(Date.now() - 1_000).toISOString(),
+    );
+    await expect(repository.undoMutation(id)).rejects.toThrow("Undo window expired");
+    expect(await repository.claimMutations()).toMatchObject([{ id, action: "delete" }]);
+    await expect(repository.undoMutation(id)).rejects.toThrow("Undo window expired");
+  });
+
+  it("cancels a queued reply exactly once and restores its draft", async () => {
+    const original = await message("reply", 8);
+    const draft = await repository.createOrUpdateDraft({
+      accountId,
+      to: [{ name: "Sender", address: "sender@example.com" }],
+      cc: [],
+      bcc: [],
+      subject: "Re: reply",
+      body: "Looks good.",
+      replyToMessageId: original.id,
+      forwardOfMessageId: null,
+    });
+    const id = await repository.enqueueSend(
+      draft.id,
+      [],
+      new Date(Date.now() + 5_000).toISOString(),
+    );
+    expect(await repository.getDraft(draft.id)).toBeNull();
+    expect(await repository.claimMutations()).toEqual([]);
+    const results = await Promise.allSettled([
+      repository.undoMutation(id),
+      repository.undoMutation(id),
+    ]);
+    expect(results.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(await repository.getDraft(draft.id)).toMatchObject({
+      id: draft.id,
+      body: draft.body,
+      replyToMessageId: original.id,
+    });
+    expect(await repository.claimMutations()).toEqual([]);
+  });
+
   it("groups by conversation after view filtering and before pagination", async () => {
     await message("conversation", 8, { read: false });
     const latestInbound = await message("conversation", 10);

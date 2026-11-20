@@ -458,20 +458,42 @@ export class MailRepository {
     }
   }
 
-  async enqueueAction(messageId: string, action: string): Promise<string> {
+  async enqueueAction(
+    messageId: string,
+    action: string,
+    undoUntil: string | null = null,
+  ): Promise<string> {
     return transaction(async (client) => {
       const message = (
-        await client.query<{ account_id: string }>(
-          "select account_id from messages where id=$1 for update",
+        await client.query<{ account_id: string; archived: boolean; deleted: boolean }>(
+          "select account_id,archived,deleted from messages where id=$1 for update",
           [messageId],
         )
       ).rows[0];
       if (!message) throw new Error("Message not found");
+      const pendingUndo = await client.query(
+        `select id from mutation_outbox where message_id=$1 and action=$2 and status='pending'
+        and (payload->>'undoUntil')::timestamptz > clock_timestamp()`,
+        [messageId, action],
+      );
+      if (pendingUndo.rowCount) throw new Error("This action is already pending");
       const id = randomUUID();
       await client.query(
-        `insert into mutation_outbox(id,idempotency_key,account_id,message_id,action)
-        values($1,$2,$3,$4,$5)`,
-        [id, id, message.account_id, messageId, action],
+        `insert into mutation_outbox(id,idempotency_key,account_id,message_id,action,payload,next_attempt_at)
+        values($1,$2,$3,$4,$5,$6,coalesce($7::timestamptz,now()))`,
+        [
+          id,
+          id,
+          message.account_id,
+          messageId,
+          action,
+          JSON.stringify(
+            undoUntil
+              ? { undoUntil, previous: { archived: message.archived, deleted: message.deleted } }
+              : {},
+          ),
+          undoUntil,
+        ],
       );
       const updates: Record<string, string> = {
         mark_read: "read=true",
@@ -533,6 +555,7 @@ export class MailRepository {
   async enqueueSend(
     draftId: string,
     attachments: Array<{ filename: string; contentType: string; contentBase64: string }>,
+    undoUntil: string | null = null,
   ): Promise<string> {
     return transaction(async (client) => {
       const draft = (await client.query("select * from drafts where id=$1 for update", [draftId]))
@@ -540,12 +563,60 @@ export class MailRepository {
       if (!draft) throw new Error("Draft not found");
       const id = randomUUID();
       await client.query(
-        `insert into mutation_outbox(id,idempotency_key,account_id,action,payload)
-        values($1,$2,$3,'send',$4)`,
-        [id, id, draft.account_id, JSON.stringify({ draft: this.mapDraft(draft), attachments })],
+        `insert into mutation_outbox(id,idempotency_key,account_id,action,payload,next_attempt_at)
+        values($1,$2,$3,'send',$4,coalesce($5::timestamptz,now()))`,
+        [
+          id,
+          id,
+          draft.account_id,
+          JSON.stringify({ draft: this.mapDraft(draft), attachments, undoUntil }),
+          undoUntil,
+        ],
       );
       await client.query("delete from drafts where id=$1", [draftId]);
       return id;
+    });
+  }
+
+  async undoMutation(id: string): Promise<Draft | null> {
+    return transaction(async (client) => {
+      const mutation = (
+        await client.query(
+          `select * from mutation_outbox where id=$1 and status='pending'
+        and (payload->>'undoUntil')::timestamptz > clock_timestamp() for update`,
+          [id],
+        )
+      ).rows[0];
+      if (!mutation) throw new Error("Undo window expired");
+      let draft: Draft | null = null;
+      if (mutation.action === "send") {
+        draft = mutation.payload.draft as Draft;
+        await client.query(
+          `insert into drafts(id,account_id,to_addresses,cc_addresses,bcc_addresses,subject,body,
+          reply_to_message_id,forward_of_message_id) values($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+          [
+            draft.id,
+            draft.accountId,
+            JSON.stringify(draft.to),
+            JSON.stringify(draft.cc),
+            JSON.stringify(draft.bcc),
+            draft.subject,
+            draft.body,
+            draft.replyToMessageId,
+            draft.forwardOfMessageId,
+          ],
+        );
+      } else if (mutation.action === "archive" || mutation.action === "delete") {
+        const field = mutation.action === "archive" ? "archived" : "deleted";
+        await client.query(`update messages set ${field}=$2,updated_at=now() where id=$1`, [
+          mutation.message_id,
+          mutation.payload.previous[field],
+        ]);
+      } else {
+        throw new Error("Undo window expired");
+      }
+      await client.query("delete from mutation_outbox where id=$1", [id]);
+      return draft;
     });
   }
 

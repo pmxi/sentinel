@@ -16,6 +16,7 @@ import {
   ProviderSchema,
   SearchQuerySchema,
   TierOverrideSchema,
+  UNDO_WINDOW_MS,
 } from "@sent/shared";
 import argon2 from "argon2";
 import Fastify, { type FastifyInstance } from "fastify";
@@ -142,12 +143,31 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
   app.post("/api/messages/:id/action", async (request, reply) => {
     const { id } = IdParamSchema.parse(request.params);
-    const { action } = MessageActionSchema.parse(request.body);
+    const { action, undoable } = MessageActionSchema.parse(request.body);
+    const undoUntil =
+      undoable && (action === "archive" || action === "delete")
+        ? new Date(Date.now() + UNDO_WINDOW_MS).toISOString()
+        : undefined;
     try {
-      return reply.code(202).send({ mutationId: await repository.enqueueAction(id, action) });
+      return reply
+        .code(202)
+        .send({ mutationId: await repository.enqueueAction(id, action, undoUntil), undoUntil });
     } catch (error) {
       if (error instanceof Error && error.message === "Message not found")
         return reply.code(404).send({ error: error.message });
+      if (error instanceof Error && error.message === "This action is already pending")
+        return reply.code(409).send({ error: error.message });
+      throw error;
+    }
+  });
+
+  app.post("/api/mutations/:id/undo", async (request, reply) => {
+    const { id } = IdParamSchema.parse(request.params);
+    try {
+      return { draft: await repository.undoMutation(id) };
+    } catch (error) {
+      if (error instanceof Error && error.message === "Undo window expired")
+        return reply.code(409).send({ error: "This action can no longer be undone." });
       throw error;
     }
   });
@@ -201,7 +221,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         });
       }
     }
-    return reply.code(202).send({ mutationId: await repository.enqueueSend(id, attachments) });
+    const { undoable } = z
+      .object({ undoable: z.enum(["true", "false"]).optional() })
+      .parse(request.query);
+    const undoUntil =
+      undoable === "true" ? new Date(Date.now() + UNDO_WINDOW_MS).toISOString() : undefined;
+    return reply
+      .code(202)
+      .send({ mutationId: await repository.enqueueSend(id, attachments, undoUntil), undoUntil });
   });
 
   app.get("/api/messages/:id/attachments/:attachmentId", async (request, reply) => {
