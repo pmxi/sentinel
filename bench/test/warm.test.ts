@@ -3,6 +3,25 @@ import { describe, expect, it, vi } from "vitest";
 import { prepareWarmMailbox, prepareWarmReload } from "../src/warm.ts";
 
 describe("warm mailbox preparation", () => {
+  it("does not time navigation while recent-body background sync is still running", async () => {
+    const page = {
+      waitForLoadState: vi.fn().mockResolvedValue(undefined),
+      evaluate: vi.fn().mockResolvedValue({ registered: false, controlled: false }),
+      locator: vi.fn().mockReturnValue({ getAttribute: vi.fn().mockResolvedValue("ready") }),
+      waitForFunction: vi.fn().mockResolvedValue(undefined),
+    };
+    await prepareWarmMailbox(page as unknown as Page);
+    const ready = page.waitForFunction.mock.calls[0]?.[0] as () => boolean;
+    const dataset = { sentReplica: "ready", sentReplicaBodies: "syncing" };
+    vi.stubGlobal("document", { documentElement: { dataset } });
+    try {
+      expect(ready()).toBe(false);
+      dataset.sentReplicaBodies = "ready";
+      expect(ready()).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
   it.each([null, "loading", "ready"])(
     "waits for a replica only when advertised: %s",
     async (marker) => {

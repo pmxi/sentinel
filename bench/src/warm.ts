@@ -4,7 +4,9 @@ export async function prepareWarmMailbox(page: Page) {
   await prepareWarmReload(page);
   if (await page.locator("html").getAttribute("data-sent-replica")) {
     await page.waitForFunction(
-      () => document.documentElement.dataset.sentReplica === "ready",
+      () =>
+        document.documentElement.dataset.sentReplica === "ready" &&
+        document.documentElement.dataset.sentReplicaBodies !== "syncing",
       undefined,
       { timeout: 120_000 },
     );
