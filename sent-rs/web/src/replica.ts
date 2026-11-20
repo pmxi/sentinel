@@ -351,7 +351,7 @@ export class MailboxReplica {
   }
   begin(change: ReplicaChange) {
     this.revision++;
-    const token = crypto.randomUUID(),
+    const token = replicaId(),
       active = this.ready();
     if (active) void this.call("begin", token, change).catch(() => this.fail());
     return {

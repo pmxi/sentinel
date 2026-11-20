@@ -27,6 +27,7 @@ describe("replica initialization", () => {
           () => true,
         );
         expect(replica.id).toMatch(/^[a-f0-9-]{36}$/);
+        expect(() => replica.begin({ id: "message", action: "archive" })).not.toThrow();
         void replica.close();
       }).not.toThrow();
       dispose();

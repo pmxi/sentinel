@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { replicaId } from "./replica";
 import { holdShellReload, registerShellWorker } from "./service-worker";
 import { forgetShellMetadata } from "./shell-metadata";
 
@@ -29,7 +30,7 @@ describe("shell registration", () => {
       const reload = vi.spyOn(window.location, "reload").mockImplementation(() => {}),
         dispose = await registerShellWorker(),
         release = holdShellReload(async () => {});
-      localStorage.setItem("sent:replica:session:v1", crypto.randomUUID());
+      localStorage.setItem("sent:replica:session:v1", replicaId());
       try {
         worker.controller = {};
         events.dispatchEvent(new Event("controllerchange"));
