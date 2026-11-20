@@ -347,10 +347,111 @@ a {
   display: block;
   padding: 10px 14px;
   border: 0;
-  border-bottom: 1px solid var(--line);
   background: transparent;
   text-align: left;
   cursor: pointer;
+}
+.message-list-item {
+  border-bottom: 1px solid var(--line);
+}
+.message-list-item.selected {
+  background: #ededed;
+  box-shadow: inset 2px 0 #171717;
+}
+.message-ai-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-top: 4px;
+  color: #444;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.message-ai-summary > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ai-label {
+  flex: 0 0 auto;
+  color: #6550a4;
+  font-size: 9px;
+  font-weight: 600;
+}
+.ranking-reason {
+  margin: 0 14px 10px;
+  color: #666;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.ranking-reason summary {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  list-style: none;
+}
+.ranking-reason summary::-webkit-details-marker {
+  display: none;
+}
+.ranking-reason summary:focus-visible {
+  outline: 2px solid #777;
+  outline-offset: 3px;
+}
+.ranking-chevron,
+.ranking-label {
+  flex: 0 0 auto;
+}
+.ranking-label {
+  color: #6550a4;
+  font-weight: 500;
+}
+.ranking-preview {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ranking-reason[open] .ranking-preview {
+  display: none;
+}
+.ranking-reason[open] .ranking-chevron {
+  transform: rotate(90deg);
+}
+.ranking-body {
+  padding: 5px 0 0 16px;
+  overflow-wrap: anywhere;
+}
+.ranking-body p {
+  margin: 0;
+}
+.ranking-body strong {
+  display: block;
+  margin-bottom: 3px;
+  font-weight: 500;
+}
+.reader-insights {
+  margin: 16px 0 20px;
+  padding: 12px 14px;
+  border: 1px solid #e8e3ef;
+  border-radius: 4px;
+  background: #faf9fc;
+}
+.insights-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #6550a4;
+  font-size: 11px;
+  font-weight: 600;
+}
+.reader-ai-summary {
+  margin: 8px 0;
+  font-size: 13px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.reader-insights .ranking-reason {
+  margin: 8px 0 0;
 }
 .message-row:hover {
   background: #f6f6f6;
@@ -841,28 +942,6 @@ a {
 .attachments a small {
   color: var(--faint);
   font-size: 10px;
-}
-.reasoning {
-  max-width: 660px;
-  margin-top: 26px;
-  border: 1px solid var(--line);
-  border-radius: 2px;
-  background: #fff;
-  color: #555;
-  font-size: 12px;
-}
-.reasoning summary {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 10px 12px;
-  cursor: pointer;
-  font-weight: 600;
-}
-.reasoning p {
-  margin: 0;
-  padding: 0 12px 11px;
-  line-height: 1.5;
 }
 .reply-actions {
   display: flex;

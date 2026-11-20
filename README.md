@@ -12,7 +12,7 @@ The repository contains a responsive React client, a Fastify API, a separate Pos
 - L1/L2/L3, Unclassified, All Mail, Sent, Drafts, and Trash views
 - Read/unread, flag, archive, delete, send, reply, reply all, and forward
 - Sent-owned drafts and ordinary file attachments
-- Versioned OpenAI classification and clean reader text with Markdown hyperlinks and strict `{ reasoning, tier, plainText }` output
+- Versioned OpenAI classification, one-line inbox summaries, and clean reader text with Markdown hyperlinks and strict `{ reasoning, summary, tier, plainText }` output
 - PostgreSQL full-text plus pgvector hybrid search, with lexical fallback if OpenAI is unavailable
 - Manual tier overrides
 - Password login, encrypted OAuth credentials, durable mutation outbox, retries, health checks, HTTPS, and backups

@@ -10,11 +10,17 @@ import { env, requireConfig } from "./config.ts";
 
 export const ClassificationOutputSchema = z.object({
   reasoning: z.string().min(1),
+  summary: z.string().trim().min(1).max(280),
   tier: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   plainText: z.string().max(20_000),
 });
 
-export type ClassificationOutput = { reasoning: string; tier: Tier; plainText: string };
+export type ClassificationOutput = {
+  reasoning: string;
+  summary: string;
+  tier: Tier;
+  plainText: string;
+};
 
 export type ClassificationResult = ClassificationOutput & {
   model: string;

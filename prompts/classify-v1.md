@@ -48,4 +48,6 @@ Also return `plainText`, a clean rendition for Sent's default message reader. Th
 - Prefer under 6,000 characters. Never exceed 20,000 characters.
 - If there is no meaningful body, return an empty string.
 
-Explain the decisive classification evidence briefly in `reasoning`. Do not merely restate the tier definition. Output only the requested structured object containing `reasoning`, `tier`, and `plainText`.
+Write `summary` as one short, factual sentence (at most 280 characters) for an inbox preview. Capture the main request or update and any explicit deadline. Do not invent urgency, dates, advice, or actions, and do not include Markdown or URLs. This is a summary of the email, not an explanation of its tier.
+
+Explain the decisive classification evidence briefly in `reasoning`. Do not merely restate the tier definition. Output only the requested structured object containing `reasoning`, `summary`, `tier`, and `plainText`.
