@@ -40,6 +40,8 @@ async function dispatch(method: string, args: unknown[]) {
       return store.delta(args[0] as ReplicaDelta, Boolean(args[1]));
     case "list":
       return store.list(args[0] as Parameters<ReplicaStore["list"]>[0]);
+    case "search":
+      return store.search(String(args[0]));
     case "detail":
       return unpackDetail(store.detail(String(args[0]), Boolean(args[1])));
     case "thread":

@@ -12,6 +12,8 @@ import {
 } from "solid-js";
 import { useCompose } from "./compose";
 import { type Command, filterCommands, isShortcutEvent, isTypingTarget } from "./keyboard";
+import { useNavigate } from "./router";
+import { useMailSearch } from "./search";
 
 type CommandContextValue = {
   register(scope: string, commands: () => Command[]): () => void;
@@ -188,16 +190,26 @@ function CommandPalette(props: { commands: Command[]; close(): void }) {
     current: (HTMLElement | null) | null;
   };
   const [query, setQuery] = createSignal("");
+  const mail = useMailSearch(query);
+  const navigate = useNavigate();
   const [active, setActive] = createSignal(0);
   const groups = createMemo(() => ["Message", "Mail", "Navigation"] as const);
-  const results = createMemo(() =>
-    filterCommands(
+  const results = createMemo<Command[]>(() => [
+    ...filterCommands(
       [...props.commands].sort(
         (left, right) => groups().indexOf(left.group) - groups().indexOf(right.group),
       ),
       query(),
     ),
-  );
+    ...(mail.data?.messages ?? []).map((row) => ({
+      id: `mail-${row.threadId}`,
+      label: row.subject,
+      group: "Mail" as const,
+      keys: [],
+      run: () =>
+        navigate(`/search?q=${encodeURIComponent(query())}&message=${encodeURIComponent(row.id)}`),
+    })),
+  ]);
   const available = createMemo(() => results().filter((command) => !command.disabled));
   const selected = createMemo(() => available()[active()] ?? available()[0]);
   const restoreFocus = () => {

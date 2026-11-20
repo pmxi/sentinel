@@ -65,6 +65,89 @@ afterEach(() => {
   store.db.close();
 });
 describe("real SQLite replica", () => {
+  it("indexes headers, prefixes and accents without storing a second content copy", () => {
+    seed([
+      row("one", {
+        subject: "Café quarterly",
+        from: [{ name: "María", address: "maria@company.test" }],
+        to: [{ name: "Recipient", address: "recipient@test" }],
+      }),
+      row("two", { subject: "Other" }),
+    ]);
+    for (const query of ["cafe quar", "maria", "recipient", "company", "Text"])
+      expect(store.search(query).messages.map((m) => m.id)).toContain("one");
+    expect(store.search("notpresent").messages).toEqual([]);
+    expect(store.db.selectValue("select subject from search_headers limit 1")).toBeNull();
+    expect(store.storageStats().ftsAllocatedBytes).toBeGreaterThan(0);
+  });
+  it("keeps snapshots, deltas, archive/undo, deletions and cached bodies synchronized", () => {
+    const original = row("one", {
+      subject: "Headerneedle",
+      bodyAvailable: true,
+      textBody: "uniquebodyword",
+    });
+    seed([original]);
+    expect(store.search("uniquebodyword").messages).toEqual([]);
+    store.bodies([original]);
+    expect(store.search("uniquebodyword").messages[0]?.id).toBe("one");
+    expect(store.search("Headerneedle uniquebody").messages[0]?.id).toBe("one");
+    store.begin("archive", { id: "one", action: "archive" });
+    expect(store.search("uniquebodyword").messages[0]?.id).toBe("one");
+    store.settle("archive", false);
+    seed([row("new", { subject: "Newneedle" }), original]);
+    expect(store.search("uniquebodyword").messages[0]?.id).toBe("one");
+    store.delta(delta([row("new", { subject: "Changedneedle" })]));
+    expect(store.search("Newneedle").messages).toEqual([]);
+    expect(store.search("Changedneedle").messages[0]?.id).toBe("new");
+    store.begin("delete", { id: "one", action: "delete" });
+    expect(store.search("uniquebodyword").messages).toEqual([]);
+    store.settle("delete", false);
+    expect(store.search("uniquebodyword").messages[0]?.id).toBe("one");
+    store.delta(delta([], ["one"]));
+    expect(store.search("uniquebodyword").messages).toEqual([]);
+    expect(store.search("Headerneedle").messages).toEqual([]);
+  });
+  it("removes stale and evicted body tokens and rebuilds schema-3 caches once", () => {
+    const original = row("one", { bodyAvailable: true, textBody: "oldbodyneedle" });
+    seed([original]);
+    store.bodies([original]);
+    store.delta(delta([{ ...original, bodyVersion: "v2" }]));
+    expect(store.search("oldbodyneedle").messages).toEqual([]);
+    store.bodies([{ ...original, bodyVersion: "v2", textBody: "newbodyneedle" }]);
+    expect(store.search("newbodyneedle").messages[0]?.id).toBe("one");
+    store.db.exec("delete from bodies");
+    expect(store.search("newbodyneedle").messages).toEqual([]);
+    store.db.exec("pragma user_version=3");
+    store = new ReplicaStore(store.db);
+    expect(store.count()).toBe(0);
+    expect(store.db.selectValue("pragma user_version")).toBe(4);
+    seed([original]);
+    expect(store.search("one").messages[0]?.id).toBe("one");
+  });
+  it("treats arbitrary FTS operators and malformed syntax as literal sanitized tokens", () => {
+    seed([row("needle", { subject: "ordinary words" })]);
+    for (const query of [
+      "",
+      "***",
+      '"NEAR(foo) OR bar* NOT - baz:',
+      "\\",
+      "a".repeat(10000),
+      "😀 {} [] ()",
+      "\u0000\u0001",
+    ])
+      expect(() => store.search(query)).not.toThrow();
+  });
+  it("ranks subject matches over body matches, breaks ties by recency and deduplicates conversations", () => {
+    const subject = row("subject", { subject: "rankneedle", threadId: "conversation" });
+    const body = row("body", { bodyAvailable: true, textBody: "rankneedle" });
+    seed([
+      subject,
+      { ...subject, id: "older", sortReceivedAt: "2025-01-01T00:00:00.000000Z" },
+      body,
+    ]);
+    store.bodies([body]);
+    expect(store.search("rankneedle").messages.map((m) => m.id)).toEqual(["subject", "body"]);
+  });
   it("background-caches the inclusive recent window and expires only unopened older bodies", () => {
     const now = Date.UTC(2026, 10, 20);
     vi.spyOn(Date, "now").mockReturnValue(now);

@@ -170,6 +170,10 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
   const location = useLocation();
   const navigate = useNavigate();
   const compose = useCompose();
+  createEffect(() => {
+    if (location.pathname === "/search")
+      setQuery(new URLSearchParams(location.search).get("q") ?? "");
+  });
   const searchInput = { current: null } as {
     current: HTMLInputElement | null;
   };

@@ -1,4 +1,4 @@
-import type { Account, MessageDetail } from "@sent/shared";
+import type { Account, MessageDetail, SearchResponse } from "@sent/shared";
 import type { QueryClient, QueryKey } from "@tanstack/solid-query";
 import { createSignal } from "solid-js";
 import { ApiError, api, type CacheResponse, sentApi } from "./api";
@@ -261,6 +261,9 @@ export class MailboxReplica {
       limit: Number(params.get("limit") ?? 75),
     });
   }
+  async search(text: string) {
+    return this.call<SearchResponse>("search", text);
+  }
   private async syncRecentBodies() {
     if (
       this.syncingBodies ||
@@ -310,6 +313,7 @@ export class MailboxReplica {
           { signal, cache: "no-store", priority: opened ? "high" : "low" },
         );
         await this.call("bodies", result.messages, opened, batch);
+        void this.client.invalidateQueries({ queryKey: ["search"], refetchType: "active" });
       })();
       const tracked = request.finally(() => {
         for (const id of batch) this.bodies.delete(id);
@@ -364,6 +368,7 @@ export class MailboxReplica {
     };
   }
   private async refresh() {
+    void this.client.invalidateQueries({ queryKey: ["search"], refetchType: "active" });
     const revision = this.revision;
     for (const query of this.client.getQueryCache().getAll()) {
       if (this.closed || revision !== this.revision) return;
