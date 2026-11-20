@@ -1,10 +1,9 @@
 import { readdir, readFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { closeDb, getPool } from "./client.ts";
+import { resolveMigrationDirectory } from "./migration-path.ts";
 
-const migrationDirectory =
-  process.env.MIGRATIONS_PATH ?? join(dirname(fileURLToPath(import.meta.url)), "migrations");
+const migrationDirectory = resolveMigrationDirectory(import.meta.url, process.env.MIGRATIONS_PATH);
 
 async function migrate(): Promise<void> {
   const client = await getPool().connect();

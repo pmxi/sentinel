@@ -169,7 +169,7 @@ unset pg_env
 mapfile -t dumps < <(find "$ROOT/dumps" -maxdepth 1 -name '*.dump' -printf '%f\n' | sort -r | tail -n +11)
 for old in "${dumps[@]}"; do rm -- "$ROOT/dumps/$old"; done
 log 'Applying migrations'
-(trap - ERR; cd "$release" && pnpm --filter @sent/core db:migrate)
+(trap - ERR; cd "$release" && MIGRATIONS_PATH="$release/packages/core/src/db/migrations" pnpm --filter @sent/core db:migrate)
 link "$previous" "$ROOT/previous"
 link "$release" "$ROOT/current"
 restart
