@@ -12,7 +12,7 @@ import { useParams, useSearchParams } from "react-router-dom";
 import { sentApi } from "./api";
 import { useCommands, useFrameCommands } from "./commands";
 import { replySeed, useCompose } from "./compose";
-import { nextMessageIndex } from "./keyboard";
+import { messageCursorIndex, nextMessageIndex } from "./keyboard";
 import { MessagePreview, RankingReason, ReaderInsights } from "./MessageInsights";
 import { ReaderText } from "./ReaderText";
 
@@ -165,17 +165,13 @@ function MessageList({
   onSelect(message: MessageSummary): void;
 }) {
   const list = useRef<HTMLDivElement>(null);
-  const [cursorId, setCursorId] = useState<string | null>(null);
-  const currentId = selectedId ?? cursorId;
+  const [cursorThreadId, setCursorThreadId] = useState<string | null>(null);
+  const currentIndex = messageCursorIndex(messages, selectedId, cursorThreadId);
   const move = (direction: number) => {
-    const index = nextMessageIndex(
-      messages.length,
-      messages.findIndex((item) => item.id === currentId),
-      direction,
-    );
+    const index = nextMessageIndex(messages.length, currentIndex, direction);
     const message = messages[index];
     if (!message) return;
-    setCursorId(message.id);
+    setCursorThreadId(message.threadId);
     list.current
       ?.querySelectorAll<HTMLButtonElement>(".message-row")
       [index]?.focus({ preventScroll: true });
@@ -207,7 +203,7 @@ function MessageList({
       group: "Mail",
       keys: ["Enter"],
       run: () => {
-        const message = messages.find((item) => item.id === cursorId) ?? messages[0];
+        const message = messages[currentIndex] ?? messages[0];
         if (message) onSelect(message);
       },
       disabled: !messages.length || Boolean(selectedId),
@@ -243,7 +239,7 @@ function MessageList({
         >
           <button
             aria-current={selectedId === message.id ? "true" : undefined}
-            onFocus={() => setCursorId(message.id)}
+            onFocus={() => setCursorThreadId(message.threadId)}
             className={`message-row ${!message.read ? "unread" : ""} ${message.tier === null && message.direction === "inbound" ? "unclassified" : ""} ${selectedId === message.id ? "selected" : ""}`}
             onClick={() => onSelect(message)}
           >

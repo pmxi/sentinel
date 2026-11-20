@@ -39,3 +39,14 @@ export function nextMessageIndex(length: number, index: number, direction: numbe
   if (index < 0) return direction > 0 ? 0 : length - 1;
   return Math.max(0, Math.min(length - 1, index + direction));
 }
+
+export function messageCursorIndex(
+  messages: ReadonlyArray<{ id: string; threadId: string }>,
+  selectedId: string | null,
+  cursorThreadId: string | null,
+): number {
+  const selectedIndex = messages.findIndex((message) => message.id === selectedId);
+  return selectedIndex >= 0
+    ? selectedIndex
+    : messages.findIndex((message) => message.threadId === cursorThreadId);
+}

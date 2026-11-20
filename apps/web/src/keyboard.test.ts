@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { type Command, filterCommands, isShortcutEvent, nextMessageIndex } from "./keyboard";
+import {
+  type Command,
+  filterCommands,
+  isShortcutEvent,
+  messageCursorIndex,
+  nextMessageIndex,
+} from "./keyboard";
 
 describe("mail keyboard safety", () => {
   const plain = {
@@ -31,5 +37,18 @@ describe("mail keyboard safety", () => {
     expect(filterCommands(commands, "archive").map((item) => item.id)).toEqual(["archive"]);
     expect(filterCommands(commands, "unknown")).toEqual([]);
     expect(filterCommands(commands, "")).toEqual(commands);
+  });
+  it("keeps Enter and j/k on the focused conversation when its representative changes", () => {
+    const messages = [
+      { id: "unrelated", threadId: "first-thread" },
+      { id: "older-visible-message", threadId: "focused-thread" },
+      { id: "next", threadId: "last-thread" },
+    ];
+    const cursor = messageCursorIndex(messages, "archived-message", "focused-thread");
+    expect(messages[cursor]?.id).toBe("older-visible-message");
+    expect(nextMessageIndex(messages.length, cursor, 1)).toBe(2);
+    expect(nextMessageIndex(messages.length, cursor, -1)).toBe(0);
+    expect(messageCursorIndex(messages, "next", "focused-thread")).toBe(2);
+    expect(messageCursorIndex(messages, null, "removed-thread")).toBe(-1);
   });
 });
