@@ -121,13 +121,13 @@ try {
     if (target.pathname === "/api/sync/bodies")
       bodyRequests.push(...target.searchParams.get("ids").split(","));
   });
-  await page.goto(`${url}/inbox/l1`);
+  await page.goto(`${url}/inbox`);
   const login = async () => {
     await page.getByLabel("Password").fill(password);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await page.locator(".app-shell").waitFor();
     if (new URL(page.url()).pathname === "/settings")
-      await page.locator('a[href="/inbox/l1"]').first().click();
+      await page.locator('a[href="/inbox"]').first().click();
     await page.locator("button.message-row").first().waitFor();
   };
   await login();
@@ -144,8 +144,8 @@ try {
   assert.equal(await page.locator("html").getAttribute("data-sent-replica-storage"), "opfs");
   const session = await page.locator("html").getAttribute("data-sent-replica-session");
   const start = requests.length;
-  for (const view of ["l2", "l3", "all", "sent", "trash", "l1"]) {
-    await page.locator(`a[href="/inbox/${view}"]`).first().click();
+  for (const view of ["all", "sent", "trash", "inbox"]) {
+    await page.locator(`a[href="${view === "inbox" ? "/inbox" : `/inbox/${view}`}"]`).first().click();
     await page.locator("button.message-row").first().waitFor();
   }
   assert.equal(requests.slice(start).filter((path) => path === "/api/messages").length, 0);
@@ -172,7 +172,7 @@ try {
   assert(requests.some((path) => path === "/api/sync/bodies"));
   await context.setOffline(true);
   await page.locator('a[href="/inbox/all"]').first().click();
-  await page.locator('a[href="/inbox/l1"]').first().click();
+  await page.locator('a[href="/inbox"]').first().click();
   await page.locator(`button.message-row[data-thread-id="${thread}"]`).click();
   assert.equal(await page.locator(".latest-message .email-body").innerText(), text);
   await page.screenshot({ path: join(output, "offline-local-reader.png"), fullPage: true });
@@ -193,7 +193,7 @@ try {
   await page.keyboard.press("Escape");
   assert.equal(requests.filter((path) => path === "/api/search").length, searchStart);
   console.log("PASS offline search view and Cmd+K find local mail without search requests");
-  await page.locator('a[href="/inbox/l1"]').first().click();
+  await page.locator('a[href="/inbox"]').first().click();
   const uncached = page
     .locator(
       `button.message-row:not([data-thread-id="${thread}"]):not([data-thread-id="${recent.thread_id}"])`,
@@ -218,7 +218,7 @@ try {
     .click();
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await page.locator('a[href="/inbox/all"]').first().click();
-  await page.locator('a[href="/inbox/l1"]').first().click();
+  await page.locator('a[href="/inbox"]').first().click();
   await page.locator(`button.message-row[data-thread-id="${thread}"]`).waitFor();
   console.log("PASS archive and undo persist through SQLite view changes");
   const account = (await db.query("select account_id from threads where id=$1", [thread])).rows[0]
@@ -281,7 +281,7 @@ try {
     });
   });
   const memoryPage = await memory.newPage();
-  await memoryPage.goto(`${url}/inbox/l1`);
+  await memoryPage.goto(`${url}/inbox`);
   await memoryPage.getByLabel("Password").fill(password);
   await memoryPage.getByRole("button", { name: "Sign in", exact: true }).click();
   await memoryPage.waitForFunction(() => document.documentElement.dataset.sentReplica === "ready");
@@ -289,13 +289,13 @@ try {
     await memoryPage.locator("html").getAttribute("data-sent-replica-storage"),
     "memory",
   );
-  await memoryPage.locator('a[href="/inbox/l2"]').first().click();
+  await memoryPage.locator('a[href="/inbox/all"]').first().click();
   await memoryPage.locator("button.message-row").first().waitFor();
   await memory.close();
   const network = await browser.newContext();
   await network.addInitScript(() => Object.defineProperty(window, "Worker", { value: undefined }));
   const networkPage = await network.newPage();
-  await networkPage.goto(`${url}/inbox/l1`);
+  await networkPage.goto(`${url}/inbox`);
   await networkPage.getByLabel("Password").fill(password);
   const networkResponse = networkPage.waitForResponse(
     (response) => new URL(response.url()).pathname === "/api/messages" && response.status() === 200,

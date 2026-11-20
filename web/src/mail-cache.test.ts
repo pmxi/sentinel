@@ -1,7 +1,7 @@
 import { QueryClient } from "@tanstack/solid-query";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { sentApi } from "./api";
-import { optimistic } from "./mail-cache";
+import { inView, optimistic } from "./mail-cache";
 import { headerData, prefetchQueue } from "./prefetch";
 import type { ConversationSummary } from "./shared";
 
@@ -47,6 +47,23 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 describe("optimistic mailbox transactions", () => {
+  it("matches Inbox membership independently of tier and removes an archived thread", () => {
+    for (const tier of [null, 1, 2, 3] as const)
+      expect(inView({ ...row, tier }, "inbox")).toBe(true);
+    expect(inView({ ...row, archived: true }, "inbox")).toBe(false);
+    expect(inView({ ...row, direction: "outbound" }, "inbox")).toBe(false);
+    expect(inView({ ...row, deleted: true }, "inbox")).toBe(false);
+    const client = fixture();
+    client.setQueryData(["messages", "inbox"], { messages: [row] });
+    const transaction = optimistic(client, {
+      threadId: row.threadId,
+      view: "inbox",
+      action: "archive",
+    });
+    expect(client.getQueryData(["messages", "inbox"])).toEqual({ messages: [] });
+    transaction.rollback();
+    expect(client.getQueryData(["messages", "inbox"])).toEqual({ messages: [row] });
+  });
   it("keeps later loaded pages during optimistic writes and rollback", () => {
     const client = fixture();
     const messages = Array.from({ length: 150 }, (_, index) => ({

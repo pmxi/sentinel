@@ -149,6 +149,59 @@ async fn mail_views_and_send_checkpoints() -> Result<()> {
         other: Uuid::new_v4(),
     };
 
+    f.reset().await?;
+    let unsorted = f.message("unsorted", 1, json!({})).await?;
+    let mut expected = vec![unsorted];
+    for tier in 1..=3 {
+        let id = f
+            .message(&format!("tier-{tier}"), tier + 1, json!({}))
+            .await?;
+        f.repo
+            .save_classification(id, classification(tier as i32, "summary"))
+            .await?;
+        expected.push(id);
+    }
+    f.message("archived", 8, json!({"archived":true})).await?;
+    f.message("outbound", 9, json!({"direction":"outbound"}))
+        .await?;
+    f.message("deleted", 10, json!({"deleted":true})).await?;
+    f.message("tombstone", 11, json!({"tombstone":true}))
+        .await?;
+    expected.reverse();
+    assert_eq!(ids(&f.list("inbox", 50, None, None).await?), expected);
+    assert_eq!(
+        ids(&f.repo.list_messages(ListInput::default()).await?),
+        expected
+    );
+    assert_eq!(ids(&f.list("all", 50, None, None).await?).len(), 6);
+    assert!(f.list("invalid", 50, None, None).await.is_err());
+    let thread = uuid(&f.repo.get_message(unsorted).await?.unwrap()["threadId"]);
+    let extra = f.message("unsorted", 12, json!({})).await?;
+    f.repo
+        .save_classification(extra, classification(2, "summary"))
+        .await?;
+    for action in ["archive", "delete"] {
+        let receipt = f
+            .repo
+            .enqueue_thread_action(
+                thread,
+                &ThreadActionInput {
+                    action: action.into(),
+                    view: "inbox".into(),
+                    account_id: Some(f.owner),
+                    undoable: true,
+                },
+                Some(Utc::now() + Duration::seconds(5)),
+            )
+            .await?;
+        assert_eq!(f.repo.mutation_message_ids(receipt).await?.len(), 2);
+        assert_eq!(ids(&f.list("inbox", 50, None, None).await?).len(), 3);
+        f.repo.undo(receipt).await?;
+        assert_eq!(ids(&f.list("inbox", 50, None, None).await?).len(), 4);
+    }
+    f.reset().await?;
+    assert!(ids(&f.list("inbox", 50, None, None).await?).is_empty());
+
     for action in ["archive", "delete"] {
         f.reset().await?;
         let mut members = Vec::new();

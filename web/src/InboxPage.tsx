@@ -85,9 +85,7 @@ const viewDetails: Record<
     title: string;
   }
 > = {
-  l1: { title: "Important" },
-  l2: { title: "Updates" },
-  l3: { title: "Low priority" },
+  inbox: { title: "Inbox" },
   unclassified: { title: "Awaiting sorting" },
   all: { title: "All mail" },
   sent: { title: "Sent" },
@@ -99,9 +97,9 @@ export function InboxPage(props: { accounts: Account[] }) {
   const [params, setParams] = useSearchParams();
   const selectedId = createMemo(() => params().get("message"));
   const accountId = createMemo(() => params().get("account") ?? undefined);
-  const mailbox = useMailbox(() => route.view ?? "l1", accountId);
+  const mailbox = useMailbox(() => route.view ?? "inbox", accountId);
   const messages = mailbox.query;
-  const detail = createMemo(() => viewDetails[route.view ?? "l1"] ?? viewDetails.all);
+  const detail = createMemo(() => viewDetails[route.view ?? "inbox"] ?? viewDetails.all);
   const navigation = useMessageNavigation(() => messages.data?.messages ?? []);
   const prefetch = usePrefetch(
     client,
@@ -145,7 +143,7 @@ export function InboxPage(props: { accounts: Account[] }) {
               )}
             </header>
             <MessageList
-              showImportance={route.view === "all"}
+              showImportance={!route.view || route.view === "inbox" || route.view === "all"}
               prefetch={prefetch}
               messages={navigation.visible}
               loading={messages.isLoading}
@@ -176,6 +174,7 @@ export function InboxPage(props: { accounts: Account[] }) {
             {(id) => (
               <Reader
                 messageId={id}
+                view={route.view ?? "inbox"}
                 summary={messages.data?.messages.find((item) => item.id === id)}
                 accounts={props.accounts}
                 advance={navigation.advance.bind(null, id)}
@@ -604,6 +603,7 @@ function MessageList(props: {
 }
 function Reader(props: {
   messageId: string;
+  view?: string;
   summary?: MessageSummary;
   accounts: Account[];
   close(): void;
@@ -702,7 +702,7 @@ function Reader(props: {
         action,
         props.advance,
         props.restore,
-        route.view ?? "all",
+        props.view ?? route.view ?? "all",
         params().get("account") ?? undefined,
       );
   };

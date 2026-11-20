@@ -5,7 +5,7 @@ export { Navigate, useLocation, useParams } from "@solidjs/router";
 export const Link = A;
 export function NavLink(props: { href: string; children: JSX.Element }) {
   return (
-    <A href={props.href} activeClass="active" inactiveClass="">
+    <A href={props.href} end activeClass="active" inactiveClass="">
       {props.children}
     </A>
   );

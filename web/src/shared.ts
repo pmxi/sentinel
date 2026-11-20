@@ -79,7 +79,9 @@ export const MessageDetailSchema = MessageSummarySchema.extend({
 export type MessageDetail = z.infer<typeof MessageDetailSchema>;
 
 export const MessageListQuerySchema = z.object({
-  view: z.enum(["l1", "l2", "l3", "unclassified", "all", "sent", "trash"]).default("l1"),
+  view: z
+    .enum(["inbox", "l1", "l2", "l3", "unclassified", "all", "sent", "trash"])
+    .default("inbox"),
   accountId: z.string().uuid().optional(),
   cursor: z.string().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(50),

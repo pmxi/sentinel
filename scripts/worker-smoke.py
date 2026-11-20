@@ -74,17 +74,17 @@ try:
     age = time.time() - __import__("datetime").datetime.fromisoformat(health["workerHeartbeat"].replace("Z", "+00:00")).timestamp()
     assert age < 35
     print("HEALTH", json.dumps(health, sort_keys=True))
-    selected = request("/api/messages?view=l1&limit=100")["messages"][0]
+    selected = request("/api/messages?view=inbox&limit=100")["messages"][0]
     receipt = request(f'/api/messages/{selected["id"]}/action', "POST", {"action": "archive", "undoable": True})
     until(lambda: sql("select status from mutation_outbox where id=$1", [receipt["mutationId"]])[0]["status"] == "complete")
     row = sql("select o.status, m.archived, json_extract(o.payload,'$.undoUntil') < strftime('%Y-%m-%dT%H:%M:%f000Z','now') as undo_elapsed from mutation_outbox o join messages m on m.id=o.message_id where o.id=$1", [receipt["mutationId"]])[0]
     assert row == {"status": "complete", "archived": True, "undo_elapsed": True}
-    page = request("/api/messages?view=l1&limit=100")
+    page = request("/api/messages?view=inbox&limit=100")
     while True:
         assert all(message["id"] != selected["id"] for message in page["messages"])
         if not page["nextCursor"]:
             break
-        page = request("/api/messages?view=l1&limit=100&cursor=" + urllib.parse.quote(page["nextCursor"]))
+        page = request("/api/messages?view=inbox&limit=100&cursor=" + urllib.parse.quote(page["nextCursor"]))
     print("ARCHIVE", json.dumps({**row, "absentFromL1": True}, sort_keys=True))
     draft = request("/api/drafts", "POST", {"accountId": selected["account"]["id"], "to": [{"name": "Recipient", "address": "recipient@example.test"}], "subject": "Rust worker smoke send", "body": "Local fixture delivery only."})
     sent = request(f'/api/drafts/{draft["id"]}/send?undoable=true', "POST")

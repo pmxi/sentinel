@@ -1,6 +1,6 @@
 # Sent
 
-Sent is a private, single-user web email client that unifies Gmail and Microsoft mail, puts important messages in an L1 attention queue, and searches the complete synchronized archive by words and meaning.
+Sent is a private, single-user web email client that unifies Gmail and Microsoft mail in one importance-tinted Inbox, and searches the complete synchronized archive by words and meaning.
 
 The repository contains a SolidJS client (`web/`), a Rust Axum API (`server/`), a separate Rust Tokio worker (`worker/`), shared Rust code with the Gmail and Microsoft Graph adapters (`core/`), a fake-mail seeder (`seed/`), and SQLite SQL migrations (`migrations/`). The earlier TypeScript/React implementation is in git history before the Rust build replaced it. See [`plan.md`](./plan.md) for the product decisions and [`roadmap.md`](./roadmap.md) for intentionally deferred work.
 
@@ -9,7 +9,7 @@ The repository contains a SolidJS client (`web/`), a Rust Axum API (`server/`), 
 - Gmail and Microsoft OAuth connection
 - Full mailbox backfill followed by 30-second incremental polling
 - Provider-native conversation IDs without cross-account thread merging
-- L1/L2/L3, Unclassified, All Mail, Sent, Drafts, and Trash views
+- Inbox, Unclassified, All Mail, Sent, Drafts, and Trash views
 - Read/unread, flag, archive, delete, send, reply, reply all, and forward
 - Sent-owned drafts and ordinary file attachments
 - Versioned OpenAI classification, one-line inbox summaries, and clean reader text with Markdown hyperlinks and strict `{ reasoning, summary, tier, plainText }` output
@@ -321,7 +321,7 @@ Register a confidential web application in Microsoft Entra ID.
 
 Sent discovers the Microsoft folder tree and keeps one delta cursor per folder; Gmail uses mailbox history IDs. Native folders and labels are retained internally but are not exposed as organization controls in the MVP.
 
-Mailbox views show one row per conversation within each account, using the latest message eligible for that view. Incoming messages determine L1/L2/L3 membership, and outgoing messages appear in Sent. Microsoft Sent Items is identified by its well-known folder ID, so sending aliases and localized folder names do not break this separation.
+Mailbox views show one row per conversation within each account, using the latest message eligible for that view. The default Inbox at `/inbox` contains all unarchived inbound mail, including unsorted messages. Importance tints distinguish tiers without separate folders; reader tier corrections remain available. All Mail includes archived and sent messages, and outgoing messages appear in Sent. Microsoft Sent Items is identified by its well-known folder ID, so sending aliases and localized folder names do not break this separation. Legacy L1/L2/L3 API views remain supported, while their old browser routes redirect to Inbox.
 
 Before submitting a message, the outbox records a durable send attempt. Failures before submission can retry automatically; an uncertain delivery or failure to save the successful result cannot trigger another send. Such attempts are flagged for reconciliation. Microsoft messages are imported into Sent immediately after successful sending when available, with normal polling as a fallback.
 
@@ -329,7 +329,7 @@ Sent supports up to 10 outgoing attachments totaling 20 MB per message. Microsof
 
 ## First import
 
-After connecting each account in Settings, the worker pages through the entire archive. Imported messages remain visible in L1/Unclassified until classification completes, so an AI failure cannot hide mail. The worker classifies, generates reader text, and embeds newly synchronized messages once `OPENAI_API_KEY` is configured. The manual historical classify/embed commands belonged to the TypeScript build and have not been ported yet.
+After connecting each account in Settings, the worker pages through the entire archive. Unarchived inbound messages remain visible in Inbox/Unclassified until classification completes, so an AI failure cannot hide mail. The worker classifies, generates reader text, and embeds newly synchronized messages once `OPENAI_API_KEY` is configured. The manual historical classify/embed commands belonged to the TypeScript build and have not been ported yet.
 
 ## Production deployment
 

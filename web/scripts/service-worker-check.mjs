@@ -107,13 +107,13 @@ try {
   page.setDefaultTimeout(20_000);
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(`${url}/inbox/l1`);
+  await page.goto(`${url}/inbox`);
   const signIn = async () => {
     await page.getByLabel("Password").fill(password);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await page.locator(".app-shell").waitFor();
     if (new URL(page.url()).pathname === "/settings")
-      await page.locator('a[href="/inbox/l1"]').click();
+      await page.locator('a[href="/inbox"]').click();
     await page.locator("button.message-row").first().waitFor();
   };
   await signIn();
@@ -130,7 +130,7 @@ try {
     );
   const first = await keys();
   assert.equal(first.length, 1);
-  for (const path of ["/index.html", "/inbox/l2"])
+  for (const path of ["/index.html", "/inbox/all"])
     assert.equal(
       (await context.request.get(`${url}${path}`)).headers()["cache-control"],
       "no-cache",

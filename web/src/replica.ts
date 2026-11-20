@@ -319,7 +319,7 @@ export class MailboxReplica {
   }
   async list(params: URLSearchParams) {
     return this.call<ReplicaList>("list", {
-      view: params.get("view") ?? "l1",
+      view: params.get("view") ?? "inbox",
       accountId: params.get("accountId") ?? undefined,
       cursor: params.get("cursor") ?? undefined,
       limit: Number(params.get("limit") ?? 75),

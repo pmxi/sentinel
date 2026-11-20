@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import App, { InboxRoute, SearchRoute } from "./App";
 import { sentApi } from "./api";
 import { optimistic } from "./mail-cache";
+import { inboxRoutes } from "./mail-routes";
 import type { Account, MessageDetail, MutationReceipt } from "./shared";
 import { TriageProvider, useTriage } from "./triage";
 
@@ -222,7 +223,7 @@ async function reader(
     pending?.thread ?? Promise.resolve({ messages: [item] }),
   );
   vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
-  const path = `/inbox/${view}${empty ? "" : `?message=first${accountId ? `&account=${accountId}` : ""}`}`;
+  const path = `${view === "inbox" ? "/inbox" : `/inbox/${view}`}${empty ? "" : `?message=first${accountId ? `&account=${accountId}` : ""}`}`;
   window.history.replaceState(null, "", path);
   const history = createMemoryHistory();
   history.set({ value: path, replace: true, scroll: false });
@@ -232,6 +233,7 @@ async function reader(
         history,
         root: App,
         get children() {
+          if (view === "inbox") return inboxRoutes;
           return createComponent(Route, { path: "/inbox/:view", component: InboxRoute });
         },
       }),
@@ -275,12 +277,12 @@ describe("mail list presentation", () => {
     expect(row?.querySelector(".message-time")?.textContent).toContain("Sorting…");
   });
 
-  it.each(["all", "l1", "l2", "l3", "sent", "trash", "unclassified"])(
-    "uses mixed-tier highlights only in All mail, not %s-specific lists",
+  it.each(["inbox", "all", "sent", "trash", "unclassified"])(
+    "uses mixed-tier highlights in Inbox and All mail (%s)",
     async (view) => {
       const container = await reader(true, false, view);
       expect(container.querySelector(".message-list")?.classList.contains("importance-tint")).toBe(
-        view === "all",
+        view === "inbox" || view === "all",
       );
       const row = container.querySelector(".message-row");
       expect(row?.classList.contains("tier-1")).toBe(true);
@@ -289,6 +291,13 @@ describe("mail list presentation", () => {
       expect(row?.textContent).not.toContain(" unread");
       expect(row?.querySelector(".ranking-reason")).toBeNull();
       expect(row?.querySelector(".ai-label")).toBeNull();
+      if (view === "inbox") {
+        expect(container.querySelector("h1")?.textContent).toBe("Inbox");
+        expect(container.querySelector('a[href="/inbox"]')?.textContent).toBe("Inbox");
+        expect(container.querySelector('a[href="/inbox/l1"]')).toBeNull();
+        expect(container.querySelector('a[href="/inbox/l2"]')).toBeNull();
+        expect(container.querySelector('a[href="/inbox/l3"]')).toBeNull();
+      }
     },
   );
 });
@@ -552,18 +561,18 @@ describe("reader triage shortcuts", () => {
   it.each([
     ["e", "archive"],
     ["#", "delete"],
-  ])("keeps %s available during automatic mark-read", async (key, action) => {
+  ])("keeps %s available during automatic mark-read in Inbox", async (key, action) => {
     const pending = deferred<MutationReceipt>();
     const request = vi.spyOn(sentApi, "action").mockReturnValue(pending.promise);
     const threadRequest = vi.spyOn(sentApi, "threadAction").mockReturnValue(pending.promise);
-    const container = await reader();
+    const container = await reader(false, false, "inbox");
     await vi.waitFor(() => expect(request).toHaveBeenCalledWith("first", "mark_read"));
     expect(
       container.querySelector<HTMLButtonElement>('button[title="Archive conversation"]')?.disabled,
     ).toBe(false);
     expect(press(key).defaultPrevented).toBe(true);
     await vi.waitFor(() =>
-      expect(threadRequest).toHaveBeenCalledWith("first-thread", action, "l1", undefined),
+      expect(threadRequest).toHaveBeenCalledWith("first-thread", action, "inbox", undefined),
     );
     expect(container.querySelector("button.message-row")).toBeNull();
   });

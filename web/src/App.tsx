@@ -3,7 +3,6 @@ import {
   Command,
   FilePenLine,
   Inbox,
-  Layers,
   Mail,
   Menu,
   PencilLine,
@@ -253,9 +252,7 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
     },
     ...(
       [
-        ["important", "Go to Important inbox", "g i", "/inbox/l1"],
-        ["updates", "Go to Updates", "g u", "/inbox/l2"],
-        ["low", "Go to Low priority", "g l", "/inbox/l3"],
+        ["inbox", "Go to Inbox", "g i", "/inbox"],
         ["all", "Go to All mail", "g a", "/inbox/all"],
         ["sent", "Go to Sent", "g s", "/inbox/sent"],
         ["drafts", "Go to Drafts", "g d", "/drafts"],
@@ -308,10 +305,7 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
               <span>Compose</span>
             </button>
             <nav>
-              <span class="nav-label">Your inbox</span>
-              <NavItem href="/inbox/l1" label="Important" icon={<Inbox size={17} />} />
-              <NavItem href="/inbox/l2" label="Updates" icon={<Layers size={17} />} />
-              <NavItem href="/inbox/l3" label="Low priority" icon={<Mail size={17} />} />
+              <NavItem href="/inbox" label="Inbox" icon={<Inbox size={17} />} />
               <span class="nav-label secondary">Mail</span>
               <NavItem
                 href="/inbox/unclassified"
