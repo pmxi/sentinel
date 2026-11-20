@@ -1447,7 +1447,7 @@ kbd {
   overflow: hidden;
   border: 1px solid #3a3a3a;
   border-radius: 8px;
-  background: #202120;
+  background: #202124;
   color: #fff;
   box-shadow: 0 8px 26px #0002;
   font-size: 13px;
@@ -1461,13 +1461,13 @@ kbd {
   padding: 4px;
   border: 0;
   background: transparent;
-  color: #c4e8b9;
+  color: #e0e2e5;
   font: inherit;
   font-weight: 600;
   cursor: pointer;
 }
 .action-toast button:focus-visible {
-  outline: 2px solid #c4e8b9;
+  outline: 2px solid #e0e2e5;
   outline-offset: 3px;
 }
 .action-toast button:disabled {
@@ -1483,7 +1483,7 @@ kbd {
   left: 0;
   height: 2px;
   width: 100%;
-  background: #c4e8b9;
+  background: #e0e2e5;
   transform-origin: left;
   animation: toast-countdown linear forwards;
 }
@@ -1502,7 +1502,7 @@ kbd {
     width: 250px;
     transform: translateX(-105%);
     transition: transform 0.2s ease;
-    box-shadow: 18px 0 50px rgba(40, 35, 28, 0.18);
+    box-shadow: 18px 0 50px #2021242e;
   }
   .sidebar.open {
     transform: none;
@@ -1518,7 +1518,7 @@ kbd {
     inset: 0;
     display: block;
     border: 0;
-    background: rgba(35, 31, 25, 0.26);
+    background: #20212442;
   }
   .topbar {
     padding: 0 12px;
