@@ -115,6 +115,7 @@ impl Feed {
             hashes,
             inventory.accounts,
             snapshot.then(|| Arc::new(inventory.messages)),
+            true,
         )
     }
     fn record(
@@ -122,17 +123,35 @@ impl Feed {
         hashes: Arc<HashMap<String, String>>,
         accounts: Vec<Value>,
         snapshot: Option<Arc<Vec<Value>>>,
+        reuse: bool,
     ) -> Uuid {
-        let id = Uuid::new_v4();
         self.sequence += 1;
-        self.generations.push_back(Generation {
-            id,
-            sequence: self.sequence,
-            touched: Instant::now(),
-            hashes,
-            snapshot,
-            accounts,
-        });
+        let id = if let Some(index) = self
+            .generations
+            .iter()
+            .position(|entry| reuse && entry.hashes == hashes && entry.accounts == accounts)
+        {
+            let mut entry = self.generations.remove(index).expect("generation");
+            entry.sequence = self.sequence;
+            entry.touched = Instant::now();
+            if snapshot.is_some() {
+                entry.snapshot = snapshot;
+            }
+            let id = entry.id;
+            self.generations.push_back(entry);
+            id
+        } else {
+            let id = Uuid::new_v4();
+            self.generations.push_back(Generation {
+                id,
+                sequence: self.sequence,
+                touched: Instant::now(),
+                hashes,
+                snapshot,
+                accounts,
+            });
+            id
+        };
         while self.generations.len() > 16 {
             self.generations.pop_front();
         }
@@ -164,7 +183,7 @@ impl Feed {
                 })
                 .collect(),
         );
-        let id = self.record(hashes, inventory.accounts.clone(), None);
+        let id = self.record(hashes, inventory.accounts.clone(), None, false);
         encode(id, None)
     }
     pub(crate) fn live_delta(
@@ -244,7 +263,9 @@ impl Feed {
         )
     }
     fn delta(&mut self, cursor: Cursor, inventory: ReplicaInventory) -> Result<Value, Fault> {
-        let before = self.find(cursor.generation)?.hashes.clone();
+        let previous = self.find(cursor.generation)?;
+        let accounts_changed = previous.accounts != inventory.accounts;
+        let before = previous.hashes.clone();
         let current: HashMap<_, _> = inventory
             .messages
             .iter()
@@ -275,7 +296,14 @@ impl Feed {
         } else {
             Arc::new(current)
         };
-        let id = self.record(hashes, inventory.accounts, None);
+        let id = if upserts.is_empty() && deletions.is_empty() && !accounts_changed {
+            self.sequence += 1;
+            let sequence = self.sequence;
+            self.find(cursor.generation)?.sequence = sequence;
+            cursor.generation
+        } else {
+            self.record(hashes, inventory.accounts, None, true)
+        };
         Ok(
             json!({"upserts":upserts,"deletions":deletions,"accounts":accounts,"cursor":encode(id,None)}),
         )
@@ -439,6 +467,28 @@ mod tests {
         assert!(feed.live_delta(&published, cursor, &current).is_ok());
     }
     #[test]
+    fn idle_tabs_cannot_evict_another_tabs_live_cursor() {
+        let mut feed = Feed::default();
+        let healthy = feed.insert(inventory(vec![row("mail", false)]), true);
+        let mut other = encode(feed.insert(inventory(vec![row("mail", false)]), true), None);
+        for _ in 0..40 {
+            let before = other.clone();
+            let delta = feed
+                .delta(
+                    decode(&other, false).unwrap_or_else(|_| panic!()),
+                    inventory(vec![row("mail", false)]),
+                )
+                .unwrap_or_else(|_| panic!());
+            other = delta["cursor"].as_str().unwrap().to_owned();
+            assert_eq!(other, before, "An unchanged poll must retain its cursor");
+        }
+        for _ in 0..40 {
+            feed.insert(inventory(vec![row("mail", false)]), true);
+        }
+        assert!(feed.find(healthy).is_ok());
+        assert_eq!(feed.generations.len(), 1);
+    }
+    #[test]
     fn an_unchanged_http_observation_also_supersedes_stale_live_frames() {
         let mut feed = Feed::default();
         let first = feed.publish(&inventory(vec![row("new-mail", false)]));
@@ -452,10 +502,7 @@ mod tests {
         let cursor = http["cursor"].as_str().unwrap();
         assert!(http["upserts"].as_array().unwrap().is_empty());
         assert!(http["deletions"].as_array().unwrap().is_empty());
-        assert_ne!(
-            cursor, first,
-            "Even a no-op HTTP read must reject previously sent live frames"
-        );
+        assert_eq!(cursor, first);
         assert!(feed.live_delta(cursor, &stale, &inventory(vec![])).is_err());
         let next = feed.publish(&inventory(vec![]));
         assert!(feed.live_delta(cursor, &next, &inventory(vec![])).is_ok());
@@ -538,7 +585,7 @@ mod tests {
                 inventory(vec![]),
             )
             .unwrap_or_else(|_| panic!());
-        assert_ne!(delta["cursor"], page["cursor"]);
+        assert_eq!(delta["cursor"], page["cursor"]);
         assert_eq!(delta["upserts"], json!([]));
         assert!(decode("bad", false).is_err());
         assert!(feed.find(Uuid::new_v4()).is_err());

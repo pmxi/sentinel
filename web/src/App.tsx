@@ -116,6 +116,7 @@ function AuthenticatedApp(props: { children?: JSX.Element }) {
   const live = new LiveUpdates(client, {
     verified: () => client.getQueryState(["session"])?.status === "success",
     cursor: () => replicaFor(client)?.syncCursor(),
+    revision: () => replicaFor(client)?.syncRevision(),
     wake: () => replicaFor(client)?.wake(),
     canApply: () => quietUntil(client) <= Date.now(),
     changed: async (frame) => {

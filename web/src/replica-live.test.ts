@@ -63,6 +63,36 @@ afterEach(async () => {
   vi.useRealTimers();
 });
 describe("replica live synchronization", () => {
+  it("rejects old live frames during and after an unchanged HTTP poll", async () => {
+    const { replica, worker } = await setup();
+    await replica.receiveLive({
+      from: "base",
+      revision: replica.syncRevision(),
+      delta: { ...empty("held"), upserts: [row("new-mail")] },
+    });
+    const stale = {
+      from: "held",
+      revision: replica.syncRevision(),
+      delta: { ...empty("old-published"), deletions: ["new-mail"] },
+    };
+    let resolve!: (value: ReplicaDelta) => void;
+    vi.mocked(api).mockReturnValueOnce(
+      new Promise((done) => {
+        resolve = done;
+      }),
+    );
+    replica.wake();
+    const received = replica.receiveLive(stale);
+    vi.mocked(api).mockResolvedValue(empty("held"));
+    resolve(empty("held"));
+    await received;
+    expect(replica.syncCursor()).toBe("held");
+    expect([...worker.rows.keys()]).toEqual(["new-mail"]);
+    await replica.receiveLive(stale);
+    expect(replica.syncCursor()).toBe("held");
+    expect([...worker.rows.keys()]).toEqual(["new-mail"]);
+    expect(worker.deltas.some((delta) => delta.cursor === "old-published")).toBe(false);
+  });
   it("re-announces the current cursor reactively after every HTTP sync", async () => {
     const { replica, worker } = await setup();
     const cursors: (string | undefined)[] = [];
@@ -97,7 +127,7 @@ describe("replica live synchronization", () => {
   it("applies matching deltas and refreshes caches without a delta request, with no duplicate rows", async () => {
     const { client, replica, worker } = await setup();
     const delta = { ...empty("pushed"), upserts: [row("new")] };
-    await replica.receiveLive({ from: "base", delta });
+    await replica.receiveLive({ from: "base", delta, revision: replica.syncRevision() });
     expect(api).not.toHaveBeenCalled();
     expect(replica.syncCursor()).toBe("pushed");
     expect(
@@ -106,7 +136,7 @@ describe("replica live synchronization", () => {
         ?.messages.map((row) => row.id),
     ).toEqual(["new"]);
     vi.mocked(api).mockResolvedValue(empty("pushed"));
-    await replica.receiveLive({ from: "base", delta });
+    await replica.receiveLive({ from: "base", delta, revision: replica.syncRevision() });
     expect(api).toHaveBeenCalledOnce();
     expect([...worker.rows.keys()]).toEqual(["new"]);
     expect(worker.deltas.filter((delta) => delta.upserts.length)).toHaveLength(1);
@@ -122,6 +152,7 @@ describe("replica live synchronization", () => {
     replica.wake();
     const received = replica.receiveLive({
       from: "base",
+      revision: replica.syncRevision(),
       delta: { ...empty("pushed"), upserts: [row("new")] },
     });
     vi.mocked(api).mockResolvedValue({ ...empty("latest"), upserts: [row("new")] });
@@ -137,6 +168,7 @@ describe("replica live synchronization", () => {
     allowed = false;
     const received = replica.receiveLive({
       from: "base",
+      revision: replica.syncRevision(),
       delta: { ...empty("next"), upserts: [row("new")] },
     });
     await vi.advanceTimersByTimeAsync(1000);

@@ -4,10 +4,11 @@ import { REPLICA_RESET_EVENT } from "./replica-session";
 import type { ReplicaDelta } from "./replica-types";
 import { UNAUTHORIZED_EVENT } from "./shell-metadata";
 
-export type LiveDelta = { from: string; delta: ReplicaDelta };
+export type LiveDelta = { from: string; delta: ReplicaDelta; revision?: number };
 type Options = {
   verified: () => boolean;
   cursor: () => string | undefined;
+  revision?: () => number | undefined;
   changed: (frame?: LiveDelta) => Promise<void> | void;
   wake: () => void;
   canApply?: () => boolean;
@@ -30,6 +31,7 @@ export class LiveUpdates {
   private remoteCursor?: string;
   private subscribed = false;
   private subscribedCursor?: string;
+  private subscribedRevision?: number;
   private quiet?: ReturnType<typeof setTimeout>;
   private releaseQuiet?: () => void;
   constructor(
@@ -129,7 +131,11 @@ export class LiveUpdates {
         Array.isArray(frame.delta.accounts)
       ) {
         this.remoteCursor = frame.delta.cursor;
-        this.queue({ from: frame.from, delta: frame.delta });
+        this.queue({
+          from: frame.from,
+          delta: frame.delta,
+          ...(typeof frame.revision === "number" ? { revision: frame.revision } : {}),
+        });
       }
     } catch {
       this.disconnected(socket);
@@ -138,11 +144,14 @@ export class LiveUpdates {
   subscribe() {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.healthy()) return;
     const cursor = this.options.cursor();
-    if (this.subscribed && cursor === this.subscribedCursor) return;
+    const revision = this.options.revision?.();
+    if (this.subscribed && cursor === this.subscribedCursor && revision === this.subscribedRevision)
+      return;
     try {
       this.subscribed = true;
       this.subscribedCursor = cursor;
-      this.socket.send(JSON.stringify({ type: "subscribe", cursor }));
+      this.subscribedRevision = revision;
+      this.socket.send(JSON.stringify({ type: "subscribe", cursor, revision }));
     } catch {
       this.disconnected(this.socket);
     }

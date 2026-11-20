@@ -1,5 +1,5 @@
 import type { QueryClient, QueryKey } from "@tanstack/solid-query";
-import { createSignal } from "solid-js";
+import { batch, createSignal } from "solid-js";
 import { ApiError, api, type CacheResponse, sentApi } from "./api";
 import { type LiveDelta, liveInterval } from "./live";
 import {
@@ -88,6 +88,7 @@ export class MailboxReplica {
   private startup?: ReturnType<typeof setTimeout>;
   private controller = new AbortController();
   private cursorState = createSignal<string>();
+  private syncEpoch = createSignal(0);
   private get cursor() {
     return this.cursorState[0]();
   }
@@ -236,7 +237,11 @@ export class MailboxReplica {
     if (this.closed) return;
   }
   syncCursor() {
+    this.syncRevision();
     return this.cursor;
+  }
+  syncRevision() {
+    return this.syncEpoch[0]();
   }
   wake() {
     if (this.initialized && !this.closed) void this.poll();
@@ -287,10 +292,14 @@ export class MailboxReplica {
         if (!this.cursor) await this.bootstrap();
         else {
           const revision = this.revision,
-            delta = push?.from === this.cursor ? push.delta : await this.fetchDelta(this.cursor);
+            matching = push?.from === this.cursor && (push.revision ?? 0) === this.syncRevision(),
+            delta = matching ? push.delta : await this.fetchDelta(this.cursor);
           if (revision === this.revision && this.canPoll() && !this.controller.signal.aborted) {
             await this.call("delta", delta, false);
-            this.cursor = delta.cursor;
+            batch(() => {
+              if (!matching) this.syncEpoch[1]((value) => value + 1);
+              this.cursor = delta.cursor;
+            });
             this.client.setQueryData(["accounts"], { accounts: delta.accounts });
             if (delta.upserts.length || delta.deletions.length) await this.refresh();
           } else this.liveDirty = true;

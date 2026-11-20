@@ -236,6 +236,15 @@ pub async fn upgrade(
 async fn send(socket: &mut WebSocket, value: Value) -> bool {
     send_text(socket, value.to_string()).await
 }
+async fn send_update(socket: &mut WebSocket, value: String, revision: u64) -> bool {
+    let Ok(mut value) = serde_json::from_str::<Value>(&value) else {
+        return false;
+    };
+    if value["type"] == "delta" {
+        value["revision"] = revision.into();
+    }
+    send(socket, value).await
+}
 async fn send_text(socket: &mut WebSocket, value: String) -> bool {
     matches!(
         tokio::time::timeout(
@@ -273,6 +282,7 @@ fn update_frame(
 async fn serve(mut socket: WebSocket, state: Arc<State>, session: auth::Session) {
     let mut updates = state.live.updates.subscribe();
     let mut cursor: Option<String> = None;
+    let mut revision = 0;
     let mut heartbeat = tokio::time::interval(Duration::from_secs(20));
     let mut seen = tokio::time::Instant::now();
     let mut frame_window = seen;
@@ -319,12 +329,13 @@ async fn serve(mut socket: WebSocket, state: Arc<State>, session: auth::Session)
                         let Ok(value) = serde_json::from_str::<Value>(&text) else { close(&mut socket, 1008, "Invalid message").await; return; };
                         match value["type"].as_str() {
                             Some("subscribe") => {
+                                revision = value["revision"].as_u64().unwrap_or(0);
                                 cursor = value["cursor"].as_str().filter(|cursor| cursor.len() <= 512).map(str::to_owned);
                                 let update = updates.borrow().clone();
                                 if let Update::Changed { cursor: target, inventory } = update {
                                     let value = update_frame(&mut state.sync_feed.lock().unwrap(), cursor.as_deref(), &target, &inventory, true);
                                     if let Some(value) = value
-                                        && !send_text(&mut socket, value).await { return; }
+                                        && !send_update(&mut socket, value, revision).await { return; }
                                 }
                             }
                             Some("pong") => {}
@@ -346,7 +357,7 @@ async fn serve(mut socket: WebSocket, state: Arc<State>, session: auth::Session)
                         let value = update_frame(&mut state.sync_feed.lock().unwrap(), cursor.as_deref(), &target, &inventory, false);
                         drop(inventory);
                         if let Some(value) = value
-                            && !send_text(&mut socket, value).await { return; }
+                            && !send_update(&mut socket, value, revision).await { return; }
                     }
                     _ => {}
                 }

@@ -34,7 +34,13 @@ class Socket {
 const active: LiveUpdates[] = [];
 function setup(cursor?: string) {
   const client = new QueryClient();
-  const options = { verified: () => true, cursor: () => cursor, changed: vi.fn(), wake: vi.fn() };
+  const options = {
+    verified: () => true,
+    cursor: () => cursor,
+    revision: () => undefined as number | undefined,
+    changed: vi.fn(),
+    wake: vi.fn(),
+  };
   const live = new LiveUpdates(client, options);
   active.push(live);
   return { client, options, live };
@@ -52,6 +58,26 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("live updates", () => {
+  it("re-announces an unchanged cursor after an HTTP sync revision advances", async () => {
+    const { live, options } = setup("stable");
+    let revision = 1;
+    options.revision = () => revision;
+    await vi.advanceTimersByTimeAsync(0);
+    const socket = Socket.instances[0];
+    socket.message({ type: "ready" });
+    await vi.advanceTimersByTimeAsync(0);
+    live.subscribe();
+    expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+      { type: "subscribe", cursor: "stable", revision: 1 },
+    ]);
+    revision = 2;
+    live.subscribe();
+    live.subscribe();
+    expect(socket.sent.map((value) => JSON.parse(value))).toEqual([
+      { type: "subscribe", cursor: "stable", revision: 1 },
+      { type: "subscribe", cursor: "stable", revision: 2 },
+    ]);
+  });
   it("does not loop catch-up and subscriptions when HTTP and sockets use different cursors", async () => {
     const { options, live } = setup("http-0");
     let polls = 0;
