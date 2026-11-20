@@ -308,6 +308,7 @@ Sign-out waits up to two seconds before navigating; unfinished cleanup keeps a
 durable revoked identifier. Startup retries orphaned/revoked database deletion
 before opening a replica. Query connectivity gating never blocks SQLite reads,
 and incomplete body placeholders cannot be quoted into reply/forward drafts.
+Pending-body readers refetch on reconnect even while their cached headers are fresh.
 The static-only service worker still never handles `/api/*`.
 
 After release/web builds, check against an isolated, existing local test database:

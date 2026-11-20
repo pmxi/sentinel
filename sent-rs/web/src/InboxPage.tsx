@@ -567,13 +567,16 @@ function Reader(props: {
   const detail = createQuery<MessageDetail>(() => ({
     queryKey: ["message", props.messageId],
     networkMode: "always",
+    refetchOnReconnect: (query) => (localBodyPending(query.state.data) ? "always" : true),
     queryFn: ({ signal }) => messageRead(queryClient, props.messageId, signal),
     placeholderData: headerData(props.summary ?? cachedRow(queryClient, props.messageId)),
   }));
   const threadId = createMemo(() => props.summary?.threadId ?? detail.data?.threadId);
-  const thread = createQuery(() => ({
+  const thread = createQuery<{ messages: MessageDetail[] }>(() => ({
     queryKey: ["thread", threadId(), trash()],
     networkMode: "always",
+    refetchOnReconnect: (query) =>
+      query.state.data?.messages.some(localBodyPending) ? "always" : true,
     queryFn: ({ signal }) => threadRead(queryClient, threadId() ?? "", trash(), signal),
     enabled: Boolean(threadId()),
     refetchInterval:

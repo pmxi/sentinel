@@ -1,6 +1,6 @@
 import type { Account, MessageDetail, MutationReceipt } from "@sent/shared";
 import { createMemoryHistory, MemoryRouter, Route } from "@solidjs/router";
-import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { createComponent } from "solid-js";
 import { render } from "solid-js/web";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -54,6 +54,56 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 const cleanups: (() => void)[] = [];
+it("refetches fresh pending-body detail and thread data when connectivity returns", async () => {
+  onlineManager.setOnline(false);
+  let client!: QueryClient;
+  const header = { ...message, read: true, textBody: "", plainText: null, localBodyPending: true };
+  const container = await reader(
+    true,
+    false,
+    "l1",
+    undefined,
+    { detail: Promise.resolve(header), thread: Promise.resolve({ messages: [header] }) },
+    (value) => {
+      client = value;
+      client.setDefaultOptions({ queries: { retry: false, staleTime: Infinity } });
+      client.setQueryData(["session"], { authenticated: true });
+      client.setQueryData(["accounts"], { accounts: [account] });
+    },
+    ".reply-actions",
+  );
+  await vi.waitFor(() =>
+    expect(
+      client.getQueryData<MessageDetail & { localBodyPending?: boolean }>(["message", "first"])
+        ?.localBodyPending,
+    ).toBe(true),
+  );
+  await vi.waitFor(() =>
+    expect(
+      client.getQueryData<{ messages: (MessageDetail & { localBodyPending?: boolean })[] }>([
+        "thread",
+        "first-thread",
+        false,
+      ])?.messages[0]?.localBodyPending,
+    ).toBe(true),
+  );
+  const full = {
+    ...message,
+    read: true,
+    textBody: "Recovered after reconnect",
+    plainText: "Recovered after reconnect",
+  };
+  vi.mocked(sentApi.message).mockResolvedValue(full);
+  vi.mocked(sentApi.thread).mockResolvedValue({ messages: [full] });
+  onlineManager.setOnline(true);
+  await vi.waitFor(() =>
+    expect(container.querySelector(".latest-message .email-body")?.textContent).toContain(
+      "Recovered after reconnect",
+    ),
+  );
+  expect(sentApi.message).toHaveBeenCalledTimes(2);
+  expect(sentApi.thread).toHaveBeenCalledTimes(2);
+});
 it("disables reply and forward for local headers until the quoted body arrives", async () => {
   const body = deferred<MessageDetail>(),
     thread = deferred<{ messages: MessageDetail[] }>();
@@ -100,6 +150,7 @@ it("disables reply and forward for local headers until the quoted body arrives",
 afterEach(() => {
   localStorage.clear();
   for (const cleanup of cleanups.splice(0).reverse()) cleanup();
+  onlineManager.setOnline(true);
   vi.restoreAllMocks();
   vi.useRealTimers();
 });

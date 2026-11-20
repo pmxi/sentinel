@@ -176,6 +176,23 @@ try {
   assert.equal(await page.locator(".latest-message .email-body").innerText(), text);
   await page.screenshot({ path: join(output, "offline-local-reader.png"), fullPage: true });
   console.log("PASS bodies load lazily and cached reader/list work offline");
+  const uncached = page
+    .locator(
+      `button.message-row:not([data-thread-id="${thread}"]):not([data-thread-id="${recent.thread_id}"])`,
+    )
+    .first();
+  await uncached.click();
+  await page.waitForFunction(() =>
+    document.querySelector(".latest-message .email-body")?.textContent?.includes("Loading message"),
+  );
+  await context.setOffline(false);
+  await page.waitForFunction(() => {
+    const body = document.querySelector(".latest-message .email-body")?.textContent;
+    return Boolean(body?.trim()) && !body?.includes("Loading message");
+  });
+  assert((await page.locator(".latest-message .email-body").innerText()).length > 20);
+  console.log("PASS an uncached reader opened offline loads its body after reconnect");
+  await page.locator(`button.message-row[data-thread-id="${thread}"]`).click();
   await context.setOffline(false);
   await page
     .locator(".reader-toolbar")
