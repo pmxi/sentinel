@@ -190,6 +190,18 @@ def main():
             assert (root / "current").resolve().name == fifth
             assert (root / "previous").resolve().name == fourth
             print("PASS fresh sync with accounts rejects pre-restart sync timestamp")
+            state["stale"] = None
+            seventh = commit()
+            typescript = root / "releases" / seventh
+            typescript.mkdir()
+            (root / "current").unlink()
+            (root / "current").symlink_to(typescript)
+            (root / "state" / "deployed").write_text(f"{seventh} 2026-01-01T00:00:00Z\n")
+            deploy()
+            assert (root / "current").resolve().name == f"{seventh}-rust"
+            assert (root / "previous").resolve() == typescript
+            assert deploy() == ""
+            print("PASS cutover commit deployed as TypeScript by the old script -> rebuilt as Rust, TypeScript kept as previous")
         finally:
             server.shutdown()
 

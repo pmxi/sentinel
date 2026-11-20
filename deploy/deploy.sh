@@ -88,7 +88,11 @@ elif [[ "$mode" == auto && $# -le 1 ]]; then
   sha=$(git ls-remote "$REPO" refs/heads/master | cut -f1)
   [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || { log 'Cannot resolve master'; exit 1; }
   for state in deployed failed skipped; do
-    if [[ -f "$ROOT/state/$state" ]] && read -r recorded _ <"$ROOT/state/$state" && [[ "$recorded" == "$sha" ]]; then exit 0; fi
+    if [[ -f "$ROOT/state/$state" ]] && read -r recorded _ <"$ROOT/state/$state" && [[ "$recorded" == "$sha" ]]; then
+      # The TypeScript-era script deploys the Rust cutover commit as TypeScript before replacing itself.
+      if [[ "$state" == deployed && "$(readlink -e "$ROOT/current")" == "$ROOT/releases/$sha" && ! -x "$ROOT/releases/$sha/bin/sent-server" ]]; then continue; fi
+      exit 0
+    fi
     [[ ! -f "$ROOT/state/$state-$sha" ]] || exit 0
   done
   # Conditional requests that return 304 do not count against GitHub's 60/hour unauthenticated limit.
@@ -144,7 +148,8 @@ failed() {
 }
 trap failed ERR INT TERM
 release="$ROOT/releases/$sha"
-[[ "$(readlink -e "$ROOT/current")" != "$release" ]] || { log 'Requested release is already current'; exit 0; }
+if [[ "$previous" == "$release" && ! -x "$release/bin/sent-server" ]]; then release+=-rust; fi
+[[ "$previous" != "$release" ]] || { log 'Requested release is already current'; exit 0; }
 log "Building $sha"
 if [[ ! -d "$ROOT/cache.git" ]]; then git clone --mirror "$REPO" "$ROOT/cache.git"; fi
 git --git-dir="$ROOT/cache.git" fetch origin '+refs/heads/*:refs/heads/*'
