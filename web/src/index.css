@@ -716,6 +716,36 @@ kbd {
   border-radius: 50%;
   background: var(--accent);
 }
+.importance-wash .message-row.tier-1:not(.selected) {
+  background: #f6f7f8;
+}
+.message-row.tier-1 .message-line strong,
+.message-row.tier-1 .message-subject {
+  color: #202124;
+}
+.message-row .ai-label {
+  color: #202124;
+}
+.message-row.tier-3 .message-line strong,
+.message-row.tier-3 .message-subject {
+  color: #80868b;
+}
+.message-row.tier-3 .message-snippet,
+.message-row.tier-3 .message-ai-summary {
+  color: #9aa0a6;
+}
+.importance-edge .message-row:not(.selected)::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 2px;
+}
+.importance-edge .message-row.tier-1::after {
+  background: #202124;
+}
+.importance-edge .message-row.tier-2::after {
+  background: #dadce0;
+}
 .message-copy {
   display: block;
   min-width: 0;

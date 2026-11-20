@@ -23,7 +23,7 @@ import { useCommands, useFrameCommands } from "./commands";
 import { replySeed, useCompose } from "./compose";
 import { messageCursorIndex, nextMessageIndex } from "./keyboard";
 import { liveInterval } from "./live";
-import { MessagePreview, RankingReason, ReaderInsights } from "./MessageInsights";
+import { MessagePreview, ReaderInsights } from "./MessageInsights";
 import { optimistic, quietUntil } from "./mail-cache";
 import { useMailbox } from "./mailbox";
 import { cachedRow, headerData, usePrefetch } from "./prefetch";
@@ -271,6 +271,7 @@ function MessageList(props: {
   emptyDescription?: string;
 }) {
   const [list, setList] = createSignal<HTMLDivElement>();
+  const [params] = useSearchParams();
   const mobileQuery = window.matchMedia("(max-width: 700px)");
   const [mobile, setMobile] = createSignal(mobileQuery.matches);
   const updateMobile = () => setMobile(mobileQuery.matches);
@@ -363,7 +364,6 @@ function MessageList(props: {
   );
   const [pendingFocus, setPendingFocus] = createSignal<string | null>(null);
   const [pendingNext, setPendingNext] = createSignal<string | null>(null);
-  const expanded = new Set<string>();
   const [cursorThreadId, setCursorThreadId] = createSignal<string | null>(null);
   const currentIndex = createMemo(() =>
     messageCursorIndex(props.messages, props.selectedId, cursorThreadId()),
@@ -492,7 +492,7 @@ function MessageList(props: {
       <Match when={true}>
         {
           <div
-            class="message-list"
+            class={`message-list ${params().get("mock") === "edge" ? "importance-edge" : "importance-wash"}`}
             ref={(element) =>
               queueMicrotask(() => {
                 if (element.isConnected) setList(element);
@@ -532,7 +532,7 @@ function MessageList(props: {
                         props.prefetch?.(message);
                       }}
                       onMouseEnter={() => props.prefetch?.(message)}
-                      class={`message-row ${!message.read ? "unread" : ""} ${message.tier === null && message.direction === "inbound" ? "unclassified" : ""} ${props.selectedId === message.id ? "selected" : ""}`}
+                      class={`message-row ${message.tier ? `tier-${message.tier}` : ""} ${!message.read ? "unread" : ""} ${message.tier === null && message.direction === "inbound" ? "unclassified" : ""} ${props.selectedId === message.id ? "selected" : ""}`}
                       onClick={() => props.onSelect(message)}
                     >
                       <span class="message-copy">
@@ -584,13 +584,6 @@ function MessageList(props: {
                       </span>
                       {message.flagged && <Flag class="row-flag" size={14} fill="currentColor" />}
                     </button>
-                    <RankingReason
-                      message={message}
-                      open={expanded.has(message.threadId)}
-                      onToggle={(open) =>
-                        open ? expanded.add(message.threadId) : expanded.delete(message.threadId)
-                      }
-                    />
                   </div>
                 )}
               </For>
