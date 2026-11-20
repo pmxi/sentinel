@@ -89,7 +89,7 @@ fn fts_query(input: &str) -> (String, Vec<String>) {
         let (negative, term) = token
             .strip_prefix('-')
             .map_or((false, token), |t| (true, t));
-        let term = term.trim_matches('"');
+        let term = term.trim_matches('"').trim_matches('*');
         if term.is_empty() {
             continue;
         }
@@ -627,10 +627,17 @@ impl Repository {
         }
         let filter = "not m.tombstone and not m.deleted and (?2 is null or m.account_id=?2) and (?3 is null or coalesce(c.manual_tier,c.model_tier)=?3) and (?4 is null or m.received_at >= ?4) and (?5 is null or m.received_at < ?5) and (?6 is null or (json_array_length(m.attachments)>0)=?6)";
         let (query, exclusions) = fts_query(&input.q);
-        let lexical = format!("with lexical_scores as materialized (
+        let lexical = format!("with exclusion_matches as materialized (
+            select exclusions.key group_id,messages_search.rowid message_rowid
+            from json_each(?9) exclusions join messages_search on messages_search match exclusions.value),
+            negative_matches as materialized (
+            select m.rowid from messages m join json_each(?9) exclusions
+            left join exclusion_matches e on e.group_id=exclusions.key and e.message_rowid=m.rowid
+            where e.message_rowid is null group by m.rowid),
+            lexical_scores as materialized (
             select m.id,bm25(messages_search,1.0,1.0,0.4) score from messages_search join messages m on m.rowid=messages_search.rowid left join classifications c on c.message_id=m.id where {filter} and messages_search match ?1
             union all select m.id,0.0 score from messages m left join classifications c on c.message_id=m.id where {filter}
-            and exists(select 1 from json_each(?9) exclusions where m.rowid not in (select rowid from messages_search where messages_search match exclusions.value))
+            and m.rowid in (select rowid from negative_matches)
             and m.rowid not in (select rowid from messages_search where messages_search match ?1))");
         let prefix = if embedding.is_some() {
             format!("{lexical},lexical as (select id,row_number() over(order by score,id) rank from lexical_scores order by score,id limit 200),

@@ -156,7 +156,7 @@ async fn sqlite_schema_search_and_vectors() -> Result<()> {
     );
     let mut ids = Vec::new();
     for (subject, body) in [
-        ("Running project", "alpha beta"),
+        ("Running project", "alpha beta project update"),
         ("Other", "running project alpha gamma"),
         ("Unrelated", "nothing"),
     ] {
@@ -168,6 +168,15 @@ async fn sqlite_schema_search_and_vectors() -> Result<()> {
         ids.push(id);
     }
     let ranked = repo.search(&search("run project"), None).await?;
+    let phrase = repo.search(&search("\"project update\""), None).await?;
+    assert_eq!(phrase["messages"].as_array().unwrap().len(), 1);
+    for query in [
+        "\"project update\" -nonexistent",
+        "\"project update\" -nonexistent*",
+        "\"project update\" -nonexistent *",
+    ] {
+        assert_eq!(repo.search(&search(query), None).await?, phrase);
+    }
     assert_eq!(ranked["messages"].as_array().unwrap().len(), 2);
     assert_eq!(ranked["messages"][0]["id"], json!(ids[0]));
     assert_eq!(
