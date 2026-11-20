@@ -74,7 +74,7 @@ the worker is a separate process.
 
 The migration runner uses `BEGIN IMMEDIATE` and `sent_migrations(filename, applied_at)`.
 The database file is created automatically, with WAL, foreign keys, a five-second busy timeout,
-and NORMAL synchronous mode. Existing Postgres data can be copied with `sent-import-postgres` (below).
+and FULL synchronous mode for durable sent-mail checkpoints. Existing Postgres data can be copied with `sent-import-postgres` (below).
 SQLx uses runtime queries; no database is needed to
 build. The `v1` AES-256-GCM credential envelope is compatible with Node's format.
 

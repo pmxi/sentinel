@@ -137,7 +137,7 @@ async fn sqlite_schema_search_and_vectors() -> Result<()> {
         sqlx::query_scalar::<_, i64>("pragma synchronous")
             .fetch_one(&pool)
             .await?,
-        1
+        2
     );
     let repo = Repository(pool.clone());
     assert_eq!(

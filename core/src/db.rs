@@ -89,7 +89,7 @@ pub async fn pool(path: &str, test: bool) -> Result<SqlitePool> {
         .journal_mode(SqliteJournalMode::Wal)
         .foreign_keys(true)
         .busy_timeout(Duration::from_secs(5))
-        .synchronous(SqliteSynchronous::Normal);
+        .synchronous(SqliteSynchronous::Full);
     Ok(SqlitePoolOptions::new()
         .max_connections(if test { 2 } else { 12 })
         .connect_with(options)
