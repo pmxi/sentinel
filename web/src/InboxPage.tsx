@@ -23,7 +23,7 @@ import { useCommands, useFrameCommands } from "./commands";
 import { replySeed, useCompose } from "./compose";
 import { messageCursorIndex, nextMessageIndex } from "./keyboard";
 import { liveInterval } from "./live";
-import { MessagePreview, ReaderInsights } from "./MessageInsights";
+import { ReaderInsights } from "./MessageInsights";
 import { optimistic, quietUntil } from "./mail-cache";
 import { useMailbox } from "./mailbox";
 import { cachedRow, headerData, usePrefetch } from "./prefetch";
@@ -492,7 +492,7 @@ function MessageList(props: {
       <Match when={true}>
         {
           <div
-            class={`message-list ${params().get("mock") === "edge" ? "importance-edge" : "importance-wash"}`}
+            class={`message-list ${params().get("mock") === "bar" ? "importance-bar" : "importance-tint"}`}
             ref={(element) =>
               queueMicrotask(() => {
                 if (element.isConnected) setList(element);
@@ -558,31 +558,28 @@ function MessageList(props: {
                               </span>
                             )}
                           </span>
-                          <time>{formatListDate(message.receivedAt)}</time>
+                          <span class="message-time">
+                            {message.attachmentCount > 0 && (
+                              <Paperclip size={13} aria-label="Has attachment" />
+                            )}
+                            {message.flagged && (
+                              <Flag size={12} fill="currentColor" aria-label="Flagged" />
+                            )}
+                            <time>{formatListDate(message.receivedAt)}</time>
+                            {message.tier === null && message.direction === "inbound" && (
+                              <span>Sorting…</span>
+                            )}
+                            {message.syncPending && <span>Syncing…</span>}
+                          </span>
                         </span>
                         <span class="message-subject">
                           {message.subject.replace(/^(?:(?:re|fw|fwd):\s*)+/i, "") ||
                             "(No subject)"}
                         </span>
-                        <MessagePreview message={message} />
-                        <span class="message-meta">
-                          {message.account.email}
-                          {message.unreadCount > 0 && (
-                            <span class="conversation-unread">{message.unreadCount} unread</span>
-                          )}
-                          {message.attachmentCount > 0 && (
-                            <>
-                              <Paperclip size={12} />
-                              {message.attachmentCount}
-                            </>
-                          )}
-                          {message.tier === null && message.direction === "inbound" && (
-                            <span class="sorting-label">Sorting…</span>
-                          )}
-                          {message.syncPending && <span>Syncing…</span>}
+                        <span class="message-snippet">
+                          {message.aiSummary?.trim() || message.snippet}
                         </span>
                       </span>
-                      {message.flagged && <Flag class="row-flag" size={14} fill="currentColor" />}
                     </button>
                   </div>
                 )}

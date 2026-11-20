@@ -560,14 +560,21 @@ kbd {
   position: relative;
   width: 100%;
   display: block;
-  padding: 16px 18px 10px;
+  padding: 14px 18px 14px 30px;
   border: 0;
   background: transparent;
   text-align: left;
   cursor: pointer;
 }
 .message-list-item {
-  border-bottom: 1px solid var(--line);
+  background: #fff;
+}
+.message-list-item::after {
+  content: "";
+  position: absolute;
+  inset: auto 0 0 30px;
+  height: 1px;
+  background: var(--line);
 }
 .message-pagination {
   padding: 14px;
@@ -704,47 +711,49 @@ kbd {
 .message-row.unread .message-line strong,
 .message-row.unread .message-subject {
   font-weight: 600;
-  color: #111;
+  color: #202124;
 }
 .message-row.unread .message-line::before {
   content: "";
   position: absolute;
-  top: 22px;
-  left: 7px;
-  width: 5px;
-  height: 5px;
+  top: 21px;
+  left: 12px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--accent);
 }
-.importance-wash .message-row.tier-1:not(.selected) {
-  background: #f6f7f8;
+.importance-tint .message-row.tier-1:not(.selected) {
+  background: #fdf6e3;
 }
-.message-row.tier-1 .message-line strong,
-.message-row.tier-1 .message-subject {
-  color: #202124;
+.importance-tint .message-row.tier-2:not(.selected) {
+  background: #f1f5fd;
 }
-.message-row .ai-label {
-  color: #202124;
+.importance-tint .message-row.tier-1.selected {
+  background: #f8eac4;
+}
+.importance-tint .message-row.tier-2.selected {
+  background: #e1eafb;
 }
 .message-row.tier-3 .message-line strong,
 .message-row.tier-3 .message-subject {
   color: #80868b;
 }
-.message-row.tier-3 .message-snippet,
-.message-row.tier-3 .message-ai-summary {
+.message-row.tier-3 .message-snippet {
   color: #9aa0a6;
 }
-.importance-edge .message-row:not(.selected)::after {
+.importance-bar .message-row:not(.selected)::after {
   content: "";
   position: absolute;
-  inset: 0 auto 0 0;
-  width: 2px;
+  inset: 12px auto 12px 2px;
+  width: 3px;
+  border-radius: 3px;
 }
-.importance-edge .message-row.tier-1::after {
-  background: #202124;
+.importance-bar .message-row.tier-1::after {
+  background: #f29900;
 }
-.importance-edge .message-row.tier-2::after {
-  background: #dadce0;
+.importance-bar .message-row.tier-2::after {
+  background: #4f7fe8;
 }
 .message-copy {
   display: block;
@@ -758,8 +767,8 @@ kbd {
 }
 .message-line strong {
   overflow: hidden;
-  color: #444;
-  font-size: 13px;
+  color: #202124;
+  font-size: 16px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -780,12 +789,9 @@ kbd {
 }
 .conversation-count {
   flex-shrink: 0;
-  padding: 1px 6px;
-  border-radius: 4px;
-  background: #ededed;
-  color: #555;
-  font-size: 10px;
-  font-weight: 600;
+  color: #80868b;
+  font-size: 12px;
+  font-weight: 400;
 }
 .conversation-unread {
   color: #444;
@@ -794,27 +800,37 @@ kbd {
 .message-line time {
   flex: 0 0 auto;
   color: #888;
-  font-size: 11px;
+  font-size: 12px;
+}
+.message-time {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  color: #80868b;
+  font-size: 10px;
 }
 .message-subject {
   display: block;
   margin-top: 3px;
   overflow: hidden;
-  color: #444;
+  color: #202124;
   font-size: 14px;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .message-snippet {
-  display: block;
-  margin-top: 2px;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  margin-top: 3px;
   overflow: hidden;
-  color: #777;
-  font-size: 13px;
+  color: #80868b;
+  font-size: 14px;
   line-height: 1.4;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
 }
 .message-meta {
   display: flex;
@@ -1669,7 +1685,7 @@ kbd {
     font-size: 18px;
   }
   .message-row {
-    padding: 10px 14px;
+    padding: 14px 18px 14px 30px;
   }
   .reader-toolbar {
     padding: 0 10px;
@@ -1797,10 +1813,10 @@ kbd {
     min-height: 44px;
   }
   .message-row {
-    padding: 16px max(18px, env(safe-area-inset-right)) 10px max(18px, env(safe-area-inset-left));
+    padding: 14px max(18px, env(safe-area-inset-right)) 14px max(30px, env(safe-area-inset-left));
   }
   .message-line strong {
-    font-size: 14px;
+    font-size: 17px;
   }
   .message-subject {
     font-size: 15px;
