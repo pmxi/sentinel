@@ -6,18 +6,7 @@ type Insights = Pick<MessageSummary, "aiSummary" | "snippet" | "reasoning" | "ti
 const tierNames: Record<Tier, string> = { 1: "Important", 2: "Updates", 3: "Low priority" };
 export function MessagePreview(props: { message: Insights }) {
   const summary = createMemo(() => props.message.aiSummary?.trim());
-  return (
-    <>
-      {summary() ? (
-        <span class="message-ai-summary" title={summary()}>
-          <span class="ai-label">AI</span>
-          <span>{summary()}</span>
-        </span>
-      ) : (
-        <span class="message-snippet">{props.message.snippet}</span>
-      )}
-    </>
-  );
+  return <span class="message-snippet">{summary() || props.message.snippet}</span>;
 }
 export function RankingReason(props: {
   message: Insights;

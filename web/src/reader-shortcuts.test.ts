@@ -253,6 +253,25 @@ function press(key: string) {
   return event;
 }
 
+describe("mail list presentation", () => {
+  it.each(["all", "l1", "l2", "l3", "sent", "trash", "unclassified"])(
+    "uses mixed-tier highlights only in All mail, not %s-specific lists",
+    async (view) => {
+      const container = await reader(true, false, view);
+      expect(container.querySelector(".message-list")?.classList.contains("importance-tint")).toBe(
+        view === "all",
+      );
+      const row = container.querySelector(".message-row");
+      expect(row?.classList.contains("tier-1")).toBe(true);
+      expect(row?.querySelector(".message-snippet")?.textContent).toBe(message.snippet);
+      expect(row?.textContent).not.toContain(account.email);
+      expect(row?.textContent).not.toContain(" unread");
+      expect(row?.querySelector(".ranking-reason")).toBeNull();
+      expect(row?.querySelector(".ai-label")).toBeNull();
+    },
+  );
+});
+
 describe("reader triage shortcuts", () => {
   it("positions equal-count, equal-height replacement search results using their new thread keys", async () => {
     const rows = (prefix: string) =>

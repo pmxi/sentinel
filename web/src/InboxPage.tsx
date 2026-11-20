@@ -23,7 +23,7 @@ import { useCommands, useFrameCommands } from "./commands";
 import { replySeed, useCompose } from "./compose";
 import { messageCursorIndex, nextMessageIndex } from "./keyboard";
 import { liveInterval } from "./live";
-import { MessagePreview, RankingReason, ReaderInsights } from "./MessageInsights";
+import { MessagePreview, ReaderInsights } from "./MessageInsights";
 import { optimistic, quietUntil } from "./mail-cache";
 import { useMailbox } from "./mailbox";
 import { cachedRow, headerData, usePrefetch } from "./prefetch";
@@ -145,6 +145,7 @@ export function InboxPage(props: { accounts: Account[] }) {
               )}
             </header>
             <MessageList
+              showImportance={route.view === "all"}
               prefetch={prefetch}
               messages={navigation.visible}
               loading={messages.isLoading}
@@ -221,6 +222,7 @@ export function SearchResults(props: { accounts: Account[] }) {
               </div>
             </header>
             <MessageList
+              showImportance
               prefetch={prefetch}
               messages={navigation.visible}
               loading={result.isLoading}
@@ -257,6 +259,7 @@ export function SearchResults(props: { accounts: Account[] }) {
   );
 }
 function MessageList(props: {
+  showImportance?: boolean;
   prefetch?(message: ConversationSummary): void;
   messages: ConversationSummary[];
   loading: boolean;
@@ -363,7 +366,6 @@ function MessageList(props: {
   );
   const [pendingFocus, setPendingFocus] = createSignal<string | null>(null);
   const [pendingNext, setPendingNext] = createSignal<string | null>(null);
-  const expanded = new Set<string>();
   const [cursorThreadId, setCursorThreadId] = createSignal<string | null>(null);
   const currentIndex = createMemo(() =>
     messageCursorIndex(props.messages, props.selectedId, cursorThreadId()),
@@ -492,7 +494,7 @@ function MessageList(props: {
       <Match when={true}>
         {
           <div
-            class="message-list"
+            class={`message-list ${props.showImportance ? "importance-tint" : ""}`}
             ref={(element) =>
               queueMicrotask(() => {
                 if (element.isConnected) setList(element);
@@ -532,7 +534,7 @@ function MessageList(props: {
                         props.prefetch?.(message);
                       }}
                       onMouseEnter={() => props.prefetch?.(message)}
-                      class={`message-row ${!message.read ? "unread" : ""} ${message.tier === null && message.direction === "inbound" ? "unclassified" : ""} ${props.selectedId === message.id ? "selected" : ""}`}
+                      class={`message-row ${message.tier ? `tier-${message.tier}` : ""} ${!message.read ? "unread" : ""} ${message.tier === null && message.direction === "inbound" ? "unclassified" : ""} ${props.selectedId === message.id ? "selected" : ""}`}
                       onClick={() => props.onSelect(message)}
                     >
                       <span class="message-copy">
@@ -558,39 +560,27 @@ function MessageList(props: {
                               </span>
                             )}
                           </span>
-                          <time>{formatListDate(message.receivedAt)}</time>
+                          <span class="message-time">
+                            {message.attachmentCount > 0 && (
+                              <Paperclip size={13} aria-label="Has attachment" />
+                            )}
+                            {message.flagged && (
+                              <Flag size={12} fill="currentColor" aria-label="Flagged" />
+                            )}
+                            <time>{formatListDate(message.receivedAt)}</time>
+                            {message.tier === null && message.direction === "inbound" && (
+                              <span>Sorting…</span>
+                            )}
+                            {message.syncPending && <span>Syncing…</span>}
+                          </span>
                         </span>
                         <span class="message-subject">
                           {message.subject.replace(/^(?:(?:re|fw|fwd):\s*)+/i, "") ||
                             "(No subject)"}
                         </span>
                         <MessagePreview message={message} />
-                        <span class="message-meta">
-                          {message.account.email}
-                          {message.unreadCount > 0 && (
-                            <span class="conversation-unread">{message.unreadCount} unread</span>
-                          )}
-                          {message.attachmentCount > 0 && (
-                            <>
-                              <Paperclip size={12} />
-                              {message.attachmentCount}
-                            </>
-                          )}
-                          {message.tier === null && message.direction === "inbound" && (
-                            <span class="sorting-label">Sorting…</span>
-                          )}
-                          {message.syncPending && <span>Syncing…</span>}
-                        </span>
                       </span>
-                      {message.flagged && <Flag class="row-flag" size={14} fill="currentColor" />}
                     </button>
-                    <RankingReason
-                      message={message}
-                      open={expanded.has(message.threadId)}
-                      onToggle={(open) =>
-                        open ? expanded.add(message.threadId) : expanded.delete(message.threadId)
-                      }
-                    />
                   </div>
                 )}
               </For>
