@@ -476,9 +476,25 @@ current database and its `-wal`/`-shm` sidecars, then install a backup as
 `~/sent/data/sent.sqlite`, run `sent-import-postgres --check`, and restart.
 Never copy a live SQLite database without using the backup API.
 
-### Legacy PostgreSQL backups (retained for rollback)
+For local SQLite installations, `scripts/backup.sh` also uses the consistent
+SQLite backup API. Set `SENT_DATABASE_PATH` (default `./data/sent.sqlite`) and
+`SENT_BACKUP_DIR` (default `./backups`); backups are private and retained for
+14 days. The `sqlite3` command-line tool is required. No Compose database
+service is used.
 
-`scripts/backup.sh` can run from cron or a systemd timer. It writes compressed PostgreSQL dumps to `./backups` by default and retains 14 days. Override the destination with `SENT_BACKUP_DIR`, ideally to encrypted storage copied off the host.
+Restore to a **new explicit path**; the script refuses existing targets or
+sidecars, including a running application's database:
+
+```sh
+scripts/restore.sh /path/to/sent-backup.sqlite ./restore-check/sent.sqlite
+sent-import-postgres --check ./restore-check/sent.sqlite
+```
+
+Stop both services before installing the restored file at the configured database
+path. Preserve the old database and its sidecars together. Never replace a live
+database, and never reuse sidecars from the old file.
+
+### Legacy PostgreSQL backups (retained for rollback)
 
 On the native production host, `sent-backup.timer` is a **system** timer, separate
 from the user-level deploy timer. It runs a root-installed copy of
@@ -496,29 +512,11 @@ database credentials aren't passed on the command line. After installation
 and `sudo systemctl daemon-reload`, test via `sudo systemctl start sent-backup.service`
 and verify a fresh private archive appears. The app services do not need to restart.
 
-Test a custom-format dump in a fresh scratch database. Use PostgreSQL client
-tools matching the source major version. Have a database administrator create
-a database owned by the restore role and preinstall the extensions if that
-role cannot install them. For example, on the native host:
-
-```sh
-sudo -u postgres createdb --owner=sent sent_restore_check
-sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d sent_restore_check \
-  -c 'CREATE EXTENSION pgcrypto; CREATE EXTENSION vector;'
-# Set PGHOST, PGPORT, PGUSER, and any required libpq connection options.
-# Authenticate with a private .pgpass or PGPASSWORD; never put secrets in argv.
-scripts/restore.sh --scratch sent_restore_check /path/to/sent-YYYYMMDDTHHMMSSZ.dump
-# After verifying counts, migrations, and vector data:
-dropdb --maintenance-db=postgres sent_restore_check
-```
-
-Scratch mode only accepts `sent_restore_*` names and does not create, drop, or
-clean the database. It restores atomically and skips source ownership, grants,
-and comments (the extension comments are owned by the administrator).
-
-For actual disaster recovery against the local Compose database, stop the server and worker, then run
-`scripts/restore.sh /path/to/sent.dump` **without** `--scratch`. That form requires
-an explicit `RESTORE` confirmation because it replaces the Compose database.
+Test legacy custom-format dumps with `pg_restore` in an isolated scratch
+PostgreSQL database, using matching client tools and the original extensions.
+Authenticate with a private `.pgpass` or environment, never secrets in argv.
+The local backup/restore scripts now handle SQLite only; they do not restore
+PostgreSQL or alter the rollback database.
 
 ## Common commands
 
