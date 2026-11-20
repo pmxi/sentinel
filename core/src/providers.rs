@@ -390,14 +390,17 @@ impl Providers {
             credentials["cache"] = json!(serde_json::to_string(&cache)?);
             access
         };
+        let mut tx = self.pool.begin().await?;
         sqlx::query("update accounts set encrypted_credentials=?2,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') where id=?1")
             .bind(account_id)
             .bind(encrypt_secret(
                 &serde_json::to_string(&credentials)?,
                 self.key()?,
             )?)
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await?;
+        crate::live::notify_messages(&mut *tx, &[]).await?;
+        tx.commit().await?;
         Ok(token)
     }
 

@@ -20,9 +20,50 @@ pub async fn revoke_session(pool: &sqlx::SqlitePool, session: &str, expires: i64
 }
 
 pub async fn notify_changed<'e>(executor: impl Executor<'e, Database = Sqlite>) -> Result<()> {
-    sqlx::query("update sent_live_signal set revision=revision+1 where id=1")
+    sqlx::query("insert into sent_live_changes(kind) values('full')")
         .execute(executor)
         .await?;
+    Ok(())
+}
+
+pub async fn notify_messages<'e>(
+    executor: impl Executor<'e, Database = Sqlite>,
+    ids: &[crate::db::Uuid],
+) -> Result<()> {
+    sqlx::query("insert into sent_live_changes(kind,message_id) select 'message',value from json_each(?1) union all select 'metadata',null where json_array_length(?1)=0")
+        .bind(serde_json::json!(ids)).execute(executor).await?;
+    Ok(())
+}
+
+pub async fn notify_threads<'e>(
+    executor: impl Executor<'e, Database = Sqlite>,
+    ids: &[crate::db::Uuid],
+) -> Result<()> {
+    sqlx::query(
+        "insert into sent_live_changes(kind,thread_id) select 'thread',value from json_each(?1)",
+    )
+    .bind(serde_json::json!(ids))
+    .execute(executor)
+    .await?;
+    Ok(())
+}
+
+pub async fn notify_mutation<'e>(
+    executor: impl Executor<'e, Database = Sqlite>,
+    id: crate::db::Uuid,
+) -> Result<()> {
+    sqlx::query("insert into sent_live_changes(kind,message_id) select case when message_id is null then 'metadata' else 'message' end,message_id from mutation_outbox where id=?1")
+        .bind(id).execute(executor).await?;
+    Ok(())
+}
+
+pub async fn notify_provider_messages<'e>(
+    executor: impl Executor<'e, Database = Sqlite>,
+    account: crate::db::Uuid,
+    ids: &[String],
+) -> Result<()> {
+    sqlx::query("insert into sent_live_changes(kind,message_id) select 'message',id from messages where account_id=?1 and provider_message_id in (select value from json_each(?2))")
+        .bind(account).bind(serde_json::json!(ids)).execute(executor).await?;
     Ok(())
 }
 

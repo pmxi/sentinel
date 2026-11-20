@@ -7,11 +7,13 @@ use axum::{
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use sent_core::db::Uuid;
-use sent_core::repository::{ReplicaInventory, replica_fingerprint};
+use sent_core::repository::ReplicaInventory;
+#[cfg(test)]
+use sent_core::repository::replica_fingerprint;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{BTreeMap, HashMap, VecDeque},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -20,6 +22,13 @@ use std::{
 pub struct Feed {
     generations: VecDeque<Generation>,
     sequence: u64,
+    rows: BTreeMap<String, Value>,
+    current: Option<Uuid>,
+}
+#[derive(Default)]
+struct Patch {
+    upserts: Vec<Value>,
+    deletions: Vec<String>,
 }
 struct Generation {
     id: Uuid,
@@ -28,6 +37,7 @@ struct Generation {
     hashes: Arc<HashMap<String, String>>,
     snapshot: Option<Arc<Vec<Value>>>,
     accounts: Vec<Value>,
+    patch: Option<Patch>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -85,9 +95,145 @@ fn decode(cursor: &str, paged: bool) -> Result<Cursor, Fault> {
     Ok(value)
 }
 impl Feed {
+    pub(crate) fn apply(&mut self, update: sent_core::repository::ReplicaUpdate) -> String {
+        let mut patch = Patch::default();
+        if update.full {
+            let next: BTreeMap<_, _> = update
+                .inventory
+                .messages
+                .into_iter()
+                .map(|row| (row["id"].as_str().expect("id").to_owned(), row))
+                .collect();
+            patch.deletions = self
+                .rows
+                .keys()
+                .filter(|id| !next.contains_key(*id))
+                .cloned()
+                .collect();
+            patch.upserts = next.values().cloned().collect();
+            self.rows = next;
+        } else {
+            for id in update.ids {
+                let id = id.to_string();
+                if self.rows.remove(&id).is_some() {
+                    patch.deletions.push(id);
+                }
+            }
+            for row in update.inventory.messages {
+                let id = row["id"].as_str().expect("id").to_owned();
+                self.rows.insert(id, row.clone());
+                patch.upserts.push(row);
+            }
+            let inserted: std::collections::HashSet<_> = patch
+                .upserts
+                .iter()
+                .map(|r| r["id"].as_str().unwrap())
+                .collect();
+            patch.deletions.retain(|id| !inserted.contains(id.as_str()));
+        }
+        if self.current.is_none() {
+            patch = Patch::default();
+        }
+        let id = self.record(
+            Arc::new(HashMap::new()),
+            update.inventory.accounts,
+            None,
+            false,
+        );
+        self.generations.back_mut().expect("generation").patch = Some(patch);
+        self.current = Some(id);
+        while self
+            .generations
+            .iter()
+            .map(|g| {
+                g.patch
+                    .as_ref()
+                    .map_or(0, |p| p.upserts.len() + p.deletions.len())
+            })
+            .sum::<usize>()
+            > 65_536
+            && self.generations.len() > 1
+        {
+            self.generations.pop_front();
+        }
+        encode(id, None)
+    }
+    pub(crate) fn current_cursor(&self) -> Option<String> {
+        self.current.map(|id| encode(id, None))
+    }
+    pub(crate) fn published_inventory(&self) -> ReplicaInventory {
+        let current = self
+            .generations
+            .iter()
+            .find(|g| Some(g.id) == self.current)
+            .expect("initialized");
+        ReplicaInventory {
+            messages: current
+                .patch
+                .as_ref()
+                .map_or_else(Vec::new, |p| p.upserts.clone()),
+            accounts: current.accounts.clone(),
+        }
+    }
+    fn cached_snapshot(&mut self) -> Result<Uuid, Fault> {
+        let id = self.current.ok_or(Fault::Expired)?;
+        if self.find(id)?.snapshot.is_none() {
+            let rows = Arc::new(self.rows.values().cloned().collect());
+            self.find(id)?.snapshot = Some(rows);
+        }
+        Ok(id)
+    }
+    fn cached_delta(&mut self, from: Uuid, to: Uuid, bounded: bool) -> Result<Value, Fault> {
+        let first = self.find(from)?.sequence;
+        let target = self.find(to)?;
+        let last = target.sequence;
+        let accounts = target.accounts.clone();
+        if last < first {
+            return Err(Fault::Expired);
+        }
+        let mut generations: Vec<_> = self
+            .generations
+            .iter()
+            .filter(|g| g.sequence > first && g.sequence <= last)
+            .collect();
+        generations.sort_by_key(|g| g.sequence);
+        let mut changes: BTreeMap<&str, Option<&Value>> = BTreeMap::new();
+        let mut expected = first + 1;
+        for generation in generations {
+            if generation.sequence != expected {
+                return Err(Fault::Expired);
+            }
+            expected += 1;
+            let patch = generation.patch.as_ref().ok_or(Fault::Expired)?;
+            for id in &patch.deletions {
+                changes.insert(id, None);
+            }
+            for row in &patch.upserts {
+                changes.insert(row["id"].as_str().expect("id"), Some(row));
+            }
+        }
+        if expected != last + 1 {
+            return Err(Fault::Expired);
+        }
+        if bounded
+            && (changes.values().filter(|v| v.is_some()).count() > 32
+                || changes.values().filter(|v| v.is_none()).count() > 512)
+        {
+            return Err(Fault::Expired);
+        }
+        let upserts: Vec<_> = changes.values().filter_map(|v| *v).collect();
+        let deletions: Vec<_> = changes
+            .iter()
+            .filter_map(|(id, v)| v.is_none().then_some(*id))
+            .collect();
+        Ok(
+            json!({"upserts":upserts,"deletions":deletions,"accounts":accounts,"cursor":encode(to,None)}),
+        )
+    }
     fn find(&mut self, id: Uuid) -> Result<&mut Generation, Fault> {
-        self.generations
-            .retain(|entry| entry.touched.elapsed() < Duration::from_secs(900));
+        self.generations.retain(|entry| {
+            Some(entry.id) == self.current || entry.touched.elapsed() < Duration::from_secs(900)
+        });
         let index = self
             .generations
             .iter()
@@ -98,6 +244,7 @@ impl Feed {
         self.generations.push_back(entry);
         Ok(self.generations.back_mut().expect("generation"))
     }
+    #[cfg(test)]
     fn insert(&mut self, inventory: ReplicaInventory, snapshot: bool) -> Uuid {
         let hashes = Arc::new(
             inventory
@@ -148,6 +295,7 @@ impl Feed {
                 touched: Instant::now(),
                 hashes,
                 snapshot,
+                patch: None,
                 accounts,
             });
             id
@@ -170,6 +318,7 @@ impl Feed {
         }
         id
     }
+    #[cfg(test)]
     pub(crate) fn publish(&mut self, inventory: &ReplicaInventory) -> String {
         let hashes = Arc::new(
             inventory
@@ -192,6 +341,23 @@ impl Feed {
         to: &str,
         inventory: &ReplicaInventory,
     ) -> Result<String, ()> {
+        let target = decode(to, false).map_err(|_| ())?.generation;
+        if self.find(target).map_err(|_| ())?.patch.is_some() {
+            let delta = self
+                .cached_delta(
+                    decode(from, false).map_err(|_| ())?.generation,
+                    target,
+                    true,
+                )
+                .map_err(|_| ())?;
+            let mut output = BoundedJson(Vec::new());
+            serde_json::to_writer(
+                &mut output,
+                &json!({"type":"delta","from":from,"delta":delta}),
+            )
+            .map_err(|_| ())?;
+            return String::from_utf8(output.0).map_err(|_| ());
+        }
         let before = self
             .find(decode(from, false).map_err(|_| ())?.generation)
             .map_err(|_| ())?;
@@ -262,6 +428,7 @@ impl Feed {
             json!({"messages":rows[offset..end],"accounts":entry.accounts,"nextCursor":(end<rows.len()).then(||encode(entry.id,Some(end))),"cursor":encode(entry.id,None)}),
         )
     }
+    #[cfg(test)]
     fn delta(&mut self, cursor: Cursor, inventory: ReplicaInventory) -> Result<Value, Fault> {
         let previous = self.find(cursor.generation)?;
         let accounts_changed = previous.accounts != inventory.accounts;
@@ -342,11 +509,14 @@ pub async fn snapshot(
             Err(error) => return error.into_response(),
         },
         None => {
-            let (inventory, _snapshot_guard) = match state.inventory(None, false).await {
+            let _guard = match state.refresh_feed().await {
                 Ok(value) => value,
                 Err(error) => return internal(error),
             };
-            let id = state.sync_feed.lock().unwrap().insert(inventory, true);
+            let id = match state.sync_feed.lock().unwrap().cached_snapshot() {
+                Ok(id) => id,
+                Err(error) => return error.into_response(),
+            };
             Cursor {
                 version: 1,
                 generation: id,
@@ -377,11 +547,13 @@ pub async fn delta(
     if let Err(error) = state.sync_feed.lock().unwrap().find(cursor.generation) {
         return error.into_response();
     }
-    let (inventory, _snapshot_guard) = match state.inventory(None, false).await {
+    let _guard = match state.refresh_feed().await {
         Ok(value) => value,
         Err(error) => return internal(error),
     };
-    match state.sync_feed.lock().unwrap().delta(cursor, inventory) {
+    let mut feed = state.sync_feed.lock().unwrap();
+    let target = feed.current.expect("initialized feed");
+    match feed.cached_delta(cursor.generation, target, false) {
         Ok(value) => Json(value).into_response(),
         Err(error) => error.into_response(),
     }
@@ -589,5 +761,246 @@ mod tests {
         assert_eq!(delta["upserts"], json!([]));
         assert!(decode("bad", false).is_err());
         assert!(feed.find(Uuid::new_v4()).is_err());
+    }
+
+    fn update(
+        rows: Vec<Value>,
+        ids: Vec<&str>,
+        full: bool,
+    ) -> sent_core::repository::ReplicaUpdate {
+        sent_core::repository::ReplicaUpdate {
+            mark: (0, 0),
+            full,
+            ids: ids.into_iter().map(|s| s.parse().unwrap()).collect(),
+            inventory: inventory(rows),
+        }
+    }
+    #[test]
+    fn incremental_feed_retains_noop_cursors_and_pages_and_rejects_rollback() {
+        let mut feed = Feed::default();
+        let a = Uuid::new_v4().to_string();
+        let b = Uuid::new_v4().to_string();
+        let first = feed.apply(update(vec![row(&a, false), row(&b, false)], vec![], true));
+        let page = feed.cached_snapshot().unwrap_or_else(|_| panic!());
+        let second = feed.apply(update(vec![row(&a, true)], vec![&a], false));
+        let delta = feed
+            .cached_delta(
+                decode(&first, false)
+                    .unwrap_or_else(|_| panic!())
+                    .generation,
+                decode(&second, false)
+                    .unwrap_or_else(|_| panic!())
+                    .generation,
+                false,
+            )
+            .unwrap_or_else(|_| panic!());
+        assert_eq!(delta["upserts"], json!([row(&a, true)]));
+        assert_eq!(feed.rows.len(), 2);
+        for _ in 0..40 {
+            assert_eq!(
+                feed.cached_snapshot().unwrap_or_else(|_| panic!()),
+                decode(&second, false)
+                    .unwrap_or_else(|_| panic!())
+                    .generation
+            );
+            let current = feed.current.unwrap();
+            assert_eq!(
+                feed.cached_delta(current, current, false)
+                    .unwrap_or_else(|_| panic!())["cursor"],
+                second
+            );
+        }
+        assert_eq!(feed.generations.len(), 2);
+        assert!(
+            feed.live_delta(&second, &first, &inventory(vec![]))
+                .is_err()
+        );
+        let oldpage = feed
+            .page(
+                Cursor {
+                    version: 1,
+                    generation: page,
+                    offset: Some(0),
+                },
+                2000,
+            )
+            .unwrap_or_else(|_| panic!());
+        assert!(
+            oldpage["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|r| r["id"] == a && r["read"] == false)
+        );
+        let third = feed.apply(update(vec![], vec![&b], false));
+        let pushed: Value =
+            serde_json::from_str(&feed.live_delta(&first, &third, &inventory(vec![])).unwrap())
+                .unwrap();
+        assert_eq!(pushed["delta"]["deletions"], json!([b]));
+        assert_eq!(pushed["delta"]["upserts"], json!([row(&a, true)]));
+        let current = feed.current.unwrap();
+        feed.find(current).unwrap_or_else(|_| panic!()).touched =
+            Instant::now() - Duration::from_secs(1000);
+        assert!(feed.cached_snapshot().is_ok());
+        assert!(feed.live_delta("bad", &third, &inventory(vec![])).is_err());
+    }
+    #[test]
+    fn incremental_history_gaps_expire_instead_of_silently_losing_rows() {
+        let mut feed = Feed::default();
+        let a = Uuid::new_v4().to_string();
+        let first = feed.apply(update(vec![], vec![], true));
+        let second = feed.apply(update(vec![row(&a, false)], vec![&a], false));
+        let third = feed.apply(update(vec![row(&a, true)], vec![&a], false));
+        feed.generations.retain(|g| {
+            g.id != decode(&second, false)
+                .unwrap_or_else(|_| panic!())
+                .generation
+        });
+        assert!(feed.live_delta(&first, &third, &inventory(vec![])).is_err());
+    }
+
+    #[tokio::test]
+    async fn scheduled_inserts_and_relabels_match_full_inventory_and_inline_deltas()
+    -> anyhow::Result<()> {
+        use sent_core::{
+            db,
+            normalize::gmail_message,
+            repository::{BodyVersionCache, Classification, ListInput, Repository},
+        };
+
+        let directory = tempfile::tempdir()?;
+        let pool = db::pool(
+            directory
+                .path()
+                .join("sent_test_scheduled.sqlite")
+                .to_str()
+                .unwrap(),
+            true,
+        )
+        .await?;
+        db::migrate(
+            &pool,
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../migrations"),
+        )
+        .await?;
+        let repo = Repository(pool.clone());
+        let account = repo
+            .upsert_account("gmail", "owner@example.test", "Owner", "fake")
+            .await?;
+        let mut cache = BodyVersionCache::default();
+        let initial = repo.replica_update(None, &mut cache).await?.unwrap();
+        let mut mark = initial.mark;
+        let mut feed = Feed::default();
+        let mut cursor = feed.apply(initial);
+        let mut replica = BTreeMap::new();
+        for (provider_id, labels, tier) in [
+            ("ordinary", json!(["INBOX"]), None),
+            ("tier-three", json!(["INBOX"]), Some(3)),
+            ("archived", json!([]), Some(1)),
+            ("sent", json!(["SENT"]), Some(2)),
+            ("trashed", json!(["INBOX", "TRASH"]), None),
+            ("inserted-scheduled", json!(["INBOX", "SCHEDULED"]), None),
+            ("ordinary", json!(["INBOX", "SCHEDULED"]), None),
+            ("inserted-scheduled", json!(["INBOX"]), None),
+            ("tier-three", json!(["INBOX", "SCHEDULED"]), Some(3)),
+            ("inserted-scheduled", json!(["INBOX", "SCHEDULED"]), None),
+        ] {
+            let scheduled = labels
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|label| label == "SCHEDULED");
+            let message = gmail_message(
+                &json!({"id":provider_id,"threadId":provider_id,"internalDate":"1893456000000","labelIds":labels,
+                "payload":{"headers":[{"name":"From","value":if provider_id == "sent" { "owner@example.test" } else { "sender@example.test" }},{"name":"Subject","value":"Visibility"}]}}),
+                "owner@example.test",
+            )?;
+            let (id, _) = repo.upsert_message(account, &message).await?;
+            if let Some(tier) = tier {
+                repo.save_classification(
+                    id,
+                    Classification {
+                        tier,
+                        reasoning: "Fixture",
+                        summary: "Fixture",
+                        plain_text: "Fixture",
+                        model: "fixture",
+                        prompt_version: "fixture",
+                    },
+                )
+                .await?;
+            }
+            repo.heartbeat("scheduled-test", json!({})).await?;
+            let change = repo.replica_update(Some(mark), &mut cache).await?.unwrap();
+            assert!(!change.full);
+            assert_eq!(change.ids, vec![id]);
+            assert_eq!(change.inventory.messages.is_empty(), scheduled);
+            mark = change.mark;
+            let was_visible = feed.rows.contains_key(&id.to_string());
+            let previous = cursor;
+            cursor = feed.apply(change);
+            let full = repo.replica_inventory(None, false).await?;
+            assert_eq!(
+                feed.rows.values().cloned().collect::<Vec<_>>(),
+                full.messages
+            );
+            let mut rebuilt = Feed::default();
+            rebuilt.apply(sent_core::repository::ReplicaUpdate {
+                mark,
+                full: true,
+                ids: vec![],
+                inventory: full,
+            });
+            assert_eq!(feed.rows, rebuilt.rows);
+            let frame: Value = serde_json::from_str(
+                &feed
+                    .live_delta(&previous, &cursor, &feed.published_inventory())
+                    .unwrap(),
+            )?;
+            for id in frame["delta"]["deletions"].as_array().unwrap() {
+                replica.remove(id.as_str().unwrap());
+            }
+            for row in frame["delta"]["upserts"].as_array().unwrap() {
+                replica.insert(row["id"].as_str().unwrap().to_owned(), row.clone());
+            }
+            assert_eq!(replica, rebuilt.rows);
+            let inbox_ids: Vec<_> = replica
+                .values()
+                .filter(|row| {
+                    row["archived"] == false
+                        && row["deleted"] == false
+                        && row["direction"] == "inbound"
+                })
+                .map(|row| row["id"].as_str().unwrap().to_owned())
+                .collect();
+            let inbox = repo
+                .list_messages(ListInput {
+                    view: Some("inbox".into()),
+                    limit: Some(100),
+                    ..Default::default()
+                })
+                .await?;
+            let mut listed: Vec<_> = inbox["messages"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["id"].as_str().unwrap().to_owned())
+                .collect();
+            listed.sort();
+            assert_eq!(inbox_ids, listed);
+            if scheduled {
+                assert_eq!(frame["delta"]["upserts"], json!([]));
+                assert_eq!(
+                    frame["delta"]["deletions"],
+                    if was_visible { json!([id]) } else { json!([]) }
+                );
+            } else {
+                assert_eq!(frame["delta"]["upserts"][0]["id"], json!(id));
+                assert_eq!(frame["delta"]["deletions"], json!([]));
+            }
+            assert!(repo.replica_update(Some(mark), &mut cache).await?.is_none());
+        }
+        pool.close().await;
+        Ok(())
     }
 }

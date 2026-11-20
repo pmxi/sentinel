@@ -37,6 +37,18 @@ async fn main() -> Result<()> {
     }
     let pool = db::pool(&config.database_path, true).await?;
     db::migrate(&pool, &config.migrations_path).await?;
+    seed(&pool, count, reset).await?;
+    let conversations = if count == 0 {
+        0
+    } else {
+        (count * 2 / 5).max(1)
+    };
+    println!("Seeded 2 fake accounts, {count} messages, {conversations} conversations");
+    pool.close().await;
+    Ok(())
+}
+
+async fn seed(pool: &sqlx::SqlitePool, count: usize, reset: bool) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if reset {
         sqlx::query("delete from accounts where id in (select value from json_each(?1)) and email in ('owner@gmail.example','owner@microsoft.example')")
@@ -96,8 +108,54 @@ async fn main() -> Result<()> {
                 .bind(sent_core::db::timestamp(epoch)).execute(&mut *tx).await?;
         }
     }
+    sent_core::live::notify_changed(&mut *tx).await?;
     tx.commit().await?;
-    println!("Seeded 2 fake accounts, {count} messages, {conversations} conversations");
-    pool.close().await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sent_core::repository::{BodyVersionCache, Repository};
+
+    #[tokio::test]
+    async fn seed_and_reset_are_journaled_even_alongside_metadata_writes() -> Result<()> {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await?;
+        db::migrate(
+            &pool,
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../migrations"),
+        )
+        .await?;
+        let repo = Repository(pool.clone());
+        let mut cache = BodyVersionCache::default();
+        let first = repo.replica_update(None, &mut cache).await?.unwrap();
+        seed(&pool, 2, false).await?;
+        repo.heartbeat("seed-test", json!({})).await?;
+        let inserted = repo
+            .replica_update(Some(first.mark), &mut cache)
+            .await?
+            .unwrap();
+        assert!(inserted.full);
+        assert_eq!(inserted.inventory.messages.len(), 2);
+        assert_eq!(inserted.inventory.accounts.len(), 2);
+        assert!(seed(&pool, 1, false).await.is_err());
+        assert!(
+            repo.replica_update(Some(inserted.mark), &mut cache)
+                .await?
+                .is_none()
+        );
+        seed(&pool, 0, true).await?;
+        repo.heartbeat("seed-test", json!({})).await?;
+        let reset = repo
+            .replica_update(Some(inserted.mark), &mut cache)
+            .await?
+            .unwrap();
+        assert!(reset.full);
+        assert!(reset.inventory.messages.is_empty());
+        pool.close().await;
+        Ok(())
+    }
 }
