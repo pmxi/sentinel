@@ -1,4 +1,5 @@
 import type { Account } from "@sent/shared";
+import { clearShellReloadGuards } from "./service-worker";
 
 export const SHELL_METADATA_KEY = "sent:shell:v1";
 export const UNAUTHORIZED_EVENT = "sent:unauthorized";
@@ -54,4 +55,5 @@ export function forgetShellMetadata() {
   try {
     localStorage.removeItem(SHELL_METADATA_KEY);
   } catch {}
+  clearShellReloadGuards();
 }

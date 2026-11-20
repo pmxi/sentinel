@@ -1,11 +1,82 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { registerShellWorker } from "./service-worker";
+import { holdShellReload, registerShellWorker } from "./service-worker";
+import { forgetShellMetadata } from "./shell-metadata";
 
 afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 describe("shell registration", () => {
+  it("clears revoked-session guards without letting their late failures release a new composer's guard", async () => {
+    const events = new EventTarget();
+    const worker = {
+      controller: {} as object,
+      addEventListener: events.addEventListener.bind(events),
+      removeEventListener: events.removeEventListener.bind(events),
+      register: vi.fn().mockResolvedValue({ update: vi.fn().mockResolvedValue(undefined) }),
+    };
+    vi.stubGlobal("navigator", { serviceWorker: worker });
+    const reload = vi.spyOn(window.location, "reload").mockImplementation(() => {});
+    const dispose = await registerShellWorker();
+    let reject!: (cause: Error) => void;
+    const oldSave = new Promise<void>((_, no) => {
+      reject = no;
+    });
+    const oldRelease = holdShellReload(() => oldSave);
+    oldRelease();
+    await Promise.resolve();
+    forgetShellMetadata();
+    const release = holdShellReload(async () => {});
+    try {
+      worker.controller = {};
+      events.dispatchEvent(new Event("controllerchange"));
+      reject(new Error("Old session's save returned 401"));
+      await new Promise((done) => setTimeout(done, 0));
+      expect(reload).not.toHaveBeenCalled();
+      release();
+      await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+    } finally {
+      release();
+      if (typeof dispose === "function") dispose();
+    }
+  });
+  it.each([false, true])(
+    "releases an unmounted composer's guard after its flush settles (401=%s)",
+    async (unauthorized) => {
+      const events = new EventTarget();
+      const worker = {
+        controller: {} as object,
+        addEventListener: events.addEventListener.bind(events),
+        removeEventListener: events.removeEventListener.bind(events),
+        register: vi.fn().mockResolvedValue({ update: vi.fn().mockResolvedValue(undefined) }),
+      };
+      vi.stubGlobal("navigator", { serviceWorker: worker });
+      const reload = vi.spyOn(window.location, "reload").mockImplementation(() => {});
+      const dispose = await registerShellWorker();
+      let resolve!: () => void;
+      let reject!: (cause: Error) => void;
+      let pending = new Promise<void>((yes, no) => {
+        resolve = yes;
+        reject = no;
+      });
+      const release = holdShellReload(() => pending);
+      try {
+        worker.controller = {};
+        events.dispatchEvent(new Event("controllerchange"));
+        expect(reload).not.toHaveBeenCalled();
+        release();
+        expect(reload).not.toHaveBeenCalled();
+        if (unauthorized) reject(new Error("401 Unauthorized"));
+        else resolve();
+        await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+      } finally {
+        pending = Promise.resolve();
+        release();
+        if (typeof dispose === "function") dispose();
+        await Promise.resolve();
+      }
+    },
+  );
   it("claims without reloading on first install, reloads once for an update and checks for updates when visible", async () => {
     const events = new EventTarget();
     const update = vi.fn().mockResolvedValue(undefined);

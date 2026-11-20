@@ -204,12 +204,68 @@ try {
   console.log(
     "PASS update retains open composer attachments and flushes pending text before deferred reload",
   );
+  await page.getByRole("button", { name: "Compose", exact: true }).click();
+  await composer.getByPlaceholder("Subject", { exact: true }).fill("Abandoned session draft");
+  await composer
+    .getByPlaceholder("Message", { exact: true })
+    .fill("Unsaved text at session expiry");
   await context.clearCookies();
-  await page.locator('a[href="/inbox/l2"]').click();
   await page.getByLabel("Password").waitFor();
+  assert.equal(await composer.count(), 0);
   assert.equal(await page.evaluate(() => localStorage.getItem("sent:shell:v1")), null);
   console.log("PASS a live API 401 revokes cached shell metadata and shows login");
+  await page.waitForLoadState("networkidle");
   await signIn();
+  const third = join(output, "third");
+  await cp(active, third, { recursive: true });
+  await writeFile(
+    join(third, "index.html"),
+    (await readFile(join(third, "index.html"), "utf8")).replace('content="b"', 'content="c"'),
+  );
+  await writeShellWorker(
+    third,
+    (await readdir(third, { recursive: true })).filter((name) => !/\.(br|gz)$/.test(name)),
+  );
+  for (const name of ["index.html", "sw.js"]) {
+    const bytes = await readFile(join(third, name));
+    await writeFile(join(third, `${name}.br`), brotliCompressSync(bytes));
+    await writeFile(join(third, `${name}.gz`), gzipSync(bytes));
+  }
+  await rename(active, join(output, "build-b"));
+  await rename(third, active);
+  const reloggedNavigation = page.waitForEvent(
+    "framenavigated",
+    (frame) => frame === page.mainFrame(),
+  );
+  await page
+    .evaluate(async () => {
+      await (await navigator.serviceWorker.getRegistration()).update();
+    })
+    .catch((error) => {
+      if (!error.message.includes("Execution context was destroyed")) throw error;
+    });
+  await reloggedNavigation.catch(async (error) => {
+    console.error(
+      "Post-login update diagnostics",
+      await page.evaluate(async () => {
+        const registration = await navigator.serviceWorker.getRegistration();
+        return {
+          caches: await caches.keys(),
+          active: registration?.active?.state,
+          waiting: registration?.waiting?.state,
+          installing: registration?.installing?.state,
+          controller: navigator.serviceWorker.controller?.state,
+          build: document.querySelector('meta[name="sent-build-check"]')?.outerHTML,
+          dialogs: document.querySelectorAll(".composer").length,
+          worker: (await (await fetch("/sw.js", { cache: "reload" })).text()).slice(0, 130),
+        };
+      }),
+    );
+    throw error;
+  });
+  await page.locator('meta[name="sent-build-check"][content="c"]').waitFor({ state: "attached" });
+  await page.locator("button.message-row").first().waitFor();
+  console.log("PASS expired-session composer unmounts and cannot block a later build after login");
   await page.locator('a[href="/settings"]').click();
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await page.getByLabel("Password").waitFor();

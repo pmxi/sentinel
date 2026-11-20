@@ -1,15 +1,23 @@
 const reloadGuards = new Set<() => Promise<void>>();
 const reloadChecks = new Set<() => void>();
 
+export function clearShellReloadGuards() {
+  reloadGuards.clear();
+  for (const check of reloadChecks) check();
+}
+
 export function holdShellReload(flush: () => Promise<void>) {
   reloadGuards.add(flush);
+  let releasing = false;
   return () => {
-    void flush()
-      .then(() => {
-        reloadGuards.delete(flush);
-        for (const check of reloadChecks) check();
-      })
-      .catch(() => {});
+    if (releasing) return;
+    releasing = true;
+    const release = () => {
+      if (reloadGuards.delete(flush)) for (const check of reloadChecks) check();
+    };
+    void Promise.resolve()
+      .then(() => (reloadGuards.has(flush) ? flush() : undefined))
+      .then(release, release);
   };
 }
 
