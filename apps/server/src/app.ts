@@ -15,6 +15,7 @@ import {
   MessageListQuerySchema,
   ProviderSchema,
   SearchQuerySchema,
+  ThreadActionSchema,
   TierOverrideSchema,
   UNDO_WINDOW_MS,
 } from "@sent/shared";
@@ -139,6 +140,26 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       .object({ trash: z.enum(["true", "false"]).default("false") })
       .parse(request.query);
     return { messages: await repository.getThread(id, trash === "true") };
+  });
+
+  app.post("/api/threads/:id/action", async (request, reply) => {
+    const { id } = IdParamSchema.parse(request.params);
+    const input = ThreadActionSchema.parse(request.body);
+    const undoUntil = input.undoable
+      ? new Date(Date.now() + UNDO_WINDOW_MS).toISOString()
+      : undefined;
+    try {
+      return reply.code(202).send({
+        mutationId: await repository.enqueueThreadAction(id, input, undoUntil),
+        undoUntil,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.message === "Message not found")
+        return reply.code(404).send({ error: error.message });
+      if (error instanceof Error && error.message === "This action is already pending")
+        return reply.code(409).send({ error: error.message });
+      throw error;
+    }
   });
 
   app.post("/api/messages/:id/action", async (request, reply) => {

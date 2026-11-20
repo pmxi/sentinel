@@ -11,7 +11,13 @@ import { InboxPage } from "./InboxPage";
 import { TriageProvider } from "./triage";
 
 vi.mock("./api", () => ({
-  sentApi: { messages: vi.fn(), message: vi.fn(), thread: vi.fn(), action: vi.fn() },
+  sentApi: {
+    messages: vi.fn(),
+    message: vi.fn(),
+    thread: vi.fn(),
+    action: vi.fn(),
+    threadAction: vi.fn(),
+  },
 }));
 
 const message = {
@@ -33,7 +39,7 @@ const message = {
   unreadCount: 1,
 };
 
-function mount() {
+function mount(entry = "/inbox/l1?message=message-1") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const ui = render(
     createElement(
@@ -41,7 +47,7 @@ function mount() {
       { client },
       createElement(
         MemoryRouter,
-        { initialEntries: ["/inbox/l1?message=message-1"] },
+        { initialEntries: [entry] },
         createElement(
           TriageProvider,
           null,
@@ -76,6 +82,7 @@ beforeEach(() => {
   vi.mocked(sentApi.messages).mockResolvedValue({ messages: [message] } as never);
   vi.mocked(sentApi.message).mockResolvedValue(message as never);
   vi.mocked(sentApi.thread).mockResolvedValue({ messages: [message] } as never);
+  vi.mocked(sentApi.threadAction).mockResolvedValue({ mutationId: "archive-1", undoUntil: null });
 });
 afterEach(cleanup);
 
@@ -98,7 +105,7 @@ describe("archive while automatic mark-read is pending", () => {
       await act(async () => {});
       fireEvent.keyDown(window, { key: "e" });
       await waitFor(() =>
-        expect(sentApi.action).toHaveBeenCalledWith("message-1", "archive", true),
+        expect(sentApi.threadAction).toHaveBeenCalledWith("thread-1", "archive", "l1", undefined),
       );
       expect(container.querySelector(".message-row")).toBeNull();
       expect(screen.queryByRole("heading", { name: message.subject })).toBeNull();
@@ -120,6 +127,26 @@ describe("archive while automatic mark-read is pending", () => {
     await screen.findByText("Message unavailable.");
     fireEvent.keyDown(window, { key: "e" });
     expect(sentApi.action).not.toHaveBeenCalled();
+    expect(sentApi.threadAction).not.toHaveBeenCalled();
+    client.clear();
+  });
+
+  it("deletes the conversation with the current view and account scope", async () => {
+    const { client } = mount("/inbox/l2?message=message-1&account=account-1");
+    fireEvent.click(await screen.findByRole("button", { name: "Delete latest message" }));
+    await waitFor(() =>
+      expect(sentApi.threadAction).toHaveBeenCalledWith("thread-1", "delete", "l2", "account-1"),
+    );
+    expect(screen.getByText("Moved to Trash")).toBeTruthy();
+    client.clear();
+  });
+
+  it("restores the conversation when the grouped request fails", async () => {
+    vi.mocked(sentApi.threadAction).mockRejectedValue(new Error("Thread action failed"));
+    const { container, client } = mount();
+    fireEvent.click(await screen.findByRole("button", { name: "Archive latest message" }));
+    await screen.findByText("Thread action failed");
+    await waitFor(() => expect(container.querySelector(".message-row")).not.toBeNull());
     client.clear();
   });
 });

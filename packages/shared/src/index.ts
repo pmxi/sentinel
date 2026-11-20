@@ -100,6 +100,14 @@ export const MessageActionSchema = z.object({
   undoable: z.boolean().default(false),
 });
 
+export const ThreadActionSchema = MessageListQuerySchema.pick({
+  view: true,
+  accountId: true,
+}).extend({
+  action: z.enum(["archive", "delete"]),
+  undoable: z.boolean().default(false),
+});
+
 export const TierOverrideSchema = z.object({ tier: TierSchema.nullable() });
 
 export const DraftInputSchema = z.object({

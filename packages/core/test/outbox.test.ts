@@ -32,6 +32,49 @@ function setup() {
   return { services, send, repository };
 }
 
+describe.each(["gmail", "microsoft"] as const)("grouped %s delivery", (providerName) => {
+  it.each(["archive", "delete"] as const)(
+    "dispatches %s once per message and never dispatches an undone group",
+    async (action) => {
+      let pending = [1, 2, 3].map((id) => ({
+        id: String(id),
+        messageId: String(id),
+        accountId: "account",
+        action,
+        payload: { groupId: "1" },
+      }));
+      const account = { id: "account", provider: providerName };
+      const repository = {
+        claimMutations: vi.fn(async () => pending),
+        getStoredAccount: vi.fn(async () => account),
+        getProviderMessageReference: vi.fn(async (id: string) => ({
+          providerMessageId: `provider-${id}`,
+        })),
+        completeMutation: vi.fn(),
+        failMutation: vi.fn(),
+      };
+      const applyAction = vi.fn();
+      const services = new SentServices(
+        repository as unknown as MailRepository,
+        {} as IntelligenceService,
+      );
+      const provider = vi
+        .spyOn(services, "provider")
+        .mockReturnValue({ applyAction } as unknown as MailProvider);
+      await services.processOutbox();
+      expect(provider).toHaveBeenCalledWith(providerName);
+      expect(applyAction).toHaveBeenCalledTimes(3);
+      for (const id of [1, 2, 3])
+        expect(applyAction).toHaveBeenCalledWith(account, `provider-${id}`, action);
+      expect(repository.failMutation).not.toHaveBeenCalled();
+      pending = [];
+      applyAction.mockClear();
+      await services.processOutbox();
+      expect(applyAction).not.toHaveBeenCalled();
+    },
+  );
+});
+
 describe("send outbox delivery safety", () => {
   it("does not send again after a lost delivery response", async () => {
     const { services, send, repository } = setup();

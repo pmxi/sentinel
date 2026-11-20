@@ -345,6 +345,7 @@ function Reader({
   const queryClient = useQueryClient();
   const compose = useCompose();
   const { view } = useParams();
+  const [routeParams] = useSearchParams();
   const trash = view === "trash";
   const triage = useTriage();
   const [bodyView, setBodyView] = useState<"plain" | "original">("plain");
@@ -418,7 +419,15 @@ function Reader({
     );
   };
   const triageAction = (action: "archive" | "delete") => {
-    if (message) triage.perform(message.id, action, advance, restore, message.threadId);
+    if (message)
+      triage.perform(
+        message.threadId,
+        action,
+        advance,
+        restore,
+        view ?? "all",
+        routeParams.get("account") ?? undefined,
+      );
   };
   const reply = (all = false) => {
     if (message && account)
