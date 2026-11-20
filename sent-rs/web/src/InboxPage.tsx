@@ -566,12 +566,14 @@ function Reader(props: {
   const scrolledToNewest = { current: false };
   const detail = createQuery<MessageDetail>(() => ({
     queryKey: ["message", props.messageId],
+    networkMode: "always",
     queryFn: ({ signal }) => messageRead(queryClient, props.messageId, signal),
     placeholderData: headerData(props.summary ?? cachedRow(queryClient, props.messageId)),
   }));
   const threadId = createMemo(() => props.summary?.threadId ?? detail.data?.threadId);
   const thread = createQuery(() => ({
     queryKey: ["thread", threadId(), trash()],
+    networkMode: "always",
     queryFn: ({ signal }) => threadRead(queryClient, threadId() ?? "", trash(), signal),
     enabled: Boolean(threadId()),
     refetchInterval:

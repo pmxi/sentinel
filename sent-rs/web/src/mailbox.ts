@@ -64,6 +64,7 @@ export function useMailbox(view: Accessor<string>, accountId: Accessor<string | 
   onCleanup(() => active?.controller.abort());
   const query = createQuery(() => ({
     queryKey: key(),
+    networkMode: "always",
     queryFn: ({ signal }: { signal: AbortSignal }) => {
       const input = params();
       return refreshPages((cursor) => {
