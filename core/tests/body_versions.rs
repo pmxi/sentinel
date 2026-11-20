@@ -18,8 +18,7 @@ async fn cached_body_versions_follow_committed_mvcc_rows_without_timestamp_assum
     let pool = db::pool(&url, true).await?;
     db::migrate(
         &pool,
-        &std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../migrations"),
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../migrations"),
     )
     .await?;
     let repo = Repository(pool.clone());

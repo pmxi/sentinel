@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { createHmac, randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { createWriteStream, existsSync } from "node:fs";
+import { createWriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { createServer as httpServer, request } from "node:http";
 import { createRequire } from "node:module";
@@ -16,9 +16,9 @@ const root = spawnSync("git", ["rev-parse", "--show-toplevel"], {
   cwd: dirname(fileURLToPath(import.meta.url)),
   encoding: "utf8",
 }).stdout.trim();
-const rust = existsSync(join(root, "sent-rs")) ? join(root, "sent-rs") : root;
-const require = createRequire(join(root, "package.json"));
-const { Client } = createRequire(join(root, "packages/core/package.json"))("pg");
+const rust = root;
+const require = createRequire(join(root, "web/package.json"));
+const { Client } = require("pg");
 const database = process.env.SENT_TEST_DATABASE_URL;
 assert(database, "Set SENT_TEST_DATABASE_URL");
 const parsed = new URL(database);
@@ -39,7 +39,9 @@ const env = {
   SENT_FAKE_PROVIDERS: "true",
   OPENAI_API_KEY: "",
   SESSION_SECRET: secret,
-  SENT_PASSWORD_HASH: await require("argon2").hash(password),
+  SENT_PASSWORD_HASH: execFileSync(join(root, "target/release/sent-hash-password"), [password])
+    .toString()
+    .trim(),
   HOST: "127.0.0.1",
   PORT: String(port),
   SENT_PUBLIC_URL: url,
@@ -116,9 +118,7 @@ try {
   }
   browser = await chromium.launch({
     headless: true,
-    executablePath:
-      process.env.SENT_CHROMIUM_PATH ??
-      require("./bench/node_modules/playwright").chromium.executablePath(),
+    executablePath: process.env.SENT_CHROMIUM_PATH,
   });
   const context = await browser.newContext({
     serviceWorkers: "block",
@@ -163,13 +163,21 @@ try {
   await page.waitForLoadState("networkidle");
   const before = deltaRequests,
     originalNavigations = navigations;
+  const insertedAt = performance.now();
   const subject = await insert();
   const row = (page, subject) => page.locator("button.message-row").filter({ hasText: subject });
   await row(page, subject).waitFor({ state: "visible", timeout: 10_000 });
+  await page.evaluate(
+    () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+  );
+  const latency = performance.now() - insertedAt;
+  assert(latency < 1000, `New mail took ${latency.toFixed(1)} ms to paint`);
   assert.equal(await row(page, subject).count(), 1);
   assert.equal(deltaRequests, before, "A small pushed delta should not require HTTP catch-up");
   await page.screenshot({ path: join(output, "new-mail-pushed.png") });
-  console.log("PASS new mail paints from a pushed delta without reload or HTTP delta request");
+  console.log(
+    `PASS new mail paints in ${latency.toFixed(1)} ms without reload or HTTP delta request (under 1 s)`,
+  );
   const other = await context.newPage();
   other.on("pageerror", (error) => errors.push(error.message));
   await other.goto(`${url}/inbox/l1`);
