@@ -47,7 +47,8 @@ export const sentApi = {
     api<{ ok: true }>("/api/auth/login", { method: "POST", body: JSON.stringify({ password }) }),
   logout: () => api<{ ok: true }>("/api/auth/logout", { method: "POST" }),
   accounts: () => api<{ accounts: Account[] }>("/api/accounts"),
-  messages: (query: URLSearchParams) => api<MessageListResponse>(`/api/messages?${query}`),
+  messages: (query: URLSearchParams, signal?: AbortSignal) =>
+    api<MessageListResponse>(`/api/messages?${query}`, { signal }),
   message: (id: string, signal?: AbortSignal) =>
     api<CachedMessage>(`/api/messages/${id}`, { signal, headers: cacheHeaders }),
   thread: (id: string, trash = false, signal?: AbortSignal) =>

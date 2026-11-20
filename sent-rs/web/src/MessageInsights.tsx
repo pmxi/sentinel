@@ -19,7 +19,11 @@ export function MessagePreview(props: { message: Insights }) {
     </>
   );
 }
-export function RankingReason(props: { message: Insights; open?: boolean }) {
+export function RankingReason(props: {
+  message: Insights;
+  open?: boolean;
+  onToggle?(open: boolean): void;
+}) {
   return (
     <>
       {(() => {
@@ -28,7 +32,11 @@ export function RankingReason(props: { message: Insights; open?: boolean }) {
           () => props.message.tier !== null && props.message.tier !== props.message.modelTier,
         );
         return (
-          <details class="ranking-reason" open={props.open}>
+          <details
+            class="ranking-reason"
+            open={props.open}
+            onToggle={(event) => props.onToggle?.(event.currentTarget.open)}
+          >
             <summary>
               <ChevronRight size={12} class="ranking-chevron" aria-hidden="true" />
               <span class="ranking-label">

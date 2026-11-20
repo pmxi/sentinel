@@ -7,6 +7,7 @@ import type {
   Tier,
 } from "@sent/shared";
 import { createMutation, createQuery, useQueryClient } from "@tanstack/solid-query";
+import { createVirtualizer } from "@tanstack/solid-virtual";
 import { Archive, Flag, Mail, MailOpen, Paperclip, Trash2 } from "lucide-solid";
 import {
   type Accessor,
@@ -26,6 +27,7 @@ import { replySeed, useCompose } from "./compose";
 import { messageCursorIndex, nextMessageIndex } from "./keyboard";
 import { MessagePreview, RankingReason, ReaderInsights } from "./MessageInsights";
 import { optimistic, quietUntil } from "./mail-cache";
+import { useMailbox } from "./mailbox";
 import { cachedRow, headerData, usePrefetch } from "./prefetch";
 import { ReaderText } from "./ReaderText";
 import { useLocation, useNavigate, useParams, useSearchParams } from "./router";
@@ -96,18 +98,8 @@ export function InboxPage(props: { accounts: Account[] }) {
   const [params, setParams] = useSearchParams();
   const selectedId = createMemo(() => params().get("message"));
   const accountId = createMemo(() => params().get("account") ?? undefined);
-  const query = createMemo(() => {
-    const value = new URLSearchParams({ view: route.view ?? "l1", limit: "75" });
-    const account = accountId();
-    if (account) value.set("accountId", account);
-    return value;
-  });
-  const messages = createQuery(() => ({
-    queryKey: ["messages", route.view ?? "l1", accountId()],
-    queryFn: () => sentApi.messages(query()),
-    refetchInterval: quietUntil(client) > Date.now() ? false : 4000,
-    reconcile: "threadId",
-  }));
+  const mailbox = useMailbox(() => route.view ?? "l1", accountId);
+  const messages = mailbox.query;
   const detail = createMemo(() => viewDetails[route.view ?? "l1"] ?? viewDetails.all);
   const navigation = useMessageNavigation(() => messages.data?.messages ?? []);
   const prefetch = usePrefetch(
@@ -154,6 +146,10 @@ export function InboxPage(props: { accounts: Account[] }) {
               prefetch={prefetch}
               messages={navigation.visible}
               loading={messages.isLoading}
+              hasMore={Boolean(messages.data?.nextCursor)}
+              loadingMore={mailbox.loadingMore()}
+              loadError={mailbox.error()}
+              onLoadMore={mailbox.loadMore}
               error={messages.error?.message}
               selectedId={selectedId()}
               onSelect={select}
@@ -262,27 +258,112 @@ function MessageList(props: {
   error?: string;
   selectedId: string | null;
   onSelect(message: MessageSummary): void;
+  hasMore?: boolean;
+  loadingMore?: boolean;
+  loadError?: string;
+  onLoadMore?(): Promise<void>;
 }) {
-  const list = { current: null } as {
-    current: HTMLDivElement | null;
-  };
+  const [list, setList] = createSignal<HTMLDivElement>();
+  const itemKey = createMemo(() => {
+    const ids = props.messages.map((message) => message.threadId);
+    return (index: number) => ids[index];
+  });
+  const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
+    get count() {
+      return props.messages.length;
+    },
+    getScrollElement: () => list() ?? null,
+    get getItemKey() {
+      return itemKey();
+    },
+    estimateSize: () => 124,
+    measureElement: (element, entry) =>
+      entry?.borderBoxSize?.[0]?.blockSize || element.offsetHeight || 124,
+    overscan: 5,
+    initialRect: { width: 400, height: 700 },
+  });
+  const positions = createMemo(
+    () => new Map(props.messages.map((message, index) => [message.threadId, index])),
+  );
+  const slots = createMemo(
+    () => new Map(virtualizer.getVirtualItems().map((row) => [row.key, row])),
+  );
+  const rendered = createMemo(() =>
+    virtualizer
+      .getVirtualItems()
+      .flatMap((row) => (props.messages[row.index] ? [props.messages[row.index]] : [])),
+  );
+  const [pendingFocus, setPendingFocus] = createSignal<string | null>(null);
+  const [pendingNext, setPendingNext] = createSignal<string | null>(null);
+  const expanded = new Set<string>();
   const [cursorThreadId, setCursorThreadId] = createSignal<string | null>(null);
   const currentIndex = createMemo(() =>
     messageCursorIndex(props.messages, props.selectedId, cursorThreadId()),
   );
-  const move = (direction: number) => {
-    const index = nextMessageIndex(props.messages.length, currentIndex(), direction);
+  const focusIndex = (index: number) => {
     const message = props.messages[index];
     if (!message) return;
     setCursorThreadId(message.threadId);
-    list.current
-      ?.querySelectorAll<HTMLButtonElement>(".message-row")
-      [index]?.focus({ preventScroll: true });
-    list.current
-      ?.querySelectorAll<HTMLButtonElement>(".message-row")
-      [index]?.scrollIntoView({ block: "nearest" });
+    setPendingFocus(message.threadId);
+    virtualizer.scrollToIndex(index, { align: "auto" });
     if (props.selectedId && props.selectedId !== message.id) props.onSelect(message);
   };
+  const move = (direction: number) => {
+    setPendingNext(null);
+    if (direction > 0 && currentIndex() === props.messages.length - 1 && props.hasMore) {
+      setPendingNext(props.messages.at(-1)?.threadId ?? null);
+      void props.onLoadMore?.();
+      return;
+    }
+    focusIndex(nextMessageIndex(props.messages.length, currentIndex(), direction));
+  };
+  createEffect(() => {
+    const id = pendingNext();
+    if (!id) return;
+    const index = positions().get(id);
+    if (index === undefined || currentIndex() !== index || props.loadError) setPendingNext(null);
+    else if (props.messages[index + 1]) {
+      setPendingNext(null);
+      untrack(() => focusIndex(index + 1));
+    } else if (!props.hasMore) setPendingNext(null);
+  });
+  const selectedThread = createMemo(
+    () => props.messages.find((message) => message.id === props.selectedId)?.threadId,
+  );
+  createEffect(() => {
+    const element = list();
+    const id = selectedThread();
+    if (element && id)
+      queueMicrotask(() => {
+        if (list() === element && selectedThread() === id)
+          virtualizer.scrollToIndex(positions().get(id) ?? 0, { align: "auto" });
+      });
+  });
+  createEffect(() => {
+    const id = pendingFocus();
+    rendered();
+    if (!id) return;
+    queueMicrotask(() => {
+      if (pendingFocus() !== id) return;
+      const button = Array.from(
+        list()?.querySelectorAll<HTMLButtonElement>(".message-row") ?? [],
+      ).find((row) => row.dataset.threadId === id);
+      if (button) {
+        button.focus({ preventScroll: true });
+        setPendingFocus(null);
+      }
+    });
+  });
+  createEffect(() => {
+    const last = virtualizer.getVirtualItems().at(-1)?.index ?? -1;
+    if (
+      props.hasMore &&
+      !props.loadingMore &&
+      !props.loadError &&
+      last >= props.messages.length - 8
+    )
+      void props.onLoadMore?.();
+  });
   useCommands("list", () => [
     {
       id: "next",
@@ -342,76 +423,119 @@ function MessageList(props: {
         {
           <div
             class="message-list"
-            ref={(element) => {
-              list.current = element;
-            }}
+            ref={(element) =>
+              queueMicrotask(() => {
+                if (element.isConnected) setList(element);
+              })
+            }
           >
-            <For each={props.messages}>
-              {(message) => (
-                <div
-                  class={`message-list-item ${props.selectedId === message.id ? "selected" : ""}`}
-                >
-                  <button
-                    aria-current={props.selectedId === message.id ? "true" : undefined}
-                    onFocus={() => {
-                      setCursorThreadId(message.threadId);
-                      props.prefetch?.(message);
+            <div
+              style={{
+                height: `${virtualizer.getTotalSize()}px`,
+                position: "relative",
+                width: "100%",
+              }}
+            >
+              <For each={rendered()}>
+                {(message) => (
+                  <div
+                    data-index={positions().get(message.threadId)}
+                    ref={(element) => {
+                      element.dataset.index = String(positions().get(message.threadId));
+                      virtualizer.measureElement(element);
                     }}
-                    onMouseEnter={() => props.prefetch?.(message)}
-                    class={`message-row ${!message.read ? "unread" : ""} ${message.tier === null && message.direction === "inbound" ? "unclassified" : ""} ${props.selectedId === message.id ? "selected" : ""}`}
-                    onClick={() => props.onSelect(message)}
+                    style={{
+                      position: "absolute",
+                      top: "0",
+                      left: "0",
+                      width: "100%",
+                      transform: `translateY(${slots().get(message.threadId)?.start ?? 0}px)`,
+                    }}
+                    class={`message-list-item ${props.selectedId === message.id ? "selected" : ""}`}
                   >
-                    <span class="message-copy">
-                      <span class="message-line">
-                        <span class="conversation-senders">
-                          <strong>
-                            {message.participants
-                              .map((person) =>
-                                person.address.toLowerCase() === message.account.email.toLowerCase()
-                                  ? "Me"
-                                  : person.name || person.address,
-                              )
-                              .join(", ") || "Unknown"}
-                          </strong>
-                          {message.messageCount > 1 && (
-                            <span
-                              class="conversation-count"
-                              title={`${message.messageCount} messages`}
-                            >
-                              {message.messageCount}
-                              <span class="visually-hidden"> messages</span>
-                            </span>
-                          )}
+                    <button
+                      data-index={positions().get(message.threadId)}
+                      data-thread-id={message.threadId}
+                      aria-current={props.selectedId === message.id ? "true" : undefined}
+                      onFocus={() => {
+                        setCursorThreadId(message.threadId);
+                        props.prefetch?.(message);
+                      }}
+                      onMouseEnter={() => props.prefetch?.(message)}
+                      class={`message-row ${!message.read ? "unread" : ""} ${message.tier === null && message.direction === "inbound" ? "unclassified" : ""} ${props.selectedId === message.id ? "selected" : ""}`}
+                      onClick={() => props.onSelect(message)}
+                    >
+                      <span class="message-copy">
+                        <span class="message-line">
+                          <span class="conversation-senders">
+                            <strong>
+                              {message.participants
+                                .map((person) =>
+                                  person.address.toLowerCase() ===
+                                  message.account.email.toLowerCase()
+                                    ? "Me"
+                                    : person.name || person.address,
+                                )
+                                .join(", ") || "Unknown"}
+                            </strong>
+                            {message.messageCount > 1 && (
+                              <span
+                                class="conversation-count"
+                                title={`${message.messageCount} messages`}
+                              >
+                                {message.messageCount}
+                                <span class="visually-hidden"> messages</span>
+                              </span>
+                            )}
+                          </span>
+                          <time>{formatListDate(message.receivedAt)}</time>
                         </span>
-                        <time>{formatListDate(message.receivedAt)}</time>
+                        <span class="message-subject">
+                          {message.subject.replace(/^(?:(?:re|fw|fwd):\s*)+/i, "") ||
+                            "(No subject)"}
+                        </span>
+                        <MessagePreview message={message} />
+                        <span class="message-meta">
+                          {message.account.email}
+                          {message.unreadCount > 0 && (
+                            <span class="conversation-unread">{message.unreadCount} unread</span>
+                          )}
+                          {message.attachmentCount > 0 && (
+                            <>
+                              <Paperclip size={12} />
+                              {message.attachmentCount}
+                            </>
+                          )}
+                          {message.tier === null && message.direction === "inbound" && (
+                            <span class="sorting-label">Sorting…</span>
+                          )}
+                          {message.syncPending && <span>Syncing…</span>}
+                        </span>
                       </span>
-                      <span class="message-subject">
-                        {message.subject.replace(/^(?:(?:re|fw|fwd):\s*)+/i, "") || "(No subject)"}
-                      </span>
-                      <MessagePreview message={message} />
-                      <span class="message-meta">
-                        {message.account.email}
-                        {message.unreadCount > 0 && (
-                          <span class="conversation-unread">{message.unreadCount} unread</span>
-                        )}
-                        {message.attachmentCount > 0 && (
-                          <>
-                            <Paperclip size={12} />
-                            {message.attachmentCount}
-                          </>
-                        )}
-                        {message.tier === null && message.direction === "inbound" && (
-                          <span class="sorting-label">Sorting…</span>
-                        )}
-                        {message.syncPending && <span>Syncing…</span>}
-                      </span>
-                    </span>
-                    {message.flagged && <Flag class="row-flag" size={14} fill="currentColor" />}
-                  </button>
-                  <RankingReason message={message} />
-                </div>
-              )}
-            </For>
+                      {message.flagged && <Flag class="row-flag" size={14} fill="currentColor" />}
+                    </button>
+                    <RankingReason
+                      message={message}
+                      open={expanded.has(message.threadId)}
+                      onToggle={(open) =>
+                        open ? expanded.add(message.threadId) : expanded.delete(message.threadId)
+                      }
+                    />
+                  </div>
+                )}
+              </For>
+            </div>
+            <Show when={props.loadingMore}>
+              <div class="message-pagination" role="status">
+                Loading more…
+              </div>
+            </Show>
+            <Show when={props.loadError}>
+              <div class="message-pagination" role="status">
+                {props.loadError}
+                <button onClick={() => void props.onLoadMore?.()}>Retry loading more</button>
+              </div>
+            </Show>
           </div>
         }
       </Match>

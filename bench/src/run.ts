@@ -17,6 +17,7 @@ import {
 } from "./metrics.ts";
 import { trackNetwork } from "./network.ts";
 import { type Condition, installPaintObserver } from "./paint.ts";
+import { prepareRows } from "./rows.ts";
 
 const { values } = parseArgs({
   options: {
@@ -136,14 +137,11 @@ const arm = (page: Page, condition: Condition, type: "click" | "keydown", key?: 
     key,
   });
 const normalize = (s: string) => s.trim().replace(/^(?:(?:re|fw|fwd):\s*)+/i, "");
-const subjectAt = async (page: Page, index: number) =>
-  normalize(
-    await page.locator(selectors.rows).nth(index).locator(selectors.rowSubject).innerText(),
-  );
 const open = async (page: Page, index: number) => {
-  const subject = await subjectAt(page, index);
+  const { row } = await prepareRows(page, selectors.rows, index);
+  const subject = normalize(await row.locator(selectors.rowSubject).innerText());
   await arm(page, { kind: "reader", subject }, "click");
-  await page.locator(selectors.rows).nth(index).click();
+  await row.click();
   const ms = await waitPaint(page);
   return { subject, ms };
 };
@@ -194,7 +192,8 @@ try {
           } else if (action === "open_email") sample.ms = (await open(page, index)).ms;
           else if (action === "next_email") {
             const current = await open(page, index);
-            const subject = await subjectAt(page, index + 1);
+            const { next } = await prepareRows(page, selectors.rows, index, true);
+            const subject = normalize(await next.locator(selectors.rowSubject).innerText());
             if (subject === current.subject) throw new Error("Next row subject is not distinct");
             await arm(page, { kind: "reader", subject }, "keydown", selectors.nextKey);
             await page.keyboard.press(selectors.nextKey);

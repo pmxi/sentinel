@@ -4,7 +4,7 @@ import { createSignal, type Signal } from "solid-js";
 import type { CacheResponse, MessagePatch } from "./api";
 
 type Mail = MessageSummary & Partial<Pick<MessagePatch, "archived" | "deleted" | "classified">>;
-type Page = { messages: Mail[] };
+type Page = { messages: Mail[]; pageCount?: number };
 type Patch = Pick<MessagePatch, "id" | "threadId"> & Partial<MessagePatch>;
 type Change = {
   id?: string;
@@ -349,7 +349,7 @@ function apply(client: QueryClient, change: Change): Entry[] {
                 .sort(
                   (a, b) => b.receivedAt.localeCompare(a.receivedAt) || b.id.localeCompare(a.id),
                 )
-                .slice(0, 75),
+                .slice(0, 75 * (before.pageCount ?? 1)),
       };
     }
     if (equal(before, after)) continue;
