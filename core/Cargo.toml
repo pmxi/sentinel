@@ -21,8 +21,12 @@ ammonia = "4"
 html2text = "0.14"
 mailparse = "0.16"
 regex = "1"
+futures-util = "0.3"
 sha2 = "0.10"
 lettre = { version = "0.11", default-features = false, features = ["builder"] }
+sqlite-vec = "0.1.6"
+libsqlite3-sys = "0.30.1"
 
 [dev-dependencies]
 wiremock = "0.6"
+tempfile = "3"

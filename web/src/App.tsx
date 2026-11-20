@@ -30,8 +30,9 @@ import { CommandProvider, useCommandPalette, useCommands } from "./commands";
 import { ComposeProvider, useCompose } from "./compose";
 import { InboxPage, SearchResults } from "./InboxPage";
 import { LoginPage } from "./LoginPage";
+import { LiveUpdates } from "./live";
 import { quietUntil } from "./mail-cache";
-import { createMailboxReplica } from "./replica";
+import { createMailboxReplica, replicaFor } from "./replica";
 import { waitForReplicaWipe } from "./replica-session";
 import { Link, NavLink, useLocation, useNavigate } from "./router";
 import type { Account, Draft } from "./shared";
@@ -46,6 +47,12 @@ import {
 import { TriageProvider } from "./triage";
 
 const AccountsContext = createContext<Accessor<Account[]>>(() => []);
+export function clearAuthenticatedSession(client: ReturnType<typeof useQueryClient>) {
+  if (client.isMutating({ mutationKey: ["logout"] })) return;
+  forgetShellMetadata();
+  client.setQueryData(["session"], { authenticated: false });
+  client.removeQueries({ predicate: (query) => query.queryKey[0] !== "session" });
+}
 export function InboxRoute() {
   const accounts = useContext(AccountsContext);
   return <InboxPage accounts={accounts()} />;
@@ -74,9 +81,7 @@ export default function App(props: { children?: JSX.Element }) {
   });
   onMount(() => {
     const unauthorized = () => {
-      forgetShellMetadata();
-      client.setQueryData(["session"], { authenticated: false });
-      client.removeQueries({ predicate: (query) => query.queryKey[0] !== "session" });
+      clearAuthenticatedSession(client);
     };
     const storage = (event: StorageEvent) => {
       if ((event.key === SHELL_METADATA_KEY || event.key === null) && !readShellMetadata())
@@ -122,6 +127,37 @@ function AuthenticatedApp(props: { children?: JSX.Element }) {
     () => quietUntil(client) <= Date.now(),
     () => client.getQueryState(["session"])?.status === "success",
   );
+  const live = new LiveUpdates(client, {
+    verified: () => client.getQueryState(["session"])?.status === "success",
+    cursor: () => replicaFor(client)?.syncCursor(),
+    revision: () => replicaFor(client)?.syncRevision(),
+    wake: () => replicaFor(client)?.wake(),
+    canApply: () => quietUntil(client) <= Date.now(),
+    changed: async (frame) => {
+      const current = replicaFor(client);
+      if (current?.ready()) {
+        await current.receiveLive(frame);
+        void client.invalidateQueries({ queryKey: ["drafts"] });
+      } else {
+        void current?.receiveLive(frame);
+        await client.invalidateQueries(
+          {
+            predicate: (query) =>
+              ["messages", "message", "thread", "accounts", "drafts", "search"].includes(
+                String(query.queryKey[0]),
+              ),
+          },
+          { cancelRefetch: false },
+        );
+      }
+    },
+  });
+  createEffect(() => {
+    if (replica?.ready()) live.subscribe();
+  });
+  createEffect(() => {
+    document.documentElement.dataset.sentLive = live.healthy() ? "ready" : "polling";
+  });
   createEffect(() => {
     if (!replica) return;
     document.documentElement.dataset.sentReplica = replica.status().ready ? "ready" : "loading";
@@ -134,6 +170,8 @@ function AuthenticatedApp(props: { children?: JSX.Element }) {
       : "syncing";
   });
   onCleanup(() => {
+    live.close();
+    delete document.documentElement.dataset.sentLive;
     void replica?.close();
     if (replica && document.documentElement.dataset.sentReplicaSession === replica.id) {
       delete document.documentElement.dataset.sentReplica;
@@ -431,6 +469,7 @@ function SettingsPage(props: { accounts: Account[] }) {
     window.location.assign(url);
   };
   const logout = createMutation(() => ({
+    mutationKey: ["logout"],
     mutationFn: sentApi.logout,
     onSuccess: async () => {
       await waitForReplicaWipe(forgetShellMetadata());

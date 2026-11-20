@@ -228,8 +228,10 @@ try {
     "insert into messages(id,account_id,thread_id,provider_message_id,subject,text_body,received_at,direction) values($1::uuid,$2::uuid,$3::uuid,$1::uuid::text,'Replica new mail','New replica test body',now(),'inbound')",
     [newId, account, thread],
   );
+  await db.query("select pg_notify('sent_mailbox_changed','changed')");
   await page.getByRole("button", { name: /Replica new mail/ }).waitFor();
   await db.query("update messages set tombstone=true where id=$1", [newId]);
+  await db.query("select pg_notify('sent_mailbox_changed','changed')");
   await page.getByRole("button", { name: /Replica new mail/ }).waitFor({ state: "hidden" });
   console.log("PASS delta receives new mail and tombstones without mailbox refetches");
   await page.reload({ waitUntil: "domcontentloaded" });
@@ -254,7 +256,7 @@ try {
   const second = await page.locator("html").getAttribute("data-sent-replica-session");
   assert.notEqual(second, session);
   await context.clearCookies();
-  await page.evaluate(() => fetch("/api/accounts").then(() => {}));
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
   await page.getByLabel("Password").waitFor();
   await page.waitForFunction(async (id) => {
     const root = await navigator.storage.getDirectory();
@@ -295,11 +297,12 @@ try {
   const networkPage = await network.newPage();
   await networkPage.goto(`${url}/inbox/l1`);
   await networkPage.getByLabel("Password").fill(password);
-  await networkPage.getByRole("button", { name: "Sign in", exact: true }).click();
-  await networkPage.locator("button.message-row").first().waitFor();
-  await networkPage.waitForResponse(
+  const networkResponse = networkPage.waitForResponse(
     (response) => new URL(response.url()).pathname === "/api/messages" && response.status() === 200,
   );
+  await networkPage.getByRole("button", { name: "Sign in", exact: true }).click();
+  await networkPage.locator("button.message-row").first().waitFor();
+  await networkResponse;
   assert.notEqual(await networkPage.locator("html").getAttribute("data-sent-replica"), "ready");
   await network.close();
   console.log(

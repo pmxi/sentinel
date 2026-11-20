@@ -7,6 +7,7 @@ import {
   onCleanup,
   untrack,
 } from "solid-js";
+import { liveInterval } from "./live";
 import { quietUntil } from "./mail-cache";
 import { mailboxRead, replicaReady } from "./replica";
 import type { ConversationSummary, MessageListResponse } from "./shared";
@@ -74,7 +75,9 @@ export function useMailbox(view: Accessor<string>, accountId: Accessor<string | 
       }, client.getQueryData<MailboxPage>(key())?.pageCount ?? 1);
     },
     refetchInterval:
-      replicaReady(client) || loadingMore() || quietUntil(client) > Date.now() ? false : 4000,
+      replicaReady(client) || loadingMore() || quietUntil(client) > Date.now()
+        ? false
+        : liveInterval(client),
     reconcile: "threadId",
   }));
   const loadMore = (): Promise<void> => {

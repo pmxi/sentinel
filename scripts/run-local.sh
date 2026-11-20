@@ -6,7 +6,7 @@ PORT="${SENT_LOCAL_PORT:-4000}"
 DB="${SENT_LOCAL_DB:-sent_benchmark}"
 usage() {
   echo 'Usage: scripts/run-local.sh [--messages N] [--port PORT]'
-  echo 'Defaults: 3000 messages, port 4000, database sent_benchmark on localhost:5433.'
+  echo 'Defaults: 3000 messages, port 4000, SQLite database ./data/sent_benchmark.sqlite.'
   echo 'Overrides: SENT_LOCAL_PORT, SENT_LOCAL_DB (sent_benchmark or sent_benchmark_*).'
 }
 fail() { echo "Error: $*" >&2; exit 1; }
@@ -23,19 +23,18 @@ done
 [[ "$MESSAGES" =~ ^(0|[1-9][0-9]*)$ ]] || fail '--messages must be a nonnegative integer'
 [[ "$PORT" =~ ^[1-9][0-9]{0,4}$ ]] && ((PORT <= 65535)) || fail '--port must be between 1 and 65535'
 [[ "$DB" =~ ^sent_benchmark(_[a-z0-9_]+)?$ ]] && ((${#DB} <= 63)) || fail 'Database must be sent_benchmark or sent_benchmark_* (at most 63 characters)'
-for tool in docker cargo node pnpm curl; do
+for tool in cargo node pnpm curl; do
   command -v "$tool" >/dev/null || fail "Missing prerequisite: $tool"
 done
 cd "$ROOT"
 export HOST=127.0.0.1 PORT NODE_ENV=development
-export DATABASE_URL="postgres://sent:sent-local-only@127.0.0.1:5433/$DB"
+export SENT_DATABASE_PATH="$ROOT/data/$DB.sqlite"
 export SENT_PUBLIC_URL="http://127.0.0.1:$PORT" SENT_WEB_URL="http://127.0.0.1:$PORT"
 export SENT_FAKE_PROVIDERS=true OPENAI_API_KEY= GOOGLE_CLIENT_ID= GOOGLE_CLIENT_SECRET=
 export MICROSOFT_CLIENT_ID= MICROSOFT_CLIENT_SECRET= MICROSOFT_MAIL_SEND_ENABLED=false
 export SESSION_SECRET=sent-local-only-benchmark-session-secret-not-for-production
 export TOKEN_ENCRYPTION_KEY=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 export WEB_DIST_PATH="$ROOT/web/dist" MIGRATIONS_PATH="$ROOT/migrations"
-export POSTGRES_PORT=5433 POSTGRES_PASSWORD=sent-local-only
 export SENT_PASSWORD_HASH= SENT_DOMAIN=localhost
 node --input-type=module - "$PORT" <<'NODE'
 import net from 'node:net';
@@ -43,17 +42,6 @@ const server = net.createServer();
 server.on('error', (error) => { console.error(`Cannot listen on benchmark port: ${error.message}`); process.exit(1); });
 server.listen(Number(process.argv[2]), '127.0.0.1', () => server.close());
 NODE
-endpoint="$(docker --context default context inspect default --format '{{.Endpoints.docker.Host}}')"
-case "$endpoint" in
-  unix://*|npipe://*) ;;
-  *) fail 'The default Docker context must use a local socket' ;;
-esac
-compose=(docker --context default compose --env-file /dev/null --project-name sent --project-directory "$ROOT" -f "$ROOT/compose.yaml")
-"${compose[@]}" up -d --wait postgres
-"${compose[@]}" exec -T postgres psql -U sent -d postgres -v ON_ERROR_STOP=1 -v "database=$DB" <<'SQL'
-SELECT format('CREATE DATABASE %I', :'database')
-WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = :'database') \gexec
-SQL
 pnpm --dir "$ROOT/web" install --frozen-lockfile
 NODE_ENV=production pnpm --dir "$ROOT/web" build
 cargo build --release --locked --manifest-path "$ROOT/Cargo.toml" --target-dir "$ROOT/target"
@@ -92,6 +80,6 @@ done
 echo "Benchmark URL: $SENT_PUBLIC_URL"
 echo 'Local-only password: sent-local-dev-password'
 echo "Database: $DB (fresh fake fixtures: $MESSAGES messages)"
-echo 'Ctrl+C stops the Rust server and worker; Postgres is left running.'
+echo 'Ctrl+C stops the Rust server and worker; the SQLite database is retained.'
 wait -n "$server_pid" "$worker_pid"
 fail 'Server or worker exited; stopping the other process'

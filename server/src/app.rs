@@ -16,6 +16,7 @@ use axum::{
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::{Duration, Utc};
+use sent_core::db::Uuid;
 use sent_core::{
     config::Config,
     repository::{DraftInput, ListInput, Repository, SearchInput, ThreadActionInput, timestamp},
@@ -29,7 +30,6 @@ use std::{
     time::{Duration as StdDuration, Instant},
 };
 use tower_http::services::{ServeDir, ServeFile};
-use uuid::Uuid;
 
 pub struct State {
     pub config: Config,
@@ -38,6 +38,8 @@ pub struct State {
     http: reqwest::Client,
     providers: sent_core::providers::Providers,
     pub(crate) sync_feed: Mutex<crate::sync::Feed>,
+    pub(crate) live: crate::live::Hub,
+    inventory_cache: tokio::sync::Mutex<sent_core::repository::BodyVersionCache>,
 }
 
 impl State {
@@ -50,13 +52,40 @@ impl State {
             http: reqwest::Client::new(),
             providers,
             sync_feed: Mutex::new(crate::sync::Feed::default()),
+            live: crate::live::Hub::default(),
+            inventory_cache: tokio::sync::Mutex::default(),
         }
     }
-    fn secret(&self) -> &str {
+    pub(crate) fn secret(&self) -> &str {
         self.config
             .session_secret
             .as_deref()
             .expect("validated session secret")
+    }
+    pub(crate) async fn session_valid(&self, session: &auth::Session) -> anyhow::Result<bool> {
+        if !self.live.valid(session) {
+            return Ok(false);
+        }
+        Ok(!sent_core::live::session_revoked(&self.repository.0, &session.key).await?)
+    }
+    // Keep the guard until this snapshot has been published to the feed.
+    pub(crate) async fn inventory(
+        &self,
+        ids: Option<&[Uuid]>,
+        bodies: bool,
+    ) -> anyhow::Result<(
+        sent_core::repository::ReplicaInventory,
+        tokio::sync::MutexGuard<'_, sent_core::repository::BodyVersionCache>,
+    )> {
+        let mut cache = self.inventory_cache.lock().await;
+        let inventory = self
+            .repository
+            .replica_inventory_cached(ids, bodies, &mut cache)
+            .await?;
+        Ok((inventory, cache))
+    }
+    pub(crate) async fn clear_inventory_cache(&self) {
+        self.inventory_cache.lock().await.clear();
     }
     fn cookie(&self, token: Option<&str>) -> String {
         let secure = if self.config.public_url.starts_with("https:") {
@@ -252,6 +281,7 @@ pub fn router(state: Shared) -> Router {
             get(|| async { Json(json!({"authenticated":true})) }),
         )
         .route("/api/accounts", get(accounts))
+        .route("/api/live", get(crate::live::upgrade))
         .route("/api/sync/snapshot", get(crate::sync::snapshot))
         .route("/api/sync/delta", get(crate::sync::delta))
         .route("/api/sync/bodies", get(crate::sync::bodies))
@@ -332,23 +362,22 @@ async fn protect(
         let public = path == "/api/health"
             || path == "/api/auth/login"
             || (path.starts_with("/api/oauth/") && path.ends_with("/callback"));
-        let token = request
-            .headers()
-            .get(header::AUTHORIZATION)
-            .and_then(|h| h.to_str().ok())
-            .and_then(|h| h.strip_prefix("Bearer "))
-            .or_else(|| {
-                request
-                    .headers()
-                    .get(header::COOKIE)
-                    .and_then(|h| h.to_str().ok())
-                    .and_then(|h| {
-                        h.split(';')
-                            .find_map(|part| part.trim().strip_prefix("sent_session="))
-                    })
-            });
-        if !public && !token.is_some_and(|t| auth::verify_session(t, state.secret())) {
-            return error(StatusCode::UNAUTHORIZED, "Authentication required");
+        let session = auth::token(request.headers())
+            .and_then(|token| auth::session_info(token, state.secret()));
+        if !public {
+            let Some(session) = session else {
+                return error(StatusCode::UNAUTHORIZED, "Authentication required");
+            };
+            match state.session_valid(&session).await {
+                Ok(true) => {}
+                Ok(false) => return error(StatusCode::UNAUTHORIZED, "Authentication required"),
+                Err(_) => {
+                    return error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "Authentication temporarily unavailable",
+                    );
+                }
+            }
         }
         if !["GET", "HEAD", "OPTIONS"].contains(&request.method().as_str())
             && path != "/api/auth/login"
@@ -460,7 +489,26 @@ async fn login(
         .into_response())
 }
 
-async fn logout(ExtractState(state): ExtractState<Shared>) -> Response {
+async fn logout(ExtractState(state): ExtractState<Shared>, headers: HeaderMap) -> Response {
+    if let Some(session) =
+        auth::token(&headers).and_then(|token| auth::session_info(token, state.secret()))
+    {
+        if sent_core::live::revoke_session(&state.repository.0, &session.key, session.expires)
+            .await
+            .is_err()
+        {
+            return error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Logout temporarily unavailable",
+            );
+        }
+        state.live.revoke(session.key.clone(), session.expires);
+        if let Err(error) =
+            sent_core::live::notify_logout(&state.repository.0, &session.key, session.expires).await
+        {
+            eprintln!("Live logout notification failed: {error}");
+        }
+    }
     (
         [(header::SET_COOKIE, state.cookie(None))],
         Json(json!({"ok":true})),
@@ -857,6 +905,125 @@ async fn oauth_callback(
 mod tests {
     use super::*;
 
+    async fn authenticated_pool() -> (tempfile::TempDir, sqlx::SqlitePool) {
+        let directory = tempfile::tempdir().unwrap();
+        let pool = sent_core::db::pool(directory.path().join("app.sqlite").to_str().unwrap(), true)
+            .await
+            .unwrap();
+        sent_core::db::migrate(
+            &pool,
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../migrations"),
+        )
+        .await
+        .unwrap();
+        (directory, pool)
+    }
+
+    #[tokio::test]
+    async fn logout_is_enforced_without_a_listener_and_after_server_restart() -> anyhow::Result<()>
+    {
+        let (_database, pool) = authenticated_pool().await;
+        let mut config = Config::from_env()?;
+        config.session_secret = Some("test-session-secret-at-least-32-characters".into());
+        let token = auth::session(config.session_secret.as_deref().unwrap())?;
+        let session =
+            auth::session_info(&token, config.session_secret.as_deref().unwrap()).unwrap();
+        let mut servers = Vec::new();
+        let mut bases = Vec::new();
+        let mut states = Vec::new();
+        for _ in 0..2 {
+            let state = Arc::new(State::new(config.clone(), Repository(pool.clone())));
+            let app = router(state.clone());
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+            bases.push(format!("http://{}", listener.local_addr()?));
+            states.push(state);
+            servers.push(tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap()
+            }));
+        }
+        let http = reqwest::Client::new();
+        assert_eq!(
+            http.get(format!("{}/api/auth/session", bases[1]))
+                .bearer_auth(&token)
+                .send()
+                .await?
+                .status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            http.post(format!("{}/api/auth/logout", bases[0]))
+                .bearer_auth(&token)
+                .header("x-sent-request", "1")
+                .send()
+                .await?
+                .status(),
+            StatusCode::OK
+        );
+        assert!(
+            states[1].live.valid(&session),
+            "The second process missed the notification"
+        );
+        assert_eq!(
+            http.get(format!("{}/api/auth/session", bases[1]))
+                .bearer_auth(&token)
+                .send()
+                .await?
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let restarted = Arc::new(State::new(config.clone(), Repository(pool.clone())));
+        assert!(restarted.live.valid(&session));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let base = format!("http://{}", listener.local_addr()?);
+        let app = router(restarted);
+        servers.push(tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap()
+        }));
+        assert_eq!(
+            http.get(format!("{base}/api/auth/session"))
+                .header(header::COOKIE, format!("sent_session={token}"))
+                .send()
+                .await?
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        let other = auth::session(config.session_secret.as_deref().unwrap())?;
+        assert_eq!(
+            http.get(format!("{base}/api/auth/session"))
+                .bearer_auth(&other)
+                .send()
+                .await?
+                .status(),
+            StatusCode::OK
+        );
+        sqlx::query("delete from worker_state where name=?1")
+            .bind(format!("session-revoked:{}", session.key))
+            .execute(&pool)
+            .await?;
+        pool.close().await;
+        assert_eq!(
+            http.get(format!("{base}/api/auth/session"))
+                .bearer_auth(&other)
+                .send()
+                .await?
+                .status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        assert_eq!(
+            http.post(format!("{base}/api/auth/logout"))
+                .bearer_auth(&other)
+                .header("x-sent-request", "1")
+                .send()
+                .await?
+                .status(),
+            StatusCode::SERVICE_UNAVAILABLE
+        );
+        for server in servers {
+            server.abort();
+        }
+        Ok(())
+    }
+
     #[tokio::test]
     async fn precompressed_assets_and_spa_cache_headers_match_typescript() {
         const CONTENT: &[u8] = b"hello compressed asset";
@@ -881,8 +1048,9 @@ mod tests {
         let mut config = Config::from_env().unwrap();
         config.web_dist_path = root.clone();
         config.session_secret = Some("test-session-secret-at-least-32-characters".into());
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgres://localhost/sent_test_unused")
+        let database = tempfile::tempdir().unwrap();
+        let pool = sent_core::db::pool(database.path().join("sent.sqlite").to_str().unwrap(), true)
+            .await
             .unwrap();
         let app = router(Arc::new(State::new(config, Repository(pool))));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1001,6 +1169,7 @@ mod tests {
 
     #[tokio::test]
     async fn spa_routes_return_index_with_ok_status_and_preserve_api_boundaries() {
+        let (_database, pool) = authenticated_pool().await;
         let root = std::env::temp_dir().join(format!("sent-spa-{}", Uuid::new_v4()));
         std::fs::create_dir_all(root.join("assets")).unwrap();
         std::fs::write(root.join("index.html"), "<main>Sent</main>").unwrap();
@@ -1009,9 +1178,6 @@ mod tests {
         config.web_dist_path = root.clone();
         config.session_secret = Some("test-session-secret-at-least-32-characters".into());
         let token = auth::session(config.session_secret.as_deref().unwrap()).unwrap();
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgres://localhost/sent_test_unused")
-            .unwrap();
         let app = router(Arc::new(State::new(config, Repository(pool))));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
@@ -1059,12 +1225,10 @@ mod tests {
 
     #[tokio::test]
     async fn middleware_preserves_api_html_and_auth_boundaries() {
+        let (_database, pool) = authenticated_pool().await;
         let mut config = Config::from_env().unwrap();
         config.session_secret = Some("test-session-secret-at-least-32-characters".into());
         let token = auth::session(config.session_secret.as_deref().unwrap()).unwrap();
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgres://localhost/sent_test_unused")
-            .unwrap();
         let state = Arc::new(State::new(config, Repository(pool)));
         let app = Router::new()
             .route(

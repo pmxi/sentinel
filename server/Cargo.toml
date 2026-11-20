@@ -8,7 +8,7 @@ publish.workspace = true
 sent-core = { path = "../core" }
 anyhow.workspace = true
 tokio.workspace = true
-axum = { version = "0.8", features = ["multipart"] }
+axum = { version = "0.8", features = ["multipart", "ws"] }
 argon2 = "0.5"
 base64.workspace = true
 chrono.workspace = true
@@ -17,5 +17,10 @@ reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sqlx.workspace = true
+sha2 = "0.10"
+rustix = { version = "1", features = ["fs"] }
 tower-http = { version = "0.6", features = ["fs"] }
 uuid.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

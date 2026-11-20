@@ -3,7 +3,7 @@ use std::{env, path::PathBuf};
 
 #[derive(Clone)]
 pub struct Config {
-    pub database_url: String,
+    pub database_path: String,
     pub host: String,
     pub port: u16,
     pub public_url: String,
@@ -43,9 +43,14 @@ fn boolean(name: &str) -> Result<bool> {
     }
 }
 
+pub fn database_path_from_env() -> String {
+    dotenvy::dotenv().ok();
+    value("SENT_DATABASE_PATH", "./data/sent.sqlite")
+}
+
 impl Config {
     pub fn from_env() -> Result<Self> {
-        dotenvy::dotenv().ok();
+        let database_path = database_path_from_env();
         let public_url = value("SENT_PUBLIC_URL", "http://localhost:3000");
         let port = value("PORT", "3000")
             .parse::<u16>()
@@ -55,7 +60,7 @@ impl Config {
         }
         let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..");
         Ok(Self {
-            database_url: value("DATABASE_URL", "postgres://sent:sent@localhost:5432/sent"),
+            database_path,
             host: value("HOST", "0.0.0.0"),
             port,
             web_url: optional("SENT_WEB_URL").unwrap_or_else(|| public_url.clone()),

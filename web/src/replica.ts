@@ -1,6 +1,7 @@
 import type { QueryClient, QueryKey } from "@tanstack/solid-query";
-import { createSignal } from "solid-js";
+import { batch, createSignal } from "solid-js";
 import { ApiError, api, type CacheResponse, sentApi } from "./api";
+import { type LiveDelta, liveInterval } from "./live";
 import {
   REPLICA_CHANNEL,
   REPLICA_RESET_EVENT,
@@ -86,7 +87,14 @@ export class MailboxReplica {
   private timer?: ReturnType<typeof setTimeout>;
   private startup?: ReturnType<typeof setTimeout>;
   private controller = new AbortController();
-  private cursor?: string;
+  private cursorState = createSignal<string>();
+  private syncEpoch = createSignal(0);
+  private get cursor() {
+    return this.cursorState[0]();
+  }
+  private set cursor(value: string | undefined) {
+    this.cursorState[1](value);
+  }
   private revision = 0;
   private bodies = new Map<string, Promise<void>>();
   private channel?: BroadcastChannel;
@@ -95,6 +103,11 @@ export class MailboxReplica {
   private bodiesHydrated = createSignal(false);
   private syncingBodies = false;
   private closing?: Promise<void>;
+  private initialized = false;
+  private polling?: Promise<void>;
+  private pollAgain = false;
+  private liveDirty = false;
+  private pendingPush?: LiveDelta;
   constructor(
     private client: QueryClient,
     private canPoll: () => boolean,
@@ -160,6 +173,7 @@ export class MailboxReplica {
       if (this.closed) return;
       this.persistent = state.persistent;
       this.cursor = state.cursor;
+      this.initialized = true;
       if (this.cursor) {
         this.setReady(true);
         await this.refresh();
@@ -222,35 +236,85 @@ export class MailboxReplica {
     }
     if (this.closed) return;
   }
-  private async poll() {
-    if (this.closed) return;
+  syncCursor() {
+    this.syncRevision();
+    return this.cursor;
+  }
+  syncRevision() {
+    return this.syncEpoch[0]();
+  }
+  wake() {
+    if (this.initialized && !this.closed) void this.poll();
+  }
+  receiveLive(frame?: LiveDelta) {
+    this.liveDirty = true;
+    this.pendingPush = frame;
+    return this.initialized ? this.poll() : Promise.resolve();
+  }
+  private poll(): Promise<void> {
+    if (this.closed || this.controller.signal.aborted) return Promise.resolve();
+    clearTimeout(this.timer);
+    this.pollAgain = true;
+    if (this.polling) return this.polling;
+    this.polling = (async () => {
+      while (this.pollAgain && !this.closed) {
+        while (
+          this.liveDirty &&
+          !this.canPoll() &&
+          navigator.onLine !== false &&
+          this.verified() &&
+          !this.controller.signal.aborted
+        )
+          await new Promise((done) => setTimeout(done, 250));
+        this.pollAgain = false;
+        await this.pollOnce();
+      }
+    })().finally(() => {
+      this.polling = undefined;
+      if (!this.closed && !this.controller.signal.aborted) {
+        void this.syncRecentBodies();
+        const delay =
+          this.liveDirty && navigator.onLine !== false && this.verified()
+            ? 250
+            : liveInterval(this.client);
+        this.timer = setTimeout(() => void this.poll(), delay);
+      }
+    });
+    return this.polling;
+  }
+  private async pollOnce() {
+    if (this.closed || this.controller.signal.aborted) return;
     try {
       if (navigator.onLine !== false && this.verified() && this.canPoll()) {
+        const push = this.pendingPush;
+        this.pendingPush = undefined;
+        this.liveDirty = false;
         if (!this.cursor) await this.bootstrap();
         else {
           const revision = this.revision,
-            delta = await this.fetchDelta(this.cursor);
-          if (revision === this.revision && this.canPoll()) {
+            matching = push?.from === this.cursor && (push.revision ?? 0) === this.syncRevision(),
+            delta = matching ? push.delta : await this.fetchDelta(this.cursor);
+          if (revision === this.revision && this.canPoll() && !this.controller.signal.aborted) {
             await this.call("delta", delta, false);
-            this.cursor = delta.cursor;
+            batch(() => {
+              if (!matching) this.syncEpoch[1]((value) => value + 1);
+              this.cursor = delta.cursor;
+            });
             this.client.setQueryData(["accounts"], { accounts: delta.accounts });
             if (delta.upserts.length || delta.deletions.length) await this.refresh();
-          }
+          } else this.liveDirty = true;
         }
       }
     } catch (error) {
-      if (error instanceof ApiError && error.status === 410) this.cursor = undefined;
-      else if (
+      if (error instanceof ApiError && error.status === 410) {
+        this.cursor = undefined;
+        this.liveDirty = true;
+      } else if (
         !(error instanceof ApiError) &&
         !(error instanceof TypeError) &&
         !this.controller.signal.aborted
       )
         this.fail();
-    } finally {
-      if (!this.closed) {
-        void this.syncRecentBodies();
-        this.timer = setTimeout(() => void this.poll(), 4000);
-      }
     }
   }
   async list(params: URLSearchParams) {
@@ -296,6 +360,7 @@ export class MailboxReplica {
     if (ids.length && this.ready()) void this.call("opened", ids).catch(() => this.fail());
   }
   private seed(key: QueryKey, rows: ReplicaDetail[], thread = false) {
+    if (this.closed || this.controller.signal.aborted) return;
     const messages = rows.map((row) => ({
       ...row.message,
       ...(!row.hasBody ? { localBodyPending: true } : {}),
@@ -368,10 +433,11 @@ export class MailboxReplica {
     };
   }
   private async refresh() {
+    if (this.closed || this.controller.signal.aborted) return;
     void this.client.invalidateQueries({ queryKey: ["search"], refetchType: "active" });
     const revision = this.revision;
     for (const query of this.client.getQueryCache().getAll()) {
-      if (this.closed || revision !== this.revision) return;
+      if (this.closed || this.controller.signal.aborted || revision !== this.revision) return;
       const key = query.queryKey,
         family = key[0];
       if (
@@ -395,7 +461,11 @@ export class MailboxReplica {
           cursor = result.nextCursor;
           if (!cursor) break;
         }
-        if (revision === this.revision && query.state.dataUpdateCount === updates)
+        if (
+          !this.controller.signal.aborted &&
+          revision === this.revision &&
+          query.state.dataUpdateCount === updates
+        )
           this.client.setQueryData(key, { messages, nextCursor: cursor, pageCount: count });
       } else if (family === "message" || family === "thread") {
         const rows =
@@ -404,7 +474,12 @@ export class MailboxReplica {
                 (value): value is ReplicaDetail => Boolean(value),
               )
             : await this.call<ReplicaDetail[]>("thread", String(key[1]), Boolean(key[2]));
-        if (revision !== this.revision || query.state.dataUpdateCount !== updates) continue;
+        if (
+          this.controller.signal.aborted ||
+          revision !== this.revision ||
+          query.state.dataUpdateCount !== updates
+        )
+          continue;
         this.seed(key, rows, family === "thread");
         if (rows.some((row) => !row.hasBody))
           void this.client.invalidateQueries({ queryKey: key, exact: true });
