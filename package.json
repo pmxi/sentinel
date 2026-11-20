@@ -4,6 +4,9 @@
   "type": "module",
   "packageManager": "pnpm@11.21.0",
   "scripts": {
+    "bench:seed": "tsx --env-file=.env bench/src/seed.ts",
+    "bench:run": "tsx bench/src/run.ts",
+    "bench:compare": "tsx bench/src/compare.ts",
     "build": "pnpm -r --if-present build",
     "dev": "concurrently -n web,server,worker -c cyan,green,magenta \"pnpm --filter @sent/web dev\" \"pnpm --filter @sent/server dev\" \"pnpm --filter @sent/worker dev\"",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test",

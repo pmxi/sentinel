@@ -1,0 +1,5479 @@
+{
+  "metadata": {
+    "url": "http://localhost:3100/",
+    "label": "node-react-baseline",
+    "date": "2026-11-20T02:19:17.640Z",
+    "chromium": "145.0.7632.6",
+    "host": {
+      "cpu": "Intel(R) Xeon(R) Processor",
+      "cores": 8,
+      "ramBytes": 33655377920,
+      "os": "linux 6.8.0-1060-aws"
+    },
+    "profiles": {
+      "local": {
+        "latency": 0,
+        "downloadThroughput": -1,
+        "uploadThroughput": -1
+      },
+      "lan": {
+        "latency": 20,
+        "downloadThroughput": -1,
+        "uploadThroughput": -1
+      },
+      "broadband": {
+        "latency": 60,
+        "downloadThroughput": 6250000,
+        "uploadThroughput": 1250000
+      },
+      "far": {
+        "latency": 150,
+        "downloadThroughput": 2500000,
+        "uploadThroughput": 625000
+      },
+      "mobile": {
+        "latency": 300,
+        "downloadThroughput": 625000,
+        "uploadThroughput": 125000
+      }
+    },
+    "iterations": 15,
+    "warmups": 2,
+    "selectors": {
+      "rows": "button.message-row",
+      "rowSubject": ".message-subject",
+      "readerSubject": ".conversation-heading h2",
+      "body": ".latest-message .email-body",
+      "search": "input[aria-label=\"Search mail\"]",
+      "nextKey": "j",
+      "archiveKey": "e",
+      "searchKey": "/",
+      "submitKey": "Enter"
+    },
+    "timeoutMs": 30000,
+    "actions": [
+      "cold_start",
+      "inbox_load",
+      "open_email",
+      "next_email",
+      "archive",
+      "search_rare",
+      "search_common"
+    ],
+    "diagnostics": false
+  },
+  "samples": [
+    {
+      "profile": "local",
+      "action": "cold_start",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 192.89999999990687,
+      "requests": 6,
+      "transferredBytes": 594992
+    },
+    {
+      "profile": "local",
+      "action": "cold_start",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 162.5,
+      "requests": 6,
+      "transferredBytes": 594992
+    },
+    {
+      "profile": "local",
+      "action": "cold_start",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 214.29999999981374,
+      "requests": 6,
+      "transferredBytes": 594992
+    },
+    {
+      "profile": "local",
+      "action": "cold_start",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 165.20000000018626,
+      "requests": 6,
+      "transferredBytes": 594992
+    },
+    {
+      "profile": "local",
+      "action": "cold_start",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 191.59999999962747,
+      "requests": 6,
+      "transferredBytes": 594992
+    },
+    {
+      "profile": "local",
+      "action": "cold_start",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 199,
+      "requests": 6,
+      "transferredBytes": 594992
+    },
+    {
+      "profile": "local",
+      "action": "cold_start",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 200.79999999981374,
+      "requests": 6,
+      "transferredBytes": 594992
+    },
+    {
+      "profile": "local",
+      "action": "cold_start",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 183.59999999962747,
+      "requests": 6,
+      "transferredBytes": 594992
+    },
+    {
+      "profile": "local",
+      "action": "cold_start",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 157.89999999990687,
+      "requests": 6,
+      "transferredBytes": 594992
+    },
+    {
+      "profile": "local",
+      "action": "cold_start",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 166.90000000037253,
+      "requests": 6,
+      "transferredBytes": 594992
+    },
+    {
+      "profile": "local",
+      "action": "cold_start",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 182.60000000009313,
+      "requests": 6,
+      "transferredBytes": 594992
+    },
+    {
+      "profile": "local",
+      "action": "cold_start",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 161.5,
+      "requests": 6,
+      "transferredBytes": 594992
+    },
+    {
+      "profile": "local",
+      "action": "cold_start",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 167,
+      "requests": 6,
+      "transferredBytes": 594992
+    },
+    {
+      "profile": "local",
+      "action": "cold_start",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 160.89999999990687,
+      "requests": 6,
+      "transferredBytes": 594992
+    },
+    {
+      "profile": "local",
+      "action": "cold_start",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 191.89999999990687,
+      "requests": 6,
+      "transferredBytes": 594992
+    },
+    {
+      "profile": "local",
+      "action": "cold_start",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 167.3000000002794,
+      "requests": 6,
+      "transferredBytes": 594992
+    },
+    {
+      "profile": "local",
+      "action": "cold_start",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 174.8000000002794,
+      "requests": 6,
+      "transferredBytes": 594992
+    },
+    {
+      "profile": "local",
+      "action": "inbox_load",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 80.60000000009313,
+      "requests": 6,
+      "transferredBytes": 77055
+    },
+    {
+      "profile": "local",
+      "action": "inbox_load",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 90.89999999990687,
+      "requests": 6,
+      "transferredBytes": 77055
+    },
+    {
+      "profile": "local",
+      "action": "inbox_load",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 80.60000000009313,
+      "requests": 6,
+      "transferredBytes": 77055
+    },
+    {
+      "profile": "local",
+      "action": "inbox_load",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 81.1999999997206,
+      "requests": 6,
+      "transferredBytes": 77055
+    },
+    {
+      "profile": "local",
+      "action": "inbox_load",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 79.70000000018626,
+      "requests": 6,
+      "transferredBytes": 77055
+    },
+    {
+      "profile": "local",
+      "action": "inbox_load",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 82.5,
+      "requests": 6,
+      "transferredBytes": 77055
+    },
+    {
+      "profile": "local",
+      "action": "inbox_load",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 78.6999999997206,
+      "requests": 6,
+      "transferredBytes": 77055
+    },
+    {
+      "profile": "local",
+      "action": "inbox_load",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 96.60000000009313,
+      "requests": 6,
+      "transferredBytes": 77055
+    },
+    {
+      "profile": "local",
+      "action": "inbox_load",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 82.70000000018626,
+      "requests": 6,
+      "transferredBytes": 77055
+    },
+    {
+      "profile": "local",
+      "action": "inbox_load",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 81.3000000002794,
+      "requests": 6,
+      "transferredBytes": 77055
+    },
+    {
+      "profile": "local",
+      "action": "inbox_load",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 83.70000000018626,
+      "requests": 6,
+      "transferredBytes": 77055
+    },
+    {
+      "profile": "local",
+      "action": "inbox_load",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 81.59999999962747,
+      "requests": 6,
+      "transferredBytes": 77055
+    },
+    {
+      "profile": "local",
+      "action": "inbox_load",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 88.89999999990687,
+      "requests": 6,
+      "transferredBytes": 77055
+    },
+    {
+      "profile": "local",
+      "action": "inbox_load",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 84,
+      "requests": 6,
+      "transferredBytes": 77055
+    },
+    {
+      "profile": "local",
+      "action": "inbox_load",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 83.39999999990687,
+      "requests": 6,
+      "transferredBytes": 77055
+    },
+    {
+      "profile": "local",
+      "action": "inbox_load",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 85.59999999962747,
+      "requests": 6,
+      "transferredBytes": 77055
+    },
+    {
+      "profile": "local",
+      "action": "inbox_load",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 82.79999999981374,
+      "requests": 6,
+      "transferredBytes": 77055
+    },
+    {
+      "profile": "local",
+      "action": "open_email",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 111.89999999990687,
+      "requests": 6,
+      "transferredBytes": 514883
+    },
+    {
+      "profile": "local",
+      "action": "open_email",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 79.10000000009313,
+      "requests": 3,
+      "transferredBytes": 93372
+    },
+    {
+      "profile": "local",
+      "action": "open_email",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 59.8000000002794,
+      "requests": 2,
+      "transferredBytes": 25824
+    },
+    {
+      "profile": "local",
+      "action": "open_email",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 82,
+      "requests": 5,
+      "transferredBytes": 138227
+    },
+    {
+      "profile": "local",
+      "action": "open_email",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 81.79999999981374,
+      "requests": 5,
+      "transferredBytes": 221890
+    },
+    {
+      "profile": "local",
+      "action": "open_email",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 161.10000000009313,
+      "requests": 4,
+      "transferredBytes": 219965
+    },
+    {
+      "profile": "local",
+      "action": "open_email",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 79.10000000009313,
+      "requests": 3,
+      "transferredBytes": 96454
+    },
+    {
+      "profile": "local",
+      "action": "open_email",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 64.89999999990687,
+      "requests": 2,
+      "transferredBytes": 84752
+    },
+    {
+      "profile": "local",
+      "action": "open_email",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 62.5,
+      "requests": 3,
+      "transferredBytes": 46872
+    },
+    {
+      "profile": "local",
+      "action": "open_email",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 80.10000000009313,
+      "requests": 3,
+      "transferredBytes": 162731
+    },
+    {
+      "profile": "local",
+      "action": "open_email",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 66.10000000009313,
+      "requests": 3,
+      "transferredBytes": 139284
+    },
+    {
+      "profile": "local",
+      "action": "open_email",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 63,
+      "requests": 3,
+      "transferredBytes": 37662
+    },
+    {
+      "profile": "local",
+      "action": "open_email",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 61.90000000037253,
+      "requests": 2,
+      "transferredBytes": 31732
+    },
+    {
+      "profile": "local",
+      "action": "open_email",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 84.39999999990687,
+      "requests": 5,
+      "transferredBytes": 257040
+    },
+    {
+      "profile": "local",
+      "action": "open_email",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 66.6999999997206,
+      "requests": 3,
+      "transferredBytes": 119652
+    },
+    {
+      "profile": "local",
+      "action": "open_email",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 85.6999999997206,
+      "requests": 4,
+      "transferredBytes": 138053
+    },
+    {
+      "profile": "local",
+      "action": "open_email",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 71.20000000018626,
+      "requests": 3,
+      "transferredBytes": 97540
+    },
+    {
+      "profile": "local",
+      "action": "next_email",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 63,
+      "requests": 8,
+      "transferredBytes": 391454
+    },
+    {
+      "profile": "local",
+      "action": "next_email",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 59.39999999990687,
+      "requests": 6,
+      "transferredBytes": 381120
+    },
+    {
+      "profile": "local",
+      "action": "next_email",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 65.60000000009313,
+      "requests": 6,
+      "transferredBytes": 163877
+    },
+    {
+      "profile": "local",
+      "action": "next_email",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 65.5,
+      "requests": 9,
+      "transferredBytes": 400897
+    },
+    {
+      "profile": "local",
+      "action": "next_email",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 59.3000000002794,
+      "requests": 6,
+      "transferredBytes": 76404
+    },
+    {
+      "profile": "local",
+      "action": "next_email",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 60.8000000002794,
+      "requests": 2,
+      "transferredBytes": 47054
+    },
+    {
+      "profile": "local",
+      "action": "next_email",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 43.89999999990687,
+      "requests": 2,
+      "transferredBytes": 29356
+    },
+    {
+      "profile": "local",
+      "action": "next_email",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 63.3000000002794,
+      "requests": 5,
+      "transferredBytes": 98232
+    },
+    {
+      "profile": "local",
+      "action": "next_email",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 62.10000000009313,
+      "requests": 2,
+      "transferredBytes": 92216
+    },
+    {
+      "profile": "local",
+      "action": "next_email",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 60.5,
+      "requests": 2,
+      "transferredBytes": 25824
+    },
+    {
+      "profile": "local",
+      "action": "next_email",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 88.8000000002794,
+      "requests": 2,
+      "transferredBytes": 134763
+    },
+    {
+      "profile": "local",
+      "action": "next_email",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 60,
+      "requests": 2,
+      "transferredBytes": 218426
+    },
+    {
+      "profile": "local",
+      "action": "next_email",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 72.5,
+      "requests": 2,
+      "transferredBytes": 217655
+    },
+    {
+      "profile": "local",
+      "action": "next_email",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 60.1999999997206,
+      "requests": 2,
+      "transferredBytes": 95300
+    },
+    {
+      "profile": "local",
+      "action": "next_email",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 57.09999999962747,
+      "requests": 2,
+      "transferredBytes": 84752
+    },
+    {
+      "profile": "local",
+      "action": "next_email",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 61.90000000037253,
+      "requests": 2,
+      "transferredBytes": 45716
+    },
+    {
+      "profile": "local",
+      "action": "next_email",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 58.89999999990687,
+      "requests": 2,
+      "transferredBytes": 161577
+    },
+    {
+      "profile": "local",
+      "action": "archive",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 46,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "local",
+      "action": "archive",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 29.100000000093132,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "local",
+      "action": "archive",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 29.299999999813735,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "local",
+      "action": "archive",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 31.600000000093132,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "local",
+      "action": "archive",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 35.799999999813735,
+      "requests": 4,
+      "transferredBytes": 79043
+    },
+    {
+      "profile": "local",
+      "action": "archive",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 24.5,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "local",
+      "action": "archive",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 30.299999999813735,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "local",
+      "action": "archive",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 27,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "local",
+      "action": "archive",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 28.59999999962747,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "local",
+      "action": "archive",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 27.399999999906868,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "local",
+      "action": "archive",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 21.899999999906868,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "local",
+      "action": "archive",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 29.300000000279397,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "local",
+      "action": "archive",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 27.5,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "local",
+      "action": "archive",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 22.800000000279397,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "local",
+      "action": "archive",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 28.299999999813735,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "local",
+      "action": "archive",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 43.59999999962747,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "local",
+      "action": "archive",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 37.8000000002794,
+      "requests": 4,
+      "transferredBytes": 100916
+    },
+    {
+      "profile": "local",
+      "action": "search_rare",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 41.89999999990687,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "local",
+      "action": "search_rare",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 34.40000000037253,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "local",
+      "action": "search_rare",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 50.60000000009313,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "local",
+      "action": "search_rare",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 46.299999999813735,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "local",
+      "action": "search_rare",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 43.200000000186265,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "local",
+      "action": "search_rare",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 44,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "local",
+      "action": "search_rare",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 35.799999999813735,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "local",
+      "action": "search_rare",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 39.89999999990687,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "local",
+      "action": "search_rare",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 46.3000000002794,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "local",
+      "action": "search_rare",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 34.89999999990687,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "local",
+      "action": "search_rare",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 46.799999999813735,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "local",
+      "action": "search_rare",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 63,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "local",
+      "action": "search_rare",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 34.799999999813735,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "local",
+      "action": "search_rare",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 46.1999999997206,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "local",
+      "action": "search_rare",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 49.89999999990687,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "local",
+      "action": "search_rare",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 46.6999999997206,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "local",
+      "action": "search_rare",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 41,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "local",
+      "action": "search_common",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 230.20000000018626,
+      "requests": 1,
+      "transferredBytes": 69421
+    },
+    {
+      "profile": "local",
+      "action": "search_common",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 126.20000000018626,
+      "requests": 1,
+      "transferredBytes": 69421
+    },
+    {
+      "profile": "local",
+      "action": "search_common",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 128.79999999981374,
+      "requests": 1,
+      "transferredBytes": 69421
+    },
+    {
+      "profile": "local",
+      "action": "search_common",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 126.5,
+      "requests": 1,
+      "transferredBytes": 69421
+    },
+    {
+      "profile": "local",
+      "action": "search_common",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 128.39999999990687,
+      "requests": 1,
+      "transferredBytes": 69421
+    },
+    {
+      "profile": "local",
+      "action": "search_common",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 116.6999999997206,
+      "requests": 1,
+      "transferredBytes": 69421
+    },
+    {
+      "profile": "local",
+      "action": "search_common",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 126.79999999981374,
+      "requests": 1,
+      "transferredBytes": 69421
+    },
+    {
+      "profile": "local",
+      "action": "search_common",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 107.90000000037253,
+      "requests": 1,
+      "transferredBytes": 69421
+    },
+    {
+      "profile": "local",
+      "action": "search_common",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 127.3000000002794,
+      "requests": 1,
+      "transferredBytes": 69421
+    },
+    {
+      "profile": "local",
+      "action": "search_common",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 130.39999999990687,
+      "requests": 1,
+      "transferredBytes": 69421
+    },
+    {
+      "profile": "local",
+      "action": "search_common",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 148.5,
+      "requests": 1,
+      "transferredBytes": 69421
+    },
+    {
+      "profile": "local",
+      "action": "search_common",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 118.8000000002794,
+      "requests": 1,
+      "transferredBytes": 69421
+    },
+    {
+      "profile": "local",
+      "action": "search_common",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 130.70000000018626,
+      "requests": 1,
+      "transferredBytes": 69421
+    },
+    {
+      "profile": "local",
+      "action": "search_common",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 132.79999999981374,
+      "requests": 1,
+      "transferredBytes": 69421
+    },
+    {
+      "profile": "local",
+      "action": "search_common",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 128,
+      "requests": 1,
+      "transferredBytes": 69421
+    },
+    {
+      "profile": "local",
+      "action": "search_common",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 120.5,
+      "requests": 1,
+      "transferredBytes": 69421
+    },
+    {
+      "profile": "local",
+      "action": "search_common",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 126.60000000009313,
+      "requests": 1,
+      "transferredBytes": 69421
+    },
+    {
+      "profile": "lan",
+      "action": "cold_start",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 263.39999999990687,
+      "requests": 6,
+      "transferredBytes": 595073
+    },
+    {
+      "profile": "lan",
+      "action": "cold_start",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 295.79999999981374,
+      "requests": 6,
+      "transferredBytes": 595073
+    },
+    {
+      "profile": "lan",
+      "action": "cold_start",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 225.60000000009313,
+      "requests": 6,
+      "transferredBytes": 595073
+    },
+    {
+      "profile": "lan",
+      "action": "cold_start",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 230.90000000037253,
+      "requests": 6,
+      "transferredBytes": 595073
+    },
+    {
+      "profile": "lan",
+      "action": "cold_start",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 241.5,
+      "requests": 6,
+      "transferredBytes": 595073
+    },
+    {
+      "profile": "lan",
+      "action": "cold_start",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 241,
+      "requests": 6,
+      "transferredBytes": 595073
+    },
+    {
+      "profile": "lan",
+      "action": "cold_start",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 222.1999999997206,
+      "requests": 6,
+      "transferredBytes": 595073
+    },
+    {
+      "profile": "lan",
+      "action": "cold_start",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 257.39999999990687,
+      "requests": 6,
+      "transferredBytes": 595073
+    },
+    {
+      "profile": "lan",
+      "action": "cold_start",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 219.29999999981374,
+      "requests": 6,
+      "transferredBytes": 595073
+    },
+    {
+      "profile": "lan",
+      "action": "cold_start",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 249.10000000009313,
+      "requests": 6,
+      "transferredBytes": 595073
+    },
+    {
+      "profile": "lan",
+      "action": "cold_start",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 230.70000000018626,
+      "requests": 6,
+      "transferredBytes": 595073
+    },
+    {
+      "profile": "lan",
+      "action": "cold_start",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 255.59999999962747,
+      "requests": 6,
+      "transferredBytes": 595073
+    },
+    {
+      "profile": "lan",
+      "action": "cold_start",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 234.29999999981374,
+      "requests": 6,
+      "transferredBytes": 595073
+    },
+    {
+      "profile": "lan",
+      "action": "cold_start",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 275,
+      "requests": 6,
+      "transferredBytes": 595073
+    },
+    {
+      "profile": "lan",
+      "action": "cold_start",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 240.5,
+      "requests": 6,
+      "transferredBytes": 595073
+    },
+    {
+      "profile": "lan",
+      "action": "cold_start",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 249.90000000037253,
+      "requests": 6,
+      "transferredBytes": 595073
+    },
+    {
+      "profile": "lan",
+      "action": "cold_start",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 233.8000000002794,
+      "requests": 6,
+      "transferredBytes": 595073
+    },
+    {
+      "profile": "lan",
+      "action": "inbox_load",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 154,
+      "requests": 6,
+      "transferredBytes": 77136
+    },
+    {
+      "profile": "lan",
+      "action": "inbox_load",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 147.5,
+      "requests": 6,
+      "transferredBytes": 77136
+    },
+    {
+      "profile": "lan",
+      "action": "inbox_load",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 146.79999999981374,
+      "requests": 6,
+      "transferredBytes": 77136
+    },
+    {
+      "profile": "lan",
+      "action": "inbox_load",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 148.10000000009313,
+      "requests": 6,
+      "transferredBytes": 77136
+    },
+    {
+      "profile": "lan",
+      "action": "inbox_load",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 153.60000000009313,
+      "requests": 6,
+      "transferredBytes": 77136
+    },
+    {
+      "profile": "lan",
+      "action": "inbox_load",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 154.5,
+      "requests": 6,
+      "transferredBytes": 77136
+    },
+    {
+      "profile": "lan",
+      "action": "inbox_load",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 154.89999999990687,
+      "requests": 6,
+      "transferredBytes": 77136
+    },
+    {
+      "profile": "lan",
+      "action": "inbox_load",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 166,
+      "requests": 6,
+      "transferredBytes": 77136
+    },
+    {
+      "profile": "lan",
+      "action": "inbox_load",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 198.10000000009313,
+      "requests": 6,
+      "transferredBytes": 77136
+    },
+    {
+      "profile": "lan",
+      "action": "inbox_load",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 181.39999999990687,
+      "requests": 6,
+      "transferredBytes": 77136
+    },
+    {
+      "profile": "lan",
+      "action": "inbox_load",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 151.10000000009313,
+      "requests": 6,
+      "transferredBytes": 77136
+    },
+    {
+      "profile": "lan",
+      "action": "inbox_load",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 164.89999999990687,
+      "requests": 6,
+      "transferredBytes": 77136
+    },
+    {
+      "profile": "lan",
+      "action": "inbox_load",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 177.5,
+      "requests": 6,
+      "transferredBytes": 77136
+    },
+    {
+      "profile": "lan",
+      "action": "inbox_load",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 196.09999999962747,
+      "requests": 6,
+      "transferredBytes": 77136
+    },
+    {
+      "profile": "lan",
+      "action": "inbox_load",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 205.59999999962747,
+      "requests": 6,
+      "transferredBytes": 77136
+    },
+    {
+      "profile": "lan",
+      "action": "inbox_load",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 164.29999999981374,
+      "requests": 6,
+      "transferredBytes": 77136
+    },
+    {
+      "profile": "lan",
+      "action": "inbox_load",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 177,
+      "requests": 6,
+      "transferredBytes": 77136
+    },
+    {
+      "profile": "lan",
+      "action": "open_email",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 133.10000000009313,
+      "requests": 2,
+      "transferredBytes": 510264
+    },
+    {
+      "profile": "lan",
+      "action": "open_email",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 108.1999999997206,
+      "requests": 2,
+      "transferredBytes": 55904
+    },
+    {
+      "profile": "lan",
+      "action": "open_email",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 131.89999999990687,
+      "requests": 3,
+      "transferredBytes": 45460
+    },
+    {
+      "profile": "lan",
+      "action": "open_email",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 134.20000000018626,
+      "requests": 2,
+      "transferredBytes": 218426
+    },
+    {
+      "profile": "lan",
+      "action": "open_email",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 98.5,
+      "requests": 2,
+      "transferredBytes": 64142
+    },
+    {
+      "profile": "lan",
+      "action": "open_email",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 96.1999999997206,
+      "requests": 2,
+      "transferredBytes": 39932
+    },
+    {
+      "profile": "lan",
+      "action": "open_email",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 121.79999999981374,
+      "requests": 2,
+      "transferredBytes": 68242
+    },
+    {
+      "profile": "lan",
+      "action": "open_email",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 157.20000000018626,
+      "requests": 2,
+      "transferredBytes": 73402
+    },
+    {
+      "profile": "lan",
+      "action": "open_email",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 111.39999999990687,
+      "requests": 2,
+      "transferredBytes": 189982
+    },
+    {
+      "profile": "lan",
+      "action": "open_email",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 97.60000000009313,
+      "requests": 3,
+      "transferredBytes": 27956
+    },
+    {
+      "profile": "lan",
+      "action": "open_email",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 95.89999999990687,
+      "requests": 2,
+      "transferredBytes": 36506
+    },
+    {
+      "profile": "lan",
+      "action": "open_email",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 112.39999999990687,
+      "requests": 2,
+      "transferredBytes": 47054
+    },
+    {
+      "profile": "lan",
+      "action": "open_email",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 126.5,
+      "requests": 3,
+      "transferredBytes": 66458
+    },
+    {
+      "profile": "lan",
+      "action": "open_email",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 164.60000000009313,
+      "requests": 3,
+      "transferredBytes": 122893
+    },
+    {
+      "profile": "lan",
+      "action": "open_email",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 137.8000000002794,
+      "requests": 2,
+      "transferredBytes": 32338
+    },
+    {
+      "profile": "lan",
+      "action": "open_email",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 112.10000000009313,
+      "requests": 2,
+      "transferredBytes": 135743
+    },
+    {
+      "profile": "lan",
+      "action": "open_email",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 133.10000000009313,
+      "requests": 2,
+      "transferredBytes": 374980
+    },
+    {
+      "profile": "lan",
+      "action": "next_email",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 92.60000000009313,
+      "requests": 2,
+      "transferredBytes": 194573
+    },
+    {
+      "profile": "lan",
+      "action": "next_email",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 90.90000000037253,
+      "requests": 2,
+      "transferredBytes": 91988
+    },
+    {
+      "profile": "lan",
+      "action": "next_email",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 94.10000000009313,
+      "requests": 2,
+      "transferredBytes": 138128
+    },
+    {
+      "profile": "lan",
+      "action": "next_email",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 93.89999999990687,
+      "requests": 2,
+      "transferredBytes": 37624
+    },
+    {
+      "profile": "lan",
+      "action": "next_email",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 101,
+      "requests": 5,
+      "transferredBytes": 147662
+    },
+    {
+      "profile": "lan",
+      "action": "next_email",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 91.39999999990687,
+      "requests": 2,
+      "transferredBytes": 118496
+    },
+    {
+      "profile": "lan",
+      "action": "next_email",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 91.5,
+      "requests": 3,
+      "transferredBytes": 49954
+    },
+    {
+      "profile": "lan",
+      "action": "next_email",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 92.5,
+      "requests": 3,
+      "transferredBytes": 46250
+    },
+    {
+      "profile": "lan",
+      "action": "next_email",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 89.60000000009313,
+      "requests": 2,
+      "transferredBytes": 55900
+    },
+    {
+      "profile": "lan",
+      "action": "next_email",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 93.79999999981374,
+      "requests": 2,
+      "transferredBytes": 45456
+    },
+    {
+      "profile": "lan",
+      "action": "next_email",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 93.8000000002794,
+      "requests": 2,
+      "transferredBytes": 218426
+    },
+    {
+      "profile": "lan",
+      "action": "next_email",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 93.8000000002794,
+      "requests": 2,
+      "transferredBytes": 64142
+    },
+    {
+      "profile": "lan",
+      "action": "next_email",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 92.5,
+      "requests": 2,
+      "transferredBytes": 39932
+    },
+    {
+      "profile": "lan",
+      "action": "next_email",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 95.60000000009313,
+      "requests": 2,
+      "transferredBytes": 68242
+    },
+    {
+      "profile": "lan",
+      "action": "next_email",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 92.10000000009313,
+      "requests": 2,
+      "transferredBytes": 73398
+    },
+    {
+      "profile": "lan",
+      "action": "next_email",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 95.3000000002794,
+      "requests": 2,
+      "transferredBytes": 189982
+    },
+    {
+      "profile": "lan",
+      "action": "next_email",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 95.59999999962747,
+      "requests": 2,
+      "transferredBytes": 27952
+    },
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 30.200000000186265,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 28,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 29.800000000279397,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 29.700000000186265,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 29.5,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 27.800000000279397,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 27.600000000093132,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": 5,
+      "warmup": false,
+      "ms": null,
+      "requests": null,
+      "transferredBytes": null,
+      "error": "page.waitForFunction: Timeout 30000ms exceeded."
+    },
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 30.299999999813735,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 30.700000000186265,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 28.399999999906868,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": 9,
+      "warmup": false,
+      "ms": null,
+      "requests": null,
+      "transferredBytes": null,
+      "error": "page.waitForFunction: Timeout 30000ms exceeded."
+    },
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 29.200000000186265,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 30.40000000037253,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 31,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 29.40000000037253,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 29.399999999906868,
+      "requests": 1,
+      "transferredBytes": 1188
+    },
+    {
+      "profile": "lan",
+      "action": "search_rare",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 61.299999999813735,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "lan",
+      "action": "search_rare",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 64.39999999990687,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "lan",
+      "action": "search_rare",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 66.59999999962747,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "lan",
+      "action": "search_rare",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 64.89999999990687,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "lan",
+      "action": "search_rare",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 62,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "lan",
+      "action": "search_rare",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 60.299999999813735,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "lan",
+      "action": "search_rare",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 62.8000000002794,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "lan",
+      "action": "search_rare",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 61.89999999990687,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "lan",
+      "action": "search_rare",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 61.5,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "lan",
+      "action": "search_rare",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 61.799999999813735,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "lan",
+      "action": "search_rare",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 61.299999999813735,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "lan",
+      "action": "search_rare",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 62.60000000009313,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "lan",
+      "action": "search_rare",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 62.8000000002794,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "lan",
+      "action": "search_rare",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 63.8000000002794,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "lan",
+      "action": "search_rare",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 66.10000000009313,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "lan",
+      "action": "search_rare",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 61.40000000037253,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "lan",
+      "action": "search_rare",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 62.39999999990687,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "lan",
+      "action": "search_common",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 59.60000000009313,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "lan",
+      "action": "search_common",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 56.40000000037253,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "lan",
+      "action": "search_common",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 61.89999999990687,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "lan",
+      "action": "search_common",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 63.700000000186265,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "lan",
+      "action": "search_common",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 60.3000000002794,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "lan",
+      "action": "search_common",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 50.700000000186265,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "lan",
+      "action": "search_common",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 86.5,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "lan",
+      "action": "search_common",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 66.89999999990687,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "lan",
+      "action": "search_common",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 71.29999999981374,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "lan",
+      "action": "search_common",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 64.3000000002794,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "lan",
+      "action": "search_common",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 51.5,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "lan",
+      "action": "search_common",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 80.8000000002794,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "lan",
+      "action": "search_common",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 64.20000000018626,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "lan",
+      "action": "search_common",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 62.799999999813735,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "lan",
+      "action": "search_common",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 66.89999999990687,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "lan",
+      "action": "search_common",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 60,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "lan",
+      "action": "search_common",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 65.20000000018626,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "broadband",
+      "action": "cold_start",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 487,
+      "requests": 6,
+      "transferredBytes": 595131
+    },
+    {
+      "profile": "broadband",
+      "action": "cold_start",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 454.90000000037253,
+      "requests": 6,
+      "transferredBytes": 595131
+    },
+    {
+      "profile": "broadband",
+      "action": "cold_start",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 446.29999999981374,
+      "requests": 6,
+      "transferredBytes": 595131
+    },
+    {
+      "profile": "broadband",
+      "action": "cold_start",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 472,
+      "requests": 6,
+      "transferredBytes": 595131
+    },
+    {
+      "profile": "broadband",
+      "action": "cold_start",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 449.10000000009313,
+      "requests": 6,
+      "transferredBytes": 595131
+    },
+    {
+      "profile": "broadband",
+      "action": "cold_start",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 459.1999999997206,
+      "requests": 6,
+      "transferredBytes": 595131
+    },
+    {
+      "profile": "broadband",
+      "action": "cold_start",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 482.10000000009313,
+      "requests": 6,
+      "transferredBytes": 595131
+    },
+    {
+      "profile": "broadband",
+      "action": "cold_start",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 468.1999999997206,
+      "requests": 6,
+      "transferredBytes": 595131
+    },
+    {
+      "profile": "broadband",
+      "action": "cold_start",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 469.1999999997206,
+      "requests": 6,
+      "transferredBytes": 595131
+    },
+    {
+      "profile": "broadband",
+      "action": "cold_start",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 454.8000000002794,
+      "requests": 6,
+      "transferredBytes": 595131
+    },
+    {
+      "profile": "broadband",
+      "action": "cold_start",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 458.70000000018626,
+      "requests": 6,
+      "transferredBytes": 595131
+    },
+    {
+      "profile": "broadband",
+      "action": "cold_start",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 455.20000000018626,
+      "requests": 6,
+      "transferredBytes": 595131
+    },
+    {
+      "profile": "broadband",
+      "action": "cold_start",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 451.5,
+      "requests": 6,
+      "transferredBytes": 595131
+    },
+    {
+      "profile": "broadband",
+      "action": "cold_start",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 478.60000000009313,
+      "requests": 6,
+      "transferredBytes": 595131
+    },
+    {
+      "profile": "broadband",
+      "action": "cold_start",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 447.39999999990687,
+      "requests": 6,
+      "transferredBytes": 595131
+    },
+    {
+      "profile": "broadband",
+      "action": "cold_start",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 471.20000000018626,
+      "requests": 6,
+      "transferredBytes": 595131
+    },
+    {
+      "profile": "broadband",
+      "action": "cold_start",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 470.90000000037253,
+      "requests": 6,
+      "transferredBytes": 595131
+    },
+    {
+      "profile": "broadband",
+      "action": "inbox_load",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 320.70000000018626,
+      "requests": 6,
+      "transferredBytes": 77194
+    },
+    {
+      "profile": "broadband",
+      "action": "inbox_load",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 316.89999999990687,
+      "requests": 6,
+      "transferredBytes": 77194
+    },
+    {
+      "profile": "broadband",
+      "action": "inbox_load",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 313.3000000002794,
+      "requests": 6,
+      "transferredBytes": 77194
+    },
+    {
+      "profile": "broadband",
+      "action": "inbox_load",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 313.1999999997206,
+      "requests": 6,
+      "transferredBytes": 77194
+    },
+    {
+      "profile": "broadband",
+      "action": "inbox_load",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 313.90000000037253,
+      "requests": 6,
+      "transferredBytes": 77194
+    },
+    {
+      "profile": "broadband",
+      "action": "inbox_load",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 314,
+      "requests": 6,
+      "transferredBytes": 77194
+    },
+    {
+      "profile": "broadband",
+      "action": "inbox_load",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 317.79999999981374,
+      "requests": 6,
+      "transferredBytes": 77194
+    },
+    {
+      "profile": "broadband",
+      "action": "inbox_load",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 315.60000000009313,
+      "requests": 6,
+      "transferredBytes": 77194
+    },
+    {
+      "profile": "broadband",
+      "action": "inbox_load",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 317.60000000009313,
+      "requests": 6,
+      "transferredBytes": 77194
+    },
+    {
+      "profile": "broadband",
+      "action": "inbox_load",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 318.6999999997206,
+      "requests": 6,
+      "transferredBytes": 77194
+    },
+    {
+      "profile": "broadband",
+      "action": "inbox_load",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 318.3000000002794,
+      "requests": 6,
+      "transferredBytes": 77194
+    },
+    {
+      "profile": "broadband",
+      "action": "inbox_load",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 314.59999999962747,
+      "requests": 6,
+      "transferredBytes": 77194
+    },
+    {
+      "profile": "broadband",
+      "action": "inbox_load",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 315.39999999990687,
+      "requests": 6,
+      "transferredBytes": 77194
+    },
+    {
+      "profile": "broadband",
+      "action": "inbox_load",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 322.10000000009313,
+      "requests": 6,
+      "transferredBytes": 77194
+    },
+    {
+      "profile": "broadband",
+      "action": "inbox_load",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 315.59999999962747,
+      "requests": 6,
+      "transferredBytes": 77194
+    },
+    {
+      "profile": "broadband",
+      "action": "inbox_load",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 313.60000000009313,
+      "requests": 6,
+      "transferredBytes": 77194
+    },
+    {
+      "profile": "broadband",
+      "action": "inbox_load",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 318.10000000009313,
+      "requests": 6,
+      "transferredBytes": 77194
+    },
+    {
+      "profile": "broadband",
+      "action": "open_email",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 281,
+      "requests": 2,
+      "transferredBytes": 510264
+    },
+    {
+      "profile": "broadband",
+      "action": "open_email",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 219.1999999997206,
+      "requests": 2,
+      "transferredBytes": 156103
+    },
+    {
+      "profile": "broadband",
+      "action": "open_email",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 175.89999999990687,
+      "requests": 2,
+      "transferredBytes": 29608
+    },
+    {
+      "profile": "broadband",
+      "action": "open_email",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 193.10000000009313,
+      "requests": 2,
+      "transferredBytes": 47054
+    },
+    {
+      "profile": "broadband",
+      "action": "open_email",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 182.1999999997206,
+      "requests": 2,
+      "transferredBytes": 39932
+    },
+    {
+      "profile": "broadband",
+      "action": "open_email",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 193.5,
+      "requests": 2,
+      "transferredBytes": 49950
+    },
+    {
+      "profile": "broadband",
+      "action": "open_email",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 179.39999999990687,
+      "requests": 2,
+      "transferredBytes": 34052
+    },
+    {
+      "profile": "broadband",
+      "action": "open_email",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 197.8000000002794,
+      "requests": 2,
+      "transferredBytes": 75836
+    },
+    {
+      "profile": "broadband",
+      "action": "open_email",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 227.29999999981374,
+      "requests": 2,
+      "transferredBytes": 91988
+    },
+    {
+      "profile": "broadband",
+      "action": "open_email",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 229,
+      "requests": 2,
+      "transferredBytes": 132863
+    },
+    {
+      "profile": "broadband",
+      "action": "open_email",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 249.3000000002794,
+      "requests": 2,
+      "transferredBytes": 217655
+    },
+    {
+      "profile": "broadband",
+      "action": "open_email",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 193.90000000037253,
+      "requests": 2,
+      "transferredBytes": 65302
+    },
+    {
+      "profile": "broadband",
+      "action": "open_email",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 193.5,
+      "requests": 2,
+      "transferredBytes": 68242
+    },
+    {
+      "profile": "broadband",
+      "action": "open_email",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 179.5,
+      "requests": 2,
+      "transferredBytes": 46246
+    },
+    {
+      "profile": "broadband",
+      "action": "open_email",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 226.70000000018626,
+      "requests": 2,
+      "transferredBytes": 275994
+    },
+    {
+      "profile": "broadband",
+      "action": "open_email",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 203.39999999990687,
+      "requests": 2,
+      "transferredBytes": 135743
+    },
+    {
+      "profile": "broadband",
+      "action": "open_email",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 204.6999999997206,
+      "requests": 2,
+      "transferredBytes": 134763
+    },
+    {
+      "profile": "broadband",
+      "action": "next_email",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 208.90000000037253,
+      "requests": 2,
+      "transferredBytes": 194573
+    },
+    {
+      "profile": "broadband",
+      "action": "next_email",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 195.39999999990687,
+      "requests": 2,
+      "transferredBytes": 96386
+    },
+    {
+      "profile": "broadband",
+      "action": "next_email",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 192.29999999981374,
+      "requests": 2,
+      "transferredBytes": 103209
+    },
+    {
+      "profile": "broadband",
+      "action": "next_email",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 177.3000000002794,
+      "requests": 2,
+      "transferredBytes": 64142
+    },
+    {
+      "profile": "broadband",
+      "action": "next_email",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 206.59999999962747,
+      "requests": 2,
+      "transferredBytes": 118496
+    },
+    {
+      "profile": "broadband",
+      "action": "next_email",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 262.60000000009313,
+      "requests": 2,
+      "transferredBytes": 378106
+    },
+    {
+      "profile": "broadband",
+      "action": "next_email",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 177.20000000018626,
+      "requests": 2,
+      "transferredBytes": 52466
+    },
+    {
+      "profile": "broadband",
+      "action": "next_email",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 175,
+      "requests": 2,
+      "transferredBytes": 69202
+    },
+    {
+      "profile": "broadband",
+      "action": "next_email",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 191.89999999990687,
+      "requests": 2,
+      "transferredBytes": 156097
+    },
+    {
+      "profile": "broadband",
+      "action": "next_email",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 178.40000000037253,
+      "requests": 2,
+      "transferredBytes": 29604
+    },
+    {
+      "profile": "broadband",
+      "action": "next_email",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 175.29999999981374,
+      "requests": 2,
+      "transferredBytes": 47054
+    },
+    {
+      "profile": "broadband",
+      "action": "next_email",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 175.3000000002794,
+      "requests": 2,
+      "transferredBytes": 39932
+    },
+    {
+      "profile": "broadband",
+      "action": "next_email",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 175.8000000002794,
+      "requests": 2,
+      "transferredBytes": 49950
+    },
+    {
+      "profile": "broadband",
+      "action": "next_email",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 176.1999999997206,
+      "requests": 2,
+      "transferredBytes": 34052
+    },
+    {
+      "profile": "broadband",
+      "action": "next_email",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 174.70000000018626,
+      "requests": 2,
+      "transferredBytes": 75832
+    },
+    {
+      "profile": "broadband",
+      "action": "next_email",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 193.79999999981374,
+      "requests": 2,
+      "transferredBytes": 91988
+    },
+    {
+      "profile": "broadband",
+      "action": "next_email",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 187.5,
+      "requests": 2,
+      "transferredBytes": 132863
+    },
+    {
+      "profile": "broadband",
+      "action": "archive",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 31.700000000186265,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "broadband",
+      "action": "archive",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 30.5,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "broadband",
+      "action": "archive",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 26,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "broadband",
+      "action": "archive",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 29.899999999906868,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "broadband",
+      "action": "archive",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 29.300000000279397,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "broadband",
+      "action": "archive",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 27.200000000186265,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "broadband",
+      "action": "archive",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 28.899999999906868,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "broadband",
+      "action": "archive",
+      "iteration": 5,
+      "warmup": false,
+      "ms": null,
+      "requests": null,
+      "transferredBytes": null,
+      "error": "page.waitForFunction: Timeout 30000ms exceeded."
+    },
+    {
+      "profile": "broadband",
+      "action": "archive",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 30.5,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "broadband",
+      "action": "archive",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 30.299999999813735,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "broadband",
+      "action": "archive",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 30.90000000037253,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "broadband",
+      "action": "archive",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 28.300000000279397,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "broadband",
+      "action": "archive",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 29.5,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "broadband",
+      "action": "archive",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 28.899999999906868,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "broadband",
+      "action": "archive",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 28.399999999906868,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "broadband",
+      "action": "archive",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 30.200000000186265,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "broadband",
+      "action": "archive",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 29,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "broadband",
+      "action": "search_rare",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 116,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "broadband",
+      "action": "search_rare",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 109.89999999990687,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "broadband",
+      "action": "search_rare",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 114.70000000018626,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "broadband",
+      "action": "search_rare",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 111.09999999962747,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "broadband",
+      "action": "search_rare",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 102.10000000009313,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "broadband",
+      "action": "search_rare",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 103,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "broadband",
+      "action": "search_rare",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 112.29999999981374,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "broadband",
+      "action": "search_rare",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 114.1999999997206,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "broadband",
+      "action": "search_rare",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 111.1999999997206,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "broadband",
+      "action": "search_rare",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 114.5,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "broadband",
+      "action": "search_rare",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 112.8000000002794,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "broadband",
+      "action": "search_rare",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 113.89999999990687,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "broadband",
+      "action": "search_rare",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 115.20000000018626,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "broadband",
+      "action": "search_rare",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 102.09999999962747,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "broadband",
+      "action": "search_rare",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 112.39999999990687,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "broadband",
+      "action": "search_rare",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 108.5,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "broadband",
+      "action": "search_rare",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 110.5,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "broadband",
+      "action": "search_common",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 105,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "broadband",
+      "action": "search_common",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 105.20000000018626,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "broadband",
+      "action": "search_common",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 114.79999999981374,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "broadband",
+      "action": "search_common",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 112.3000000002794,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "broadband",
+      "action": "search_common",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 103.1999999997206,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "broadband",
+      "action": "search_common",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 134.60000000009313,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "broadband",
+      "action": "search_common",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 153.60000000009313,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "broadband",
+      "action": "search_common",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 116.39999999990687,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "broadband",
+      "action": "search_common",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 108.1999999997206,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "broadband",
+      "action": "search_common",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 102.8000000002794,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "broadband",
+      "action": "search_common",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 102.29999999981374,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "broadband",
+      "action": "search_common",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 113.89999999990687,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "broadband",
+      "action": "search_common",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 112.3000000002794,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "broadband",
+      "action": "search_common",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 115.10000000009313,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "broadband",
+      "action": "search_common",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 116.10000000009313,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "broadband",
+      "action": "search_common",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 112.5,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "broadband",
+      "action": "search_common",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 112.29999999981374,
+      "requests": 1,
+      "transferredBytes": 69420
+    },
+    {
+      "profile": "far",
+      "action": "cold_start",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 969.3999999999069,
+      "requests": 6,
+      "transferredBytes": 595135
+    },
+    {
+      "profile": "far",
+      "action": "cold_start",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 979.1000000000931,
+      "requests": 6,
+      "transferredBytes": 595135
+    },
+    {
+      "profile": "far",
+      "action": "cold_start",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 962.3999999999069,
+      "requests": 6,
+      "transferredBytes": 595135
+    },
+    {
+      "profile": "far",
+      "action": "cold_start",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 966.1000000000931,
+      "requests": 6,
+      "transferredBytes": 595135
+    },
+    {
+      "profile": "far",
+      "action": "cold_start",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 963.9000000003725,
+      "requests": 6,
+      "transferredBytes": 595135
+    },
+    {
+      "profile": "far",
+      "action": "cold_start",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 961.3999999999069,
+      "requests": 6,
+      "transferredBytes": 595135
+    },
+    {
+      "profile": "far",
+      "action": "cold_start",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 961,
+      "requests": 6,
+      "transferredBytes": 595135
+    },
+    {
+      "profile": "far",
+      "action": "cold_start",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 956.3999999999069,
+      "requests": 6,
+      "transferredBytes": 595135
+    },
+    {
+      "profile": "far",
+      "action": "cold_start",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 998.5,
+      "requests": 6,
+      "transferredBytes": 595135
+    },
+    {
+      "profile": "far",
+      "action": "cold_start",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 966.4000000003725,
+      "requests": 6,
+      "transferredBytes": 595135
+    },
+    {
+      "profile": "far",
+      "action": "cold_start",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 959.7999999998137,
+      "requests": 6,
+      "transferredBytes": 595135
+    },
+    {
+      "profile": "far",
+      "action": "cold_start",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 950.7000000001863,
+      "requests": 6,
+      "transferredBytes": 595135
+    },
+    {
+      "profile": "far",
+      "action": "cold_start",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 970.3999999999069,
+      "requests": 6,
+      "transferredBytes": 595135
+    },
+    {
+      "profile": "far",
+      "action": "cold_start",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 972.4000000003725,
+      "requests": 6,
+      "transferredBytes": 595135
+    },
+    {
+      "profile": "far",
+      "action": "cold_start",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 973.4000000003725,
+      "requests": 6,
+      "transferredBytes": 595135
+    },
+    {
+      "profile": "far",
+      "action": "cold_start",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 964.3000000002794,
+      "requests": 6,
+      "transferredBytes": 595135
+    },
+    {
+      "profile": "far",
+      "action": "cold_start",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 963.5,
+      "requests": 6,
+      "transferredBytes": 595135
+    },
+    {
+      "profile": "far",
+      "action": "inbox_load",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 695.8000000002794,
+      "requests": 6,
+      "transferredBytes": 77198
+    },
+    {
+      "profile": "far",
+      "action": "inbox_load",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 701.3999999999069,
+      "requests": 6,
+      "transferredBytes": 77198
+    },
+    {
+      "profile": "far",
+      "action": "inbox_load",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 702.2000000001863,
+      "requests": 6,
+      "transferredBytes": 77198
+    },
+    {
+      "profile": "far",
+      "action": "inbox_load",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 701.8999999999069,
+      "requests": 6,
+      "transferredBytes": 77198
+    },
+    {
+      "profile": "far",
+      "action": "inbox_load",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 698,
+      "requests": 6,
+      "transferredBytes": 77198
+    },
+    {
+      "profile": "far",
+      "action": "inbox_load",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 705.2999999998137,
+      "requests": 6,
+      "transferredBytes": 77198
+    },
+    {
+      "profile": "far",
+      "action": "inbox_load",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 697.1999999997206,
+      "requests": 6,
+      "transferredBytes": 77198
+    },
+    {
+      "profile": "far",
+      "action": "inbox_load",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 695.8000000002794,
+      "requests": 6,
+      "transferredBytes": 77198
+    },
+    {
+      "profile": "far",
+      "action": "inbox_load",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 697.2999999998137,
+      "requests": 6,
+      "transferredBytes": 77198
+    },
+    {
+      "profile": "far",
+      "action": "inbox_load",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 719.1999999997206,
+      "requests": 6,
+      "transferredBytes": 77198
+    },
+    {
+      "profile": "far",
+      "action": "inbox_load",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 715.1000000000931,
+      "requests": 6,
+      "transferredBytes": 77198
+    },
+    {
+      "profile": "far",
+      "action": "inbox_load",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 695.3000000002794,
+      "requests": 6,
+      "transferredBytes": 77198
+    },
+    {
+      "profile": "far",
+      "action": "inbox_load",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 697.5,
+      "requests": 6,
+      "transferredBytes": 77198
+    },
+    {
+      "profile": "far",
+      "action": "inbox_load",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 696.3999999999069,
+      "requests": 6,
+      "transferredBytes": 77198
+    },
+    {
+      "profile": "far",
+      "action": "inbox_load",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 698.6000000000931,
+      "requests": 6,
+      "transferredBytes": 77198
+    },
+    {
+      "profile": "far",
+      "action": "inbox_load",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 699.2000000001863,
+      "requests": 6,
+      "transferredBytes": 77198
+    },
+    {
+      "profile": "far",
+      "action": "inbox_load",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 730.7999999998137,
+      "requests": 6,
+      "transferredBytes": 77198
+    },
+    {
+      "profile": "far",
+      "action": "open_email",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 584,
+      "requests": 2,
+      "transferredBytes": 510264
+    },
+    {
+      "profile": "far",
+      "action": "open_email",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 402.70000000018626,
+      "requests": 2,
+      "transferredBytes": 96386
+    },
+    {
+      "profile": "far",
+      "action": "open_email",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 363.70000000018626,
+      "requests": 2,
+      "transferredBytes": 36506
+    },
+    {
+      "profile": "far",
+      "action": "open_email",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 376.29999999981374,
+      "requests": 2,
+      "transferredBytes": 36034
+    },
+    {
+      "profile": "far",
+      "action": "open_email",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 421.3000000002794,
+      "requests": 2,
+      "transferredBytes": 122888
+    },
+    {
+      "profile": "far",
+      "action": "open_email",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 376.20000000018626,
+      "requests": 2,
+      "transferredBytes": 46246
+    },
+    {
+      "profile": "far",
+      "action": "open_email",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 380.29999999981374,
+      "requests": 2,
+      "transferredBytes": 69202
+    },
+    {
+      "profile": "far",
+      "action": "open_email",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 379,
+      "requests": 2,
+      "transferredBytes": 33794
+    },
+    {
+      "profile": "far",
+      "action": "open_email",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 432.5,
+      "requests": 2,
+      "transferredBytes": 156097
+    },
+    {
+      "profile": "far",
+      "action": "open_email",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 396.5,
+      "requests": 2,
+      "transferredBytes": 103208
+    },
+    {
+      "profile": "far",
+      "action": "open_email",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 447.39999999990687,
+      "requests": 2,
+      "transferredBytes": 147654
+    },
+    {
+      "profile": "far",
+      "action": "open_email",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 376.90000000037253,
+      "requests": 2,
+      "transferredBytes": 64458
+    },
+    {
+      "profile": "far",
+      "action": "open_email",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 396.89999999990687,
+      "requests": 2,
+      "transferredBytes": 73397
+    },
+    {
+      "profile": "far",
+      "action": "open_email",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 394.89999999990687,
+      "requests": 2,
+      "transferredBytes": 75832
+    },
+    {
+      "profile": "far",
+      "action": "open_email",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 524.3999999999069,
+      "requests": 2,
+      "transferredBytes": 388312
+    },
+    {
+      "profile": "far",
+      "action": "open_email",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 414.89999999990687,
+      "requests": 2,
+      "transferredBytes": 135743
+    },
+    {
+      "profile": "far",
+      "action": "open_email",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 425.10000000009313,
+      "requests": 2,
+      "transferredBytes": 132862
+    },
+    {
+      "profile": "far",
+      "action": "next_email",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 426.60000000009313,
+      "requests": 2,
+      "transferredBytes": 194573
+    },
+    {
+      "profile": "far",
+      "action": "next_email",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 408.89999999990687,
+      "requests": 2,
+      "transferredBytes": 161577
+    },
+    {
+      "profile": "far",
+      "action": "next_email",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 441.70000000018626,
+      "requests": 2,
+      "transferredBytes": 218426
+    },
+    {
+      "profile": "far",
+      "action": "next_email",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 392.59999999962747,
+      "requests": 2,
+      "transferredBytes": 95300
+    },
+    {
+      "profile": "far",
+      "action": "next_email",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 377.6999999997206,
+      "requests": 2,
+      "transferredBytes": 68242
+    },
+    {
+      "profile": "far",
+      "action": "next_email",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 358.1999999997206,
+      "requests": 2,
+      "transferredBytes": 34052
+    },
+    {
+      "profile": "far",
+      "action": "next_email",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 392,
+      "requests": 2,
+      "transferredBytes": 120170
+    },
+    {
+      "profile": "far",
+      "action": "next_email",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 424.89999999990687,
+      "requests": 2,
+      "transferredBytes": 139720
+    },
+    {
+      "profile": "far",
+      "action": "next_email",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 400.1999999997206,
+      "requests": 2,
+      "transferredBytes": 96386
+    },
+    {
+      "profile": "far",
+      "action": "next_email",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 360.60000000009313,
+      "requests": 2,
+      "transferredBytes": 36506
+    },
+    {
+      "profile": "far",
+      "action": "next_email",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 359.20000000018626,
+      "requests": 2,
+      "transferredBytes": 36030
+    },
+    {
+      "profile": "far",
+      "action": "next_email",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 411.70000000018626,
+      "requests": 2,
+      "transferredBytes": 122888
+    },
+    {
+      "profile": "far",
+      "action": "next_email",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 374.5,
+      "requests": 2,
+      "transferredBytes": 46246
+    },
+    {
+      "profile": "far",
+      "action": "next_email",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 375.5,
+      "requests": 2,
+      "transferredBytes": 69202
+    },
+    {
+      "profile": "far",
+      "action": "next_email",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 376.6999999997206,
+      "requests": 2,
+      "transferredBytes": 33794
+    },
+    {
+      "profile": "far",
+      "action": "next_email",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 406.89999999990687,
+      "requests": 2,
+      "transferredBytes": 156097
+    },
+    {
+      "profile": "far",
+      "action": "next_email",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 394.10000000009313,
+      "requests": 2,
+      "transferredBytes": 103208
+    },
+    {
+      "profile": "far",
+      "action": "archive",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 28.299999999813735,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "far",
+      "action": "archive",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 30.699999999720603,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "far",
+      "action": "archive",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 21.299999999813735,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "far",
+      "action": "archive",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 28.399999999906868,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "far",
+      "action": "archive",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 28.100000000093132,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "far",
+      "action": "archive",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 29.5,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "far",
+      "action": "archive",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 29.899999999906868,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "far",
+      "action": "archive",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 30.100000000093132,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "far",
+      "action": "archive",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 39.89999999990687,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "far",
+      "action": "archive",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 28.199999999720603,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "far",
+      "action": "archive",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 28.600000000093132,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "far",
+      "action": "archive",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 29.200000000186265,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "far",
+      "action": "archive",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 29.699999999720603,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "far",
+      "action": "archive",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 28.199999999720603,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "far",
+      "action": "archive",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 28.700000000186265,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "far",
+      "action": "archive",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 29.600000000093132,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "far",
+      "action": "archive",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 30.200000000186265,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "far",
+      "action": "search_rare",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 196.40000000037253,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "far",
+      "action": "search_rare",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 213.60000000009313,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "far",
+      "action": "search_rare",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 214.20000000018626,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "far",
+      "action": "search_rare",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 193.70000000018626,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "far",
+      "action": "search_rare",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 210.1999999997206,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "far",
+      "action": "search_rare",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 196.8000000002794,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "far",
+      "action": "search_rare",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 212.29999999981374,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "far",
+      "action": "search_rare",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 188.79999999981374,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "far",
+      "action": "search_rare",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 192.5,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "far",
+      "action": "search_rare",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 192.29999999981374,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "far",
+      "action": "search_rare",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 210.39999999990687,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "far",
+      "action": "search_rare",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 215.09999999962747,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "far",
+      "action": "search_rare",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 195.5,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "far",
+      "action": "search_rare",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 215.10000000009313,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "far",
+      "action": "search_rare",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 214.60000000009313,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "far",
+      "action": "search_rare",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 210.10000000009313,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "far",
+      "action": "search_rare",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 200.39999999990687,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "far",
+      "action": "search_common",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 225.90000000037253,
+      "requests": 1,
+      "transferredBytes": 69418
+    },
+    {
+      "profile": "far",
+      "action": "search_common",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 226.39999999990687,
+      "requests": 1,
+      "transferredBytes": 69418
+    },
+    {
+      "profile": "far",
+      "action": "search_common",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 229.5,
+      "requests": 1,
+      "transferredBytes": 69418
+    },
+    {
+      "profile": "far",
+      "action": "search_common",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 223.39999999990687,
+      "requests": 1,
+      "transferredBytes": 69418
+    },
+    {
+      "profile": "far",
+      "action": "search_common",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 228.29999999981374,
+      "requests": 1,
+      "transferredBytes": 69418
+    },
+    {
+      "profile": "far",
+      "action": "search_common",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 229.29999999981374,
+      "requests": 1,
+      "transferredBytes": 69418
+    },
+    {
+      "profile": "far",
+      "action": "search_common",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 227,
+      "requests": 1,
+      "transferredBytes": 69418
+    },
+    {
+      "profile": "far",
+      "action": "search_common",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 230.10000000009313,
+      "requests": 1,
+      "transferredBytes": 69418
+    },
+    {
+      "profile": "far",
+      "action": "search_common",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 228,
+      "requests": 1,
+      "transferredBytes": 69418
+    },
+    {
+      "profile": "far",
+      "action": "search_common",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 229.5,
+      "requests": 1,
+      "transferredBytes": 69418
+    },
+    {
+      "profile": "far",
+      "action": "search_common",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 230.8000000002794,
+      "requests": 1,
+      "transferredBytes": 69418
+    },
+    {
+      "profile": "far",
+      "action": "search_common",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 231.1999999997206,
+      "requests": 1,
+      "transferredBytes": 69418
+    },
+    {
+      "profile": "far",
+      "action": "search_common",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 226.40000000037253,
+      "requests": 1,
+      "transferredBytes": 69418
+    },
+    {
+      "profile": "far",
+      "action": "search_common",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 231.10000000009313,
+      "requests": 1,
+      "transferredBytes": 69418
+    },
+    {
+      "profile": "far",
+      "action": "search_common",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 231.8000000002794,
+      "requests": 1,
+      "transferredBytes": 69418
+    },
+    {
+      "profile": "far",
+      "action": "search_common",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 224.6999999997206,
+      "requests": 1,
+      "transferredBytes": 69418
+    },
+    {
+      "profile": "far",
+      "action": "search_common",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 223,
+      "requests": 1,
+      "transferredBytes": 69418
+    },
+    {
+      "profile": "mobile",
+      "action": "cold_start",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 2294,
+      "requests": 6,
+      "transferredBytes": 595109
+    },
+    {
+      "profile": "mobile",
+      "action": "cold_start",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 2300.899999999907,
+      "requests": 6,
+      "transferredBytes": 595109
+    },
+    {
+      "profile": "mobile",
+      "action": "cold_start",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 2281.3000000002794,
+      "requests": 6,
+      "transferredBytes": 595109
+    },
+    {
+      "profile": "mobile",
+      "action": "cold_start",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 2278.0999999996275,
+      "requests": 6,
+      "transferredBytes": 595109
+    },
+    {
+      "profile": "mobile",
+      "action": "cold_start",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 2299.5,
+      "requests": 6,
+      "transferredBytes": 595109
+    },
+    {
+      "profile": "mobile",
+      "action": "cold_start",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 2431.4000000003725,
+      "requests": 6,
+      "transferredBytes": 595109
+    },
+    {
+      "profile": "mobile",
+      "action": "cold_start",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 2329.5,
+      "requests": 6,
+      "transferredBytes": 595109
+    },
+    {
+      "profile": "mobile",
+      "action": "cold_start",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 2277,
+      "requests": 6,
+      "transferredBytes": 595109
+    },
+    {
+      "profile": "mobile",
+      "action": "cold_start",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 2295,
+      "requests": 6,
+      "transferredBytes": 595109
+    },
+    {
+      "profile": "mobile",
+      "action": "cold_start",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 2289.5,
+      "requests": 6,
+      "transferredBytes": 595109
+    },
+    {
+      "profile": "mobile",
+      "action": "cold_start",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 2277.8000000002794,
+      "requests": 6,
+      "transferredBytes": 595109
+    },
+    {
+      "profile": "mobile",
+      "action": "cold_start",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 2284.7999999998137,
+      "requests": 6,
+      "transferredBytes": 595109
+    },
+    {
+      "profile": "mobile",
+      "action": "cold_start",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 2327.899999999907,
+      "requests": 6,
+      "transferredBytes": 595109
+    },
+    {
+      "profile": "mobile",
+      "action": "cold_start",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 2277.5999999996275,
+      "requests": 6,
+      "transferredBytes": 595109
+    },
+    {
+      "profile": "mobile",
+      "action": "cold_start",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 2269.1999999997206,
+      "requests": 6,
+      "transferredBytes": 595109
+    },
+    {
+      "profile": "mobile",
+      "action": "cold_start",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 2281.5,
+      "requests": 6,
+      "transferredBytes": 595109
+    },
+    {
+      "profile": "mobile",
+      "action": "cold_start",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 2275.3000000002794,
+      "requests": 6,
+      "transferredBytes": 595109
+    },
+    {
+      "profile": "mobile",
+      "action": "inbox_load",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 1387.6999999997206,
+      "requests": 6,
+      "transferredBytes": 77172
+    },
+    {
+      "profile": "mobile",
+      "action": "inbox_load",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 1383.7999999998137,
+      "requests": 6,
+      "transferredBytes": 77172
+    },
+    {
+      "profile": "mobile",
+      "action": "inbox_load",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 1389.9000000003725,
+      "requests": 6,
+      "transferredBytes": 77172
+    },
+    {
+      "profile": "mobile",
+      "action": "inbox_load",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 1388.5,
+      "requests": 6,
+      "transferredBytes": 77172
+    },
+    {
+      "profile": "mobile",
+      "action": "inbox_load",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 1400.8999999994412,
+      "requests": 6,
+      "transferredBytes": 77172
+    },
+    {
+      "profile": "mobile",
+      "action": "inbox_load",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 1383.9000000003725,
+      "requests": 6,
+      "transferredBytes": 77172
+    },
+    {
+      "profile": "mobile",
+      "action": "inbox_load",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 1389.0999999996275,
+      "requests": 6,
+      "transferredBytes": 77172
+    },
+    {
+      "profile": "mobile",
+      "action": "inbox_load",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 1395.199999999255,
+      "requests": 6,
+      "transferredBytes": 77172
+    },
+    {
+      "profile": "mobile",
+      "action": "inbox_load",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 1397.2999999998137,
+      "requests": 6,
+      "transferredBytes": 77172
+    },
+    {
+      "profile": "mobile",
+      "action": "inbox_load",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 1400.699999999255,
+      "requests": 6,
+      "transferredBytes": 77172
+    },
+    {
+      "profile": "mobile",
+      "action": "inbox_load",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 1396.9000000003725,
+      "requests": 6,
+      "transferredBytes": 77172
+    },
+    {
+      "profile": "mobile",
+      "action": "inbox_load",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 1402.8999999994412,
+      "requests": 6,
+      "transferredBytes": 77172
+    },
+    {
+      "profile": "mobile",
+      "action": "inbox_load",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 1399.4000000003725,
+      "requests": 6,
+      "transferredBytes": 77172
+    },
+    {
+      "profile": "mobile",
+      "action": "inbox_load",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 1398.5999999996275,
+      "requests": 6,
+      "transferredBytes": 77172
+    },
+    {
+      "profile": "mobile",
+      "action": "inbox_load",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 1403.800000000745,
+      "requests": 6,
+      "transferredBytes": 77172
+    },
+    {
+      "profile": "mobile",
+      "action": "inbox_load",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 1385.1000000005588,
+      "requests": 6,
+      "transferredBytes": 77172
+    },
+    {
+      "profile": "mobile",
+      "action": "inbox_load",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 1396.5,
+      "requests": 6,
+      "transferredBytes": 77172
+    },
+    {
+      "profile": "mobile",
+      "action": "open_email",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 1499.4000000003725,
+      "requests": 2,
+      "transferredBytes": 510264
+    },
+    {
+      "profile": "mobile",
+      "action": "open_email",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 926.7999999998137,
+      "requests": 2,
+      "transferredBytes": 161577
+    },
+    {
+      "profile": "mobile",
+      "action": "open_email",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 711.5,
+      "requests": 2,
+      "transferredBytes": 37624
+    },
+    {
+      "profile": "mobile",
+      "action": "open_email",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 708.7000000001863,
+      "requests": 2,
+      "transferredBytes": 39932
+    },
+    {
+      "profile": "mobile",
+      "action": "open_email",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 790.0999999996275,
+      "requests": 2,
+      "transferredBytes": 73397
+    },
+    {
+      "profile": "mobile",
+      "action": "open_email",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 842.6000000005588,
+      "requests": 2,
+      "transferredBytes": 120170
+    },
+    {
+      "profile": "mobile",
+      "action": "open_email",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 860.3000000007451,
+      "requests": 2,
+      "transferredBytes": 130746
+    },
+    {
+      "profile": "mobile",
+      "action": "open_email",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 830.2000000001863,
+      "requests": 2,
+      "transferredBytes": 104076
+    },
+    {
+      "profile": "mobile",
+      "action": "open_email",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 914.4000000003725,
+      "requests": 2,
+      "transferredBytes": 156097
+    },
+    {
+      "profile": "mobile",
+      "action": "open_email",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 1023.7000000001863,
+      "requests": 2,
+      "transferredBytes": 218426
+    },
+    {
+      "profile": "mobile",
+      "action": "open_email",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 777.8999999994412,
+      "requests": 2,
+      "transferredBytes": 65302
+    },
+    {
+      "profile": "mobile",
+      "action": "open_email",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 709.9000000003725,
+      "requests": 2,
+      "transferredBytes": 32338
+    },
+    {
+      "profile": "mobile",
+      "action": "open_email",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 760.7000000001863,
+      "requests": 2,
+      "transferredBytes": 69202
+    },
+    {
+      "profile": "mobile",
+      "action": "open_email",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 745.6999999992549,
+      "requests": 2,
+      "transferredBytes": 51818
+    },
+    {
+      "profile": "mobile",
+      "action": "open_email",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 710.2000000001863,
+      "requests": 2,
+      "transferredBytes": 37254
+    },
+    {
+      "profile": "mobile",
+      "action": "open_email",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 886.5,
+      "requests": 2,
+      "transferredBytes": 135743
+    },
+    {
+      "profile": "mobile",
+      "action": "open_email",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 828,
+      "requests": 2,
+      "transferredBytes": 103208
+    },
+    {
+      "profile": "mobile",
+      "action": "next_email",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 976.5999999996275,
+      "requests": 2,
+      "transferredBytes": 194573
+    },
+    {
+      "profile": "mobile",
+      "action": "next_email",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 1260.3999999994412,
+      "requests": 2,
+      "transferredBytes": 374974
+    },
+    {
+      "profile": "mobile",
+      "action": "next_email",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 1009.5,
+      "requests": 2,
+      "transferredBytes": 222214
+    },
+    {
+      "profile": "mobile",
+      "action": "next_email",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 861.2999999998137,
+      "requests": 2,
+      "transferredBytes": 118496
+    },
+    {
+      "profile": "mobile",
+      "action": "next_email",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 723.7000000001863,
+      "requests": 2,
+      "transferredBytes": 46246
+    },
+    {
+      "profile": "mobile",
+      "action": "next_email",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 710.4000000003725,
+      "requests": 2,
+      "transferredBytes": 37500
+    },
+    {
+      "profile": "mobile",
+      "action": "next_email",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 810.4000000003725,
+      "requests": 2,
+      "transferredBytes": 102580
+    },
+    {
+      "profile": "mobile",
+      "action": "next_email",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 867.3999999994412,
+      "requests": 2,
+      "transferredBytes": 128899
+    },
+    {
+      "profile": "mobile",
+      "action": "next_email",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 908.4000000003725,
+      "requests": 2,
+      "transferredBytes": 161577
+    },
+    {
+      "profile": "mobile",
+      "action": "next_email",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 709.4000000003725,
+      "requests": 2,
+      "transferredBytes": 37624
+    },
+    {
+      "profile": "mobile",
+      "action": "next_email",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 710.2000000001863,
+      "requests": 2,
+      "transferredBytes": 39932
+    },
+    {
+      "profile": "mobile",
+      "action": "next_email",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 776,
+      "requests": 2,
+      "transferredBytes": 73397
+    },
+    {
+      "profile": "mobile",
+      "action": "next_email",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 861.2000000001863,
+      "requests": 2,
+      "transferredBytes": 120170
+    },
+    {
+      "profile": "mobile",
+      "action": "next_email",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 892.1000000005588,
+      "requests": 2,
+      "transferredBytes": 130746
+    },
+    {
+      "profile": "mobile",
+      "action": "next_email",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 826.0999999996275,
+      "requests": 2,
+      "transferredBytes": 104072
+    },
+    {
+      "profile": "mobile",
+      "action": "next_email",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 937.7000000001863,
+      "requests": 2,
+      "transferredBytes": 156097
+    },
+    {
+      "profile": "mobile",
+      "action": "next_email",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 994.5,
+      "requests": 2,
+      "transferredBytes": 218426
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 31,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 29,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 28.100000000558794,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 28.799999999813735,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 27,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": 3,
+      "warmup": false,
+      "ms": null,
+      "requests": null,
+      "transferredBytes": null,
+      "error": "page.waitForFunction: Timeout 30000ms exceeded."
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 29.90000000037253,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 26.90000000037253,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 31.200000000186265,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 31.5,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 22.300000000745058,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 28.200000000186265,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 28.5,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 31.299999999813735,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": 12,
+      "warmup": false,
+      "ms": null,
+      "requests": null,
+      "transferredBytes": null,
+      "error": "page.waitForFunction: Timeout 30000ms exceeded."
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 28.799999999813735,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 28,
+      "requests": 0,
+      "transferredBytes": 0
+    },
+    {
+      "profile": "mobile",
+      "action": "search_rare",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 402.3999999994412,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "mobile",
+      "action": "search_rare",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 375.70000000018626,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "mobile",
+      "action": "search_rare",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 375.70000000018626,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "mobile",
+      "action": "search_rare",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 379.79999999981374,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "mobile",
+      "action": "search_rare",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 379.09999999962747,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "mobile",
+      "action": "search_rare",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 374.6000000005588,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "mobile",
+      "action": "search_rare",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 377,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "mobile",
+      "action": "search_rare",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 378.09999999962747,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "mobile",
+      "action": "search_rare",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 372.09999999962747,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "mobile",
+      "action": "search_rare",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 378,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "mobile",
+      "action": "search_rare",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 375.5,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "mobile",
+      "action": "search_rare",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 376,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "mobile",
+      "action": "search_rare",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 382,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "mobile",
+      "action": "search_rare",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 376.20000000018626,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "mobile",
+      "action": "search_rare",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 372.6000000005588,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "mobile",
+      "action": "search_rare",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 378.30000000074506,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "mobile",
+      "action": "search_rare",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 376.5,
+      "requests": 1,
+      "transferredBytes": 23770
+    },
+    {
+      "profile": "mobile",
+      "action": "search_common",
+      "iteration": -2,
+      "warmup": true,
+      "ms": 462.70000000018626,
+      "requests": 1,
+      "transferredBytes": 69416
+    },
+    {
+      "profile": "mobile",
+      "action": "search_common",
+      "iteration": -1,
+      "warmup": true,
+      "ms": 464.5,
+      "requests": 1,
+      "transferredBytes": 69416
+    },
+    {
+      "profile": "mobile",
+      "action": "search_common",
+      "iteration": 0,
+      "warmup": false,
+      "ms": 460.8999999994412,
+      "requests": 1,
+      "transferredBytes": 69416
+    },
+    {
+      "profile": "mobile",
+      "action": "search_common",
+      "iteration": 1,
+      "warmup": false,
+      "ms": 461.09999999962747,
+      "requests": 1,
+      "transferredBytes": 69416
+    },
+    {
+      "profile": "mobile",
+      "action": "search_common",
+      "iteration": 2,
+      "warmup": false,
+      "ms": 458.6000000005588,
+      "requests": 1,
+      "transferredBytes": 69416
+    },
+    {
+      "profile": "mobile",
+      "action": "search_common",
+      "iteration": 3,
+      "warmup": false,
+      "ms": 466.70000000018626,
+      "requests": 1,
+      "transferredBytes": 69416
+    },
+    {
+      "profile": "mobile",
+      "action": "search_common",
+      "iteration": 4,
+      "warmup": false,
+      "ms": 453.3999999994412,
+      "requests": 1,
+      "transferredBytes": 69416
+    },
+    {
+      "profile": "mobile",
+      "action": "search_common",
+      "iteration": 5,
+      "warmup": false,
+      "ms": 459.3999999994412,
+      "requests": 1,
+      "transferredBytes": 69416
+    },
+    {
+      "profile": "mobile",
+      "action": "search_common",
+      "iteration": 6,
+      "warmup": false,
+      "ms": 460.29999999981374,
+      "requests": 1,
+      "transferredBytes": 69416
+    },
+    {
+      "profile": "mobile",
+      "action": "search_common",
+      "iteration": 7,
+      "warmup": false,
+      "ms": 462.80000000074506,
+      "requests": 1,
+      "transferredBytes": 69416
+    },
+    {
+      "profile": "mobile",
+      "action": "search_common",
+      "iteration": 8,
+      "warmup": false,
+      "ms": 449,
+      "requests": 1,
+      "transferredBytes": 69416
+    },
+    {
+      "profile": "mobile",
+      "action": "search_common",
+      "iteration": 9,
+      "warmup": false,
+      "ms": 457,
+      "requests": 1,
+      "transferredBytes": 69416
+    },
+    {
+      "profile": "mobile",
+      "action": "search_common",
+      "iteration": 10,
+      "warmup": false,
+      "ms": 450.79999999981374,
+      "requests": 1,
+      "transferredBytes": 69416
+    },
+    {
+      "profile": "mobile",
+      "action": "search_common",
+      "iteration": 11,
+      "warmup": false,
+      "ms": 455.1000000005588,
+      "requests": 1,
+      "transferredBytes": 69416
+    },
+    {
+      "profile": "mobile",
+      "action": "search_common",
+      "iteration": 12,
+      "warmup": false,
+      "ms": 467.69999999925494,
+      "requests": 1,
+      "transferredBytes": 69416
+    },
+    {
+      "profile": "mobile",
+      "action": "search_common",
+      "iteration": 13,
+      "warmup": false,
+      "ms": 460.79999999981374,
+      "requests": 1,
+      "transferredBytes": 69416
+    },
+    {
+      "profile": "mobile",
+      "action": "search_common",
+      "iteration": 14,
+      "warmup": false,
+      "ms": 462.20000000018626,
+      "requests": 1,
+      "transferredBytes": 69416
+    }
+  ],
+  "failures": [
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": 5,
+      "warmup": false,
+      "ms": null,
+      "requests": null,
+      "transferredBytes": null,
+      "error": "page.waitForFunction: Timeout 30000ms exceeded."
+    },
+    {
+      "profile": "lan",
+      "action": "archive",
+      "iteration": 9,
+      "warmup": false,
+      "ms": null,
+      "requests": null,
+      "transferredBytes": null,
+      "error": "page.waitForFunction: Timeout 30000ms exceeded."
+    },
+    {
+      "profile": "broadband",
+      "action": "archive",
+      "iteration": 5,
+      "warmup": false,
+      "ms": null,
+      "requests": null,
+      "transferredBytes": null,
+      "error": "page.waitForFunction: Timeout 30000ms exceeded."
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": 3,
+      "warmup": false,
+      "ms": null,
+      "requests": null,
+      "transferredBytes": null,
+      "error": "page.waitForFunction: Timeout 30000ms exceeded."
+    },
+    {
+      "profile": "mobile",
+      "action": "archive",
+      "iteration": 12,
+      "warmup": false,
+      "ms": null,
+      "requests": null,
+      "transferredBytes": null,
+      "error": "page.waitForFunction: Timeout 30000ms exceeded."
+    }
+  ]
+}
