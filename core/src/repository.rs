@@ -332,7 +332,6 @@ impl Repository {
 
     pub async fn fail_mutation(&self, id: Uuid, error: &str) -> Result<()> {
         let mut tx = self.0.begin_with("BEGIN IMMEDIATE").await?;
-        let mut tx = self.0.begin_with("BEGIN IMMEDIATE").await?;
         let row = sqlx::query("update mutation_outbox set status=case when attempts>=12 or json_extract(payload,'$.sendAttemptedAt') is not null then 'failed' else 'pending' end,
           next_attempt_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now','+' || min(3600,1 << min(attempts,12)) || ' seconds'),
           last_error=case when json_extract(payload,'$.sendAttemptedAt') is not null then 'Delivery may have succeeded. Automatic resend blocked; check Sent before retrying. ' || ?2 else ?2 end
@@ -351,7 +350,6 @@ impl Repository {
                   .bind(payload).execute(&mut *tx).await?;
             }
         }
-        tx.commit().await?;
         crate::live::notify_changed(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
@@ -385,6 +383,7 @@ impl Repository {
         sqlx::query("insert into sync_cursors(account_id,cursor,backfill_complete,last_successful_at,updated_at) values(?1,?2,?3,strftime('%Y-%m-%dT%H:%M:%f000Z','now'),strftime('%Y-%m-%dT%H:%M:%f000Z','now')) on conflict(account_id) do update set cursor=excluded.cursor,backfill_complete=excluded.backfill_complete,last_successful_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now'),updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
             .bind(id).bind(cursor).bind(backfill_complete).execute(&mut *tx).await?;
         sqlx::query("update accounts set status='active',last_synced_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now'),last_error=null,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') where id=?1").bind(id).execute(&mut *tx).await?;
+        crate::live::notify_changed(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -443,11 +442,16 @@ impl Repository {
             })
             .transpose()?;
         let deleted = view == "trash";
-        let sql = format!("with conversations as (select {SELECT},row_number() over(partition by m.thread_id order by m.received_at desc,m.id desc) thread_rank
+        let newer_condition = condition.replace("m.", "newer.").replace("c.", "nc.");
+        let sql = format!("with page as materialized (select m.id,m.thread_id,m.received_at
           from messages m join accounts a on a.id=m.account_id left join classifications c on c.message_id=m.id
-          where not m.tombstone and m.deleted={deleted} and {condition} and (?1 is null or m.account_id=?1)),
-          page as (select * from conversations where thread_rank=1 and (?2 is null or (received_at,id)<(?2,?3)) order by received_at desc,id desc limit ?4)
-          select page.*,{} from page order by received_at desc,id desc",metadata(deleted));
+          where not m.tombstone and m.deleted={deleted} and {condition} and (?1 is null or m.account_id=?1)
+          and not exists(select 1 from messages newer left join classifications nc on nc.message_id=newer.id
+            where newer.thread_id=m.thread_id and not newer.tombstone and newer.deleted={deleted} and {newer_condition}
+            and (?1 is null or newer.account_id=?1) and (newer.received_at,newer.id)>(m.received_at,m.id))
+          and (?2 is null or (m.received_at,m.id)<(?2,?3)) order by m.received_at desc,m.id desc limit ?4)
+          select {SELECT},{} from page join messages m on m.id=page.id join accounts a on a.id=m.account_id
+          left join classifications c on c.message_id=m.id order by page.received_at desc,page.id desc",metadata(deleted));
         let mut rows = sqlx::query(&sql)
             .bind(input.account_id)
             .bind(received.map(crate::db::timestamp))
@@ -496,7 +500,8 @@ impl Repository {
         );
         let revision = "coalesce(revisions.revision,'')";
         let hit = format!("coalesce(json_extract(cached.value,'$.r')={revision},false)");
-        let query = format!("select {selection},m.archived,m.deleted,c.message_id is not null classified,m.to_addresses,m.cc_addresses,m.bcc_addresses,m.sent_at,m.internet_message_id,
+        let query = format!("with cached_values as materialized (select key,value from json_each(?2))
+          select {selection},m.archived,m.deleted,c.message_id is not null classified,m.to_addresses,m.cc_addresses,m.bcc_addresses,m.sent_at,m.internet_message_id,
           case when {include} then m.text_body else '' end text_body,
           case when {include} then m.html_body end html_body,({include}) body_available,
           case when {hit} then null else m.text_body end hash_text_body,
@@ -506,7 +511,7 @@ impl Repository {
           m.received_at sort_received_at
           from messages m join accounts a on a.id=m.account_id left join classifications c on c.message_id=m.id
           left join sent_body_revisions revisions on revisions.message_id=m.id
-          left join json_each(?2) cached on cached.key=m.id
+          left join cached_values cached on cached.key=m.id
           where not m.tombstone and (?1 is null or m.id in (select value from json_each(?1))) order by m.id");
         let mut tx = self.0.begin().await?;
         let rows = sqlx::query(&query)
@@ -528,10 +533,16 @@ impl Repository {
                     json!(row.get::<Option<String>, _>("hash_plain_text")),
                 ];
                 let input = format!("[{}, {}, {}]", body[0], body[1], body[2]);
-                let version = if row.get::<bool,_>("body_cache_hit") {
-                    row.get::<String,_>("cached_version")
-                } else { format!("{:x}", Sha256::digest(input.as_bytes())) };
-                versions.push((row.get::<Uuid,_>("id"), row.get::<String,_>("source_revision"), version.clone()));
+                let version = if row.get::<bool, _>("body_cache_hit") {
+                    row.get::<String, _>("cached_version")
+                } else {
+                    format!("{:x}", Sha256::digest(input.as_bytes()))
+                };
+                versions.push((
+                    row.get::<Uuid, _>("id"),
+                    row.get::<String, _>("source_revision"),
+                    version.clone(),
+                ));
                 value["bodyVersion"] = json!(version);
                 value["bodyAvailable"] = json!(row.get::<bool, _>("body_available"));
                 value["sortReceivedAt"] = json!(
@@ -693,10 +704,10 @@ impl Repository {
         let mut tx = self.0.begin().await?;
         let row = if let Some(id) = input.id {
             sqlx::query("update drafts set account_id=?1,to_addresses=?2,cc_addresses=?3,bcc_addresses=?4,subject=?5,body=?6,reply_to_message_id=?7,forward_of_message_id=?8,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') where id=?9 returning *")
-                .bind(input.account_id).bind(json!(input.to)).bind(json!(input.cc)).bind(json!(input.bcc)).bind(input.subject).bind(input.body).bind(input.reply_to_message_id).bind(input.forward_of_message_id).bind(id).fetch_optional(&self.0).await?.context("Draft not found")?
+                .bind(input.account_id).bind(json!(input.to)).bind(json!(input.cc)).bind(json!(input.bcc)).bind(input.subject).bind(input.body).bind(input.reply_to_message_id).bind(input.forward_of_message_id).bind(id).fetch_optional(&mut *tx).await?.context("Draft not found")?
         } else {
             sqlx::query("insert into drafts(account_id,to_addresses,cc_addresses,bcc_addresses,subject,body,reply_to_message_id,forward_of_message_id,id) values(?1,?2,?3,?4,?5,?6,?7,?8,?9) returning *")
-                .bind(input.account_id).bind(json!(input.to)).bind(json!(input.cc)).bind(json!(input.bcc)).bind(input.subject).bind(input.body).bind(input.reply_to_message_id).bind(input.forward_of_message_id).bind(Uuid::new_v4()).fetch_one(&self.0).await?
+                .bind(input.account_id).bind(json!(input.to)).bind(json!(input.cc)).bind(json!(input.bcc)).bind(input.subject).bind(input.body).bind(input.reply_to_message_id).bind(input.forward_of_message_id).bind(Uuid::new_v4()).fetch_one(&mut *tx).await?
         };
         crate::live::notify_changed(&mut *tx).await?;
         tx.commit().await?;
@@ -704,6 +715,7 @@ impl Repository {
     }
 
     pub async fn delete_draft(&self, id: Uuid) -> Result<()> {
+        let mut tx = self.0.begin_with("BEGIN IMMEDIATE").await?;
         sqlx::query("delete from drafts where id=?1")
             .bind(id)
             .execute(&mut *tx)
@@ -720,7 +732,7 @@ impl Repository {
         let mut tx = self.0.begin().await?;
         if let Some(tier) = tier {
             sqlx::query("insert into classifications(message_id,model_tier,manual_tier,reasoning,model,prompt_version) values(?1,1,?2,'Manual classification before model result','manual','manual') on conflict(message_id) do update set manual_tier=excluded.manual_tier,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
-                .bind(id).bind(tier).execute(&self.0).await?;
+                .bind(id).bind(tier).execute(&mut *tx).await?;
         } else {
             sqlx::query(
                 "update classifications set manual_tier=null,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') where message_id=?1",

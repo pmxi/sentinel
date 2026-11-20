@@ -31,6 +31,8 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS messages_thread_idx ON messages(thread_id, received_at);
 CREATE INDEX IF NOT EXISTS messages_received_idx ON messages(received_at DESC);
+CREATE INDEX messages_list_idx ON messages(deleted,received_at DESC,id DESC,thread_id,account_id,direction,archived) WHERE NOT tombstone;
+CREATE INDEX messages_list_thread_idx ON messages(thread_id,deleted,received_at DESC,id DESC,account_id,direction,archived) WHERE NOT tombstone;
 CREATE VIRTUAL TABLE messages_search USING fts5(subject, addresses, text_body, tokenize='porter unicode61');
 CREATE TRIGGER messages_search_insert AFTER INSERT ON messages BEGIN
   INSERT INTO messages_search(rowid,subject,addresses,text_body) VALUES(new.rowid,new.subject,new.from_addresses || ' ' || new.to_addresses,new.text_body);
@@ -84,6 +86,7 @@ CREATE TABLE IF NOT EXISTS mutation_outbox (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')), completed_at TEXT
 );
 CREATE INDEX IF NOT EXISTS mutation_outbox_pending_idx ON mutation_outbox(status, next_attempt_at);
+CREATE INDEX mutation_outbox_message_idx ON mutation_outbox(message_id,status);
 CREATE TABLE IF NOT EXISTS worker_state (
   name text PRIMARY KEY NOT NULL, heartbeat_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')), metadata TEXT NOT NULL DEFAULT '{}' CHECK(json_valid(metadata))
 );
@@ -96,6 +99,12 @@ CREATE TABLE sent_body_revisions (
   message_id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
   revision TEXT NOT NULL
 );
+CREATE TABLE sent_live_signal (id INTEGER PRIMARY KEY CHECK(id=1),revision INTEGER NOT NULL);
+INSERT INTO sent_live_signal VALUES(1,0);
+CREATE TABLE sent_live_revocations (session TEXT PRIMARY KEY NOT NULL,expires INTEGER NOT NULL);
+CREATE TRIGGER sent_live_revocations_expire AFTER INSERT ON sent_live_revocations BEGIN
+  DELETE FROM sent_live_revocations WHERE expires<strftime('%s','now');
+END;
 CREATE TRIGGER messages_revision_insert AFTER INSERT ON messages BEGIN
   INSERT INTO sent_body_revisions VALUES(new.id,lower(hex(randomblob(16))));
 END;

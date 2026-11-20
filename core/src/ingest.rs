@@ -87,8 +87,9 @@ impl Repository {
         display_name: &str,
         encrypted_credentials: &str,
     ) -> Result<Uuid> {
+        let mut tx = self.0.begin_with("BEGIN IMMEDIATE").await?;
         let row=sqlx::query("insert into accounts(provider,email,display_name,encrypted_credentials,status,updated_at,id) values(?1,?2,?3,?4,'active',strftime('%Y-%m-%dT%H:%M:%f000Z','now'),?5) on conflict(provider,email) do update set display_name=excluded.display_name,encrypted_credentials=excluded.encrypted_credentials,status='active',last_error=null,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') returning id")
-            .bind(provider).bind(email.to_lowercase()).bind(display_name).bind(encrypted_credentials).bind(Uuid::new_v4()).fetch_one(&self.0).await?;
+            .bind(provider).bind(email.to_lowercase()).bind(display_name).bind(encrypted_credentials).bind(Uuid::new_v4()).fetch_one(&mut *tx).await?;
         let id: Uuid = row.get("id");
         sqlx::query("insert into sync_cursors(account_id) values(?1) on conflict do nothing")
             .bind(id)
@@ -154,10 +155,10 @@ impl Repository {
 
     pub async fn tombstone_messages(&self, account_id: Uuid, ids: &[String]) -> Result<()> {
         if !ids.is_empty() {
-        let mut tx = self.0.begin_with("BEGIN IMMEDIATE").await?;
+            let mut tx = self.0.begin_with("BEGIN IMMEDIATE").await?;
             sqlx::query("update messages set tombstone=true,deleted=true,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') where account_id=?1 and provider_message_id in (select value from json_each(?2))").bind(account_id).bind(json!(ids)).execute(&mut *tx).await?;
-        crate::live::notify_changed(&mut *tx).await?;
-        tx.commit().await?;
+            crate::live::notify_changed(&mut *tx).await?;
+            tx.commit().await?;
         }
         Ok(())
     }

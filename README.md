@@ -549,22 +549,26 @@ non-default port. Requests without that Origin or a valid cookie are rejected;
 HTTP bearer tokens alone cannot open a socket. Logout closes the session's
 sockets, including other tabs, and expiry closes them without waiting for a
 subsequent API request. Logout revocations are kept in memory until JWT expiry
-and broadcast to other server processes; this does not add a persistent session
-table to the existing stateless authentication system.
+and shared through an expiry-pruned SQLite revocation table. Only opaque session
+keys and expiry times are stored, not cookies or credentials.
 
-Rust ingest/sync, classification, outbox results and API writes call `pg_notify`
-in their committing transaction. There are no migrations or triggers. Each
-server process holds one reconnecting LISTEN connection, coalesces bursts for
+Rust ingest/sync, classification, outbox results and API writes keep their
+transactional `live::notify_changed` calls. Each server holds a dedicated SQLite
+connection and polls `PRAGMA data_version` every 150 ms, so commits by the separate
+worker process also wake connected clients. Rolled-back transactions do not
+signal. The server reconnects on database errors, coalesces bursts for
 50 ms and reads a committed inventory once per batch. It fans out a shared-cursor
 delta when it fits (32 upserts, 512 removals and 64 KiB), otherwise a cursor hint.
 The replayable HTTP delta feed remains authoritative: a cursor mismatch or
 expired generation causes catch-up or a background resnapshot, not skipped rows.
 
-Repeated inventories memoize the existing body SHA-256 using SQLite tuple
-MVCC versions, transaction epoch and server start time. The cache contains at
+Repeated inventories memoize the existing body SHA-256 using transactionally
+maintained per-message revision tokens. Triggers invalidate them on message or
+classification changes, including direct SQL edits and classification deletion.
+The cache contains at
 most 65,536 digests per process, not body text. Body hashes and HTTP JSON remain
 unchanged; even SQL edits that omit `updated_at` invalidate a cached digest.
-LISTEN reconnect clears the memo, and inventories publish in database-read order.
+Database reconnect clears the memo, and inventories publish in database-read order.
 The first inventory after a cold start/reconnect still hashes the full body corpus.
 
 Push and polling are serialized before applying SQLite/cache updates. While the
@@ -576,7 +580,7 @@ Both paths respect pending optimistic writes. Heartbeats run every 20 seconds
 with a 45-second idle deadline. The server caps connections at eight per session
 and 128 total, incoming frames at 16 KiB/32 messages per second, and write buffers
 at 128 KiB. Sends time out after five seconds; latest-only notification queues
-bound slow-client backpressure. Losing LISTEN closes sockets so clients poll
+bound slow-client backpressure. Losing the database poller closes sockets so clients poll
 until the single connection recovers.
 
 For nginx, forward the upgrade explicitly (the ordinary HTTP location can stay
@@ -596,13 +600,14 @@ location = /api/live {
 Use the external HTTPS origin for `SENT_PUBLIC_URL` when nginx terminates TLS.
 If Upgrade is not forwarded, the UI keeps using four-second HTTP delta polling.
 After release/web builds, the isolated live check exercises push, two-tab
-archive, authentication, expiry/logout, reconnect, connection limits, LISTEN
+archive, authentication, expiry/logout, reconnect, connection limits, database
 recovery, workerless operation and an Upgrade-stripping reverse proxy:
 
 ```sh
+# This legacy launcher still requires PostgreSQL and is not SQLite-compatible:
 SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_live node web/scripts/live-check.mjs
 ```
 
-It resets only the named local `sent_test_*` database and terminates only its own
+The unchanged legacy launcher resets only the named local `sent_test_*` database and terminates only its own
 LISTEN connection to simulate disconnect/recovery, not the shared Postgres server.
 Screenshots and logs are saved under `~/live-check/`.

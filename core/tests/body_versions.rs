@@ -1,21 +1,17 @@
 use anyhow::Result;
+use sent_core::db::Uuid;
 use sent_core::{
     db,
     repository::{BodyVersionCache, Repository},
 };
-use uuid::Uuid;
 
 #[tokio::test]
 async fn cached_body_versions_follow_committed_mvcc_rows_without_timestamp_assumptions()
 -> Result<()> {
-    let Ok(url) = std::env::var("SENT_TEST_DATABASE_URL") else {
-        return Ok(());
-    };
-    anyhow::ensure!(
-        reqwest::Url::parse(&url)?.path().starts_with("/sent_test_"),
-        "Use an isolated sent_test_* database"
-    );
-    let pool = db::pool(&url, true).await?;
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("body-versions.sqlite");
+    let url = path.to_str().unwrap();
+    let pool = db::pool(url, true).await?;
     db::migrate(
         &pool,
         &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../migrations"),
@@ -26,9 +22,9 @@ async fn cached_body_versions_follow_committed_mvcc_rows_without_timestamp_assum
     let thread = Uuid::new_v4();
     let id = Uuid::new_v4();
     let ids = [id];
-    sqlx::query("insert into accounts(id,provider,email,encrypted_credentials) values($1,'microsoft',$2,'test')").bind(account).bind(format!("{account}@test")).execute(&pool).await?;
-    sqlx::query("insert into threads(id,account_id,provider_thread_id,last_message_at) values($1,$2,$1::text,now())").bind(thread).bind(account).execute(&pool).await?;
-    sqlx::query("insert into messages(id,account_id,thread_id,provider_message_id,received_at,text_body,direction) values($1,$2,$3,$1::text,now(),'Original','inbound')").bind(id).bind(account).bind(thread).execute(&pool).await?;
+    sqlx::query("insert into accounts(id,provider,email,encrypted_credentials) values(?1,'microsoft',?2,'test')").bind(account).bind(format!("{account}@test")).execute(&pool).await?;
+    sqlx::query("insert into threads(id,account_id,provider_thread_id,last_message_at) values(?1,?2,?1,strftime('%Y-%m-%dT%H:%M:%f000Z','now'))").bind(thread).bind(account).execute(&pool).await?;
+    sqlx::query("insert into messages(id,account_id,thread_id,provider_message_id,received_at,text_body,direction) values(?1,?2,?3,?1,strftime('%Y-%m-%dT%H:%M:%f000Z','now'),'Original','inbound')").bind(id).bind(account).bind(thread).execute(&pool).await?;
     let mut cache = BodyVersionCache::default();
     let first = repo
         .replica_inventory_cached(Some(&ids), false, &mut cache)
@@ -43,7 +39,7 @@ async fn cached_body_versions_follow_committed_mvcc_rows_without_timestamp_assum
         first.messages[0]["bodyVersion"]
     );
     assert_eq!(same.messages[0]["textBody"], "Original");
-    sqlx::query("update messages set read=true where id=$1")
+    sqlx::query("update messages set read=true where id=?1")
         .bind(id)
         .execute(&pool)
         .await?;
@@ -56,7 +52,7 @@ async fn cached_body_versions_follow_committed_mvcc_rows_without_timestamp_assum
         first.messages[0]["bodyVersion"]
     );
     let mut tx = pool.begin().await?;
-    sqlx::query("update messages set text_body='Uncommitted' where id=$1")
+    sqlx::query("update messages set text_body='Uncommitted' where id=?1")
         .bind(id)
         .execute(&mut *tx)
         .await?;
@@ -69,7 +65,7 @@ async fn cached_body_versions_follow_committed_mvcc_rows_without_timestamp_assum
         first.messages[0]["bodyVersion"]
     );
     tx.rollback().await?;
-    sqlx::query("update messages set text_body='Changed without updated_at' where id=$1")
+    sqlx::query("update messages set text_body='Changed without updated_at' where id=?1")
         .bind(id)
         .execute(&pool)
         .await?;
@@ -81,7 +77,7 @@ async fn cached_body_versions_follow_committed_mvcc_rows_without_timestamp_assum
         changed.messages[0]["bodyVersion"],
         first.messages[0]["bodyVersion"]
     );
-    sqlx::query("insert into classifications(message_id,model_tier,reasoning,model,prompt_version,plain_text) values($1,1,'test','test','test','Cleaned')").bind(id).execute(&pool).await?;
+    sqlx::query("insert into classifications(message_id,model_tier,reasoning,model,prompt_version,plain_text) values(?1,1,'test','test','test','Cleaned')").bind(id).execute(&pool).await?;
     let classified = repo
         .replica_inventory_cached(Some(&ids), false, &mut cache)
         .await?;
@@ -98,7 +94,7 @@ async fn cached_body_versions_follow_committed_mvcc_rows_without_timestamp_assum
             .is_err()
     );
     assert_eq!(cache.computed(), 1);
-    let pool = db::pool(&url, true).await?;
+    let pool = db::pool(url, true).await?;
     let repo = Repository(pool.clone());
     let resumed = repo
         .replica_inventory_cached(Some(&ids), false, &mut cache)
@@ -117,7 +113,7 @@ async fn cached_body_versions_follow_committed_mvcc_rows_without_timestamp_assum
     repo.replica_inventory_cached(Some(&ids), false, &mut cache)
         .await?;
     assert_eq!(cache.computed(), 1);
-    sqlx::query("delete from messages where id=$1")
+    sqlx::query("delete from messages where id=?1")
         .bind(id)
         .execute(&pool)
         .await?;
@@ -127,11 +123,11 @@ async fn cached_body_versions_follow_committed_mvcc_rows_without_timestamp_assum
             .messages
             .is_empty()
     );
-    sqlx::query("delete from threads where id=$1")
+    sqlx::query("delete from threads where id=?1")
         .bind(thread)
         .execute(&pool)
         .await?;
-    sqlx::query("delete from accounts where id=$1")
+    sqlx::query("delete from accounts where id=?1")
         .bind(account)
         .execute(&pool)
         .await?;

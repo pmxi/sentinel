@@ -8,9 +8,8 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use chrono::Utc;
-use sent_core::{live::CHANNEL, repository::ReplicaInventory};
+use sent_core::repository::ReplicaInventory;
 use serde_json::{Value, json};
-use sqlx::postgres::PgListener;
 use std::{
     collections::HashMap,
     sync::{
@@ -137,30 +136,27 @@ pub fn start(state: Arc<State>) {
     tokio::spawn(async move {
         let mut backoff = 1;
         loop {
-            let result = async {
-                let mut listener = PgListener::connect_with(&state.repository.0).await?;
-                listener.listen(CHANNEL).await?;
-                listener.eager_reconnect(false);
+            let result: Result<(),sqlx::Error> = async {
+                let mut listener = state.repository.0.acquire().await?;
+                let mut version: i64 = sqlx::query_scalar("pragma data_version").fetch_one(&mut *listener).await?;
                 state.clear_inventory_cache().await;
                 state.live.availability(true);
                 state.live.changed.notify_one();
                 backoff = 1;
+                let mut ticks = tokio::time::interval(Duration::from_millis(150));
                 loop {
-                    match listener.try_recv().await? {
-                        Some(notification) => {
-                            if let Ok(value) = serde_json::from_str::<Value>(notification.payload())
-                                && let (Some(key), Some(expires)) =
-                                    (value["logout"].as_str(), value["expires"].as_i64())
-                            {
-                                state.live.revoke(key.to_owned(), expires);
-                            } else {
-                                state.live.changed.notify_one();
-                            }
+                    ticks.tick().await;
+                    let current: i64 = sqlx::query_scalar("pragma data_version").fetch_one(&mut *listener).await?;
+                    let revocations: Vec<(String,i64)> = sqlx::query_as("select session,expires from sent_live_revocations where expires>strftime('%s','now')").fetch_all(&mut *listener).await?;
+                    for (key, expires) in revocations {
+                        let known = state.live.revoked.lock().unwrap().contains_key(&key);
+                        if !known {
+                            state.live.revoke(key, expires);
                         }
-                        None => {
-                            state.live.availability(false);
-                            return Ok::<_, sqlx::Error>(());
-                        }
+                    }
+                    if current != version {
+                        version = current;
+                        state.live.changed.notify_one();
                     }
                 }
             }
@@ -480,5 +476,71 @@ mod tests {
                 .await
                 .is_ok()
         );
+    }
+
+    #[tokio::test]
+    async fn sqlite_poller_fans_out_commits_from_an_independent_worker_pool() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("live.sqlite");
+        let pool = sent_core::db::pool(path.to_str().unwrap(), true)
+            .await
+            .unwrap();
+        sent_core::db::migrate(
+            &pool,
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../migrations"),
+        )
+        .await
+        .unwrap();
+        let state = Arc::new(State::new(
+            sent_core::config::Config::from_env().unwrap(),
+            sent_core::repository::Repository(pool),
+        ));
+        let mut updates = state.live.updates.subscribe();
+        start(state.clone());
+        tokio::time::timeout(Duration::from_secs(3), updates.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(&*updates.borrow_and_update(), Update::Changed { inventory, .. } if inventory.accounts.is_empty())
+        );
+        let worker = sent_core::repository::Repository(
+            sent_core::db::pool(path.to_str().unwrap(), true)
+                .await
+                .unwrap(),
+        );
+        worker
+            .upsert_account("gmail", "fixture@example.test", "Fixture", "test")
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), updates.changed())
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            matches!(&*updates.borrow_and_update(), Update::Changed { inventory, .. } if inventory.accounts.len() == 1)
+        );
+        let mut tx = worker.0.begin().await.unwrap();
+        sent_core::live::notify_changed(&mut *tx).await.unwrap();
+        tx.rollback().await.unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(350), updates.changed())
+                .await
+                .is_err()
+        );
+        let session = auth::Session {
+            key: "opaque-fixture-session".into(),
+            expires: Utc::now().timestamp() + 60,
+        };
+        sent_core::live::notify_logout(&worker.0, &session.key, session.expires)
+            .await
+            .unwrap();
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while state.live.valid(&session) {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .unwrap();
     }
 }

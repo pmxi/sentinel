@@ -1,5 +1,5 @@
 use anyhow::Result;
-use sqlx::{Executor, Postgres};
+use sqlx::{Executor, Sqlite};
 
 pub const CHANNEL: &str = "sent_mailbox_changed";
 
@@ -21,22 +21,20 @@ pub async fn revoke_session(pool: &sqlx::PgPool, session: &str, expires: i64) ->
     Ok(())
 }
 
-pub async fn notify_changed<'e>(executor: impl Executor<'e, Database = Postgres>) -> Result<()> {
-    sqlx::query("select pg_notify($1,'changed')")
-        .bind(CHANNEL)
+pub async fn notify_changed<'e>(executor: impl Executor<'e, Database = Sqlite>) -> Result<()> {
+    sqlx::query("update sent_live_signal set revision=revision+1 where id=1")
         .execute(executor)
         .await?;
     Ok(())
 }
 
 pub async fn notify_logout<'e>(
-    executor: impl Executor<'e, Database = Postgres>,
+    executor: impl Executor<'e, Database = Sqlite>,
     session: &str,
     expires: i64,
 ) -> Result<()> {
-    sqlx::query("select pg_notify($1,$2)")
-        .bind(CHANNEL)
-        .bind(serde_json::json!({"logout": session, "expires": expires}).to_string())
+    sqlx::query("insert into sent_live_revocations(session,expires) values (?1,?2) on conflict(session) do update set expires=excluded.expires")
+        .bind(session).bind(expires)
         .execute(executor)
         .await?;
     Ok(())
