@@ -10,8 +10,16 @@ mod live;
 mod sync;
 mod validation;
 
+fn main() -> Result<()> {
+    if std::env::args().nth(1).as_deref() == Some("--print-database-path") {
+        println!("{}", sent_core::config::database_path_from_env());
+        return Ok(());
+    }
+    run()
+}
+
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn run() -> Result<()> {
     let config = Config::from_env()?;
     Config::required(&config.password_hash, "SENT_PASSWORD_HASH")?;
     let secret = Config::required(&config.session_secret, "SESSION_SECRET")?;
@@ -19,12 +27,12 @@ async fn main() -> Result<()> {
         secret.len() >= 32,
         "SESSION_SECRET must contain at least 32 characters"
     );
-    let pool = db::pool(&config.database_url, config.node_env == "test").await?;
+    let pool = db::pool(&config.database_path, config.node_env == "test").await?;
     db::migrate(&pool, &config.migrations_path).await?;
     let address = format!("{}:{}", config.host, config.port);
     let listener = bind_listener(&address).await?;
     let state = Arc::new(app::State::new(config, Repository(pool)));
-    live::start(state.clone());
+    live::start(state.clone()).await?;
     println!("Sent Rust API listening on {address}");
     axum::serve(
         listener,

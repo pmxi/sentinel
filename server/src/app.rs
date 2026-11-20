@@ -16,6 +16,7 @@ use axum::{
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::{Duration, Utc};
+use sent_core::db::Uuid;
 use sent_core::{
     config::Config,
     repository::{DraftInput, ListInput, Repository, SearchInput, ThreadActionInput, timestamp},
@@ -29,7 +30,6 @@ use std::{
     time::{Duration as StdDuration, Instant},
 };
 use tower_http::services::{ServeDir, ServeFile};
-use uuid::Uuid;
 
 pub struct State {
     pub config: Config,
@@ -905,37 +905,24 @@ async fn oauth_callback(
 mod tests {
     use super::*;
 
-    async fn authenticated_pool() -> Option<sqlx::PgPool> {
-        let url = std::env::var("SENT_TEST_DATABASE_URL").ok()?;
-        assert!(
-            reqwest::Url::parse(&url)
-                .unwrap()
-                .path()
-                .starts_with("/sent_test_")
-        );
-        let pool = sent_core::db::pool(&url, true).await.unwrap();
+    async fn authenticated_pool() -> (tempfile::TempDir, sqlx::SqlitePool) {
+        let directory = tempfile::tempdir().unwrap();
+        let pool = sent_core::db::pool(directory.path().join("app.sqlite").to_str().unwrap(), true)
+            .await
+            .unwrap();
         sent_core::db::migrate(
             &pool,
             &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../migrations"),
         )
         .await
         .unwrap();
-        Some(pool)
+        (directory, pool)
     }
 
     #[tokio::test]
     async fn logout_is_enforced_without_a_listener_and_after_server_restart() -> anyhow::Result<()>
     {
-        let Ok(url) = std::env::var("SENT_TEST_DATABASE_URL") else {
-            return Ok(());
-        };
-        anyhow::ensure!(reqwest::Url::parse(&url)?.path().starts_with("/sent_test_"));
-        let pool = sent_core::db::pool(&url, true).await?;
-        sent_core::db::migrate(
-            &pool,
-            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../migrations"),
-        )
-        .await?;
+        let (_database, pool) = authenticated_pool().await;
         let mut config = Config::from_env()?;
         config.session_secret = Some("test-session-secret-at-least-32-characters".into());
         let token = auth::session(config.session_secret.as_deref().unwrap())?;
@@ -1009,7 +996,7 @@ mod tests {
                 .status(),
             StatusCode::OK
         );
-        sqlx::query("delete from worker_state where name=$1")
+        sqlx::query("delete from worker_state where name=?1")
             .bind(format!("session-revoked:{}", session.key))
             .execute(&pool)
             .await?;
@@ -1061,8 +1048,9 @@ mod tests {
         let mut config = Config::from_env().unwrap();
         config.web_dist_path = root.clone();
         config.session_secret = Some("test-session-secret-at-least-32-characters".into());
-        let pool = sqlx::postgres::PgPoolOptions::new()
-            .connect_lazy("postgres://localhost/sent_test_unused")
+        let database = tempfile::tempdir().unwrap();
+        let pool = sent_core::db::pool(database.path().join("sent.sqlite").to_str().unwrap(), true)
+            .await
             .unwrap();
         let app = router(Arc::new(State::new(config, Repository(pool))));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -1181,9 +1169,7 @@ mod tests {
 
     #[tokio::test]
     async fn spa_routes_return_index_with_ok_status_and_preserve_api_boundaries() {
-        let Some(pool) = authenticated_pool().await else {
-            return;
-        };
+        let (_database, pool) = authenticated_pool().await;
         let root = std::env::temp_dir().join(format!("sent-spa-{}", Uuid::new_v4()));
         std::fs::create_dir_all(root.join("assets")).unwrap();
         std::fs::write(root.join("index.html"), "<main>Sent</main>").unwrap();
@@ -1239,9 +1225,7 @@ mod tests {
 
     #[tokio::test]
     async fn middleware_preserves_api_html_and_auth_boundaries() {
-        let Some(pool) = authenticated_pool().await else {
-            return;
-        };
+        let (_database, pool) = authenticated_pool().await;
         let mut config = Config::from_env().unwrap();
         config.session_secret = Some("test-session-secret-at-least-32-characters".into());
         let token = auth::session(config.session_secret.as_deref().unwrap()).unwrap();

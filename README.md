@@ -2,7 +2,7 @@
 
 Sent is a private, single-user web email client that unifies Gmail and Microsoft mail, puts important messages in an L1 attention queue, and searches the complete synchronized archive by words and meaning.
 
-The repository contains a SolidJS client (`web/`), a Rust Axum API (`server/`), a separate Rust Tokio worker (`worker/`), shared Rust code with the Gmail and Microsoft Graph adapters (`core/`), a fake-mail seeder (`seed/`), and PostgreSQL/pgvector SQL migrations (`migrations/`). The earlier TypeScript/React implementation is in git history before the Rust build replaced it. See [`plan.md`](./plan.md) for the product decisions and [`roadmap.md`](./roadmap.md) for intentionally deferred work.
+The repository contains a SolidJS client (`web/`), a Rust Axum API (`server/`), a separate Rust Tokio worker (`worker/`), shared Rust code with the Gmail and Microsoft Graph adapters (`core/`), a fake-mail seeder (`seed/`), and SQLite SQL migrations (`migrations/`). The earlier TypeScript/React implementation is in git history before the Rust build replaced it. See [`plan.md`](./plan.md) for the product decisions and [`roadmap.md`](./roadmap.md) for intentionally deferred work.
 
 ## What works
 
@@ -13,7 +13,7 @@ The repository contains a SolidJS client (`web/`), a Rust Axum API (`server/`), 
 - Read/unread, flag, archive, delete, send, reply, reply all, and forward
 - Sent-owned drafts and ordinary file attachments
 - Versioned OpenAI classification, one-line inbox summaries, and clean reader text with Markdown hyperlinks and strict `{ reasoning, summary, tier, plainText }` output
-- PostgreSQL full-text plus pgvector hybrid search, with lexical fallback if OpenAI is unavailable
+- SQLite FTS5 (Porter stemming) plus sqlite-vec hybrid search, with lexical fallback if OpenAI is unavailable
 - Manual tier overrides
 - Password login, encrypted OAuth credentials, durable mutation outbox, retries, health checks, HTTPS, and backups
 
@@ -21,7 +21,7 @@ The repository contains a SolidJS client (`web/`), a Rust Axum API (`server/`), 
 
 ### One-command local run
 
-Prerequisites: a local default Docker context with Compose v2, Rust stable, Node 24, pnpm 11, Bash 4.3+
+Prerequisites: Rust stable, a C compiler, Node 24, pnpm 11, Bash 4.3+
 and curl. From the repository root (no `.env` setup required):
 
 ```sh
@@ -32,20 +32,19 @@ scripts/run-local.sh
 
 The URL is **http://127.0.0.1:4000** and the local-only login password is
 **`sent-local-dev-password`**. The runner prints both after the API, fake sync and
-worker heartbeat are healthy. It starts only Compose's Postgres service on
-loopback port **5433**, creates/uses **`sent_benchmark`** (never `sent`), installs
+worker heartbeat are healthy. It creates/uses **`data/sent_benchmark.sqlite`**, installs
 dependencies, builds Solid and the release binaries, applies the shared migrations
 via the seeder, and replaces fake fixture accounts with a fresh deterministic
 mailbox (3000 messages by default; `--messages 0` creates an empty mailbox).
 Only names `sent_benchmark` or `sent_benchmark_*` are accepted as DB overrides.
 
-The runner ignores `.env` for Compose and overrides DB/auth/provider settings for
+The runner overrides DB/auth/provider settings for
 the Rust processes: it binds to loopback, forces fake providers, disables AI/live
 credentials, and uses disposable local auth/encryption values. Do not use these
 values outside local development. No deployment services are started.
 
 **Ctrl+C stops both Rust processes**; if either exits, the other is stopped too.
-Postgres is deliberately left running, since other local databases may use it.
+The SQLite file is retained under `data/`.
 Rerunning the launcher resets the fake mailbox.
 
 ### Manual setup
@@ -53,8 +52,7 @@ Rerunning the launcher resets the fake mailbox.
 From the repository root:
 
 ```sh
-POSTGRES_PORT=5433 docker compose up -d postgres
-export DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent
+export SENT_DATABASE_PATH=./data/sent.sqlite
 export SENT_FAKE_PROVIDERS=true
 export SESSION_SECRET=sent-local-session-secret-at-least-32-characters
 export SENT_PASSWORD_HASH="$(target/release/sent-hash-password sent-local-dev-password)"
@@ -74,8 +72,10 @@ The server never starts a worker;
 the worker is a separate process.
 `MIGRATIONS_PATH` optionally selects a directory of SQL migrations.
 
-The migration runner uses the original SQL files (not copies), advisory lock
-89372411, and `sent_migrations(filename, applied_at)`,, the same history the TypeScript build used. SQLx uses runtime queries; no database is needed to
+The migration runner uses `BEGIN IMMEDIATE` and `sent_migrations(filename, applied_at)`.
+The database file is created automatically, with WAL, foreign keys, a five-second busy timeout,
+and FULL synchronous mode for durable sent-mail checkpoints. Existing Postgres data can be copied with `sent-import-postgres` (below).
+SQLx uses runtime queries; no database is needed to
 build. The `v1` AES-256-GCM credential envelope is compatible with Node's format.
 
 ### Fixtures and provider safety
@@ -83,8 +83,8 @@ build. The `v1` AES-256-GCM credential envelope is compatible with Node's format
 `sent-seed --messages N` defaults to 3000 messages in 1200 conversations, split
 between Gmail and Microsoft fixture accounts. IDs, timestamps and contents are
 deterministic. `--reset` deletes only the two deterministic fixture accounts and
-their dependent data, not other accounts. Seeding requires both a loopback
-database host and `SENT_FAKE_PROVIDERS=true`. It does not reset arbitrary databases.
+their dependent data, not other accounts. Seeding requires `SENT_FAKE_PROVIDERS=true`.
+It does not reset arbitrary databases.
 
 Fake accounts contain an explicit `sent-fake-provider:` credentials marker, **not
 real OAuth credentials**. The Rust provider boundary refuses to use that marker
@@ -99,18 +99,16 @@ CI (`.github/workflows/ci.yml`) runs the `rust` and `web` jobs on every push and
 production deploys wait for both. Locally:
 
 ```sh
-docker exec sent-postgres-1 psql -U sent -d sent -c 'create database sent_test_rust'
 cargo fmt --all --check
 cargo clippy --locked --all-targets -- -D warnings
-SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_rust cargo test --locked
+cargo test --locked
 bash -n scripts/run-local.sh && python3 scripts/test-run-local.py
 python3 deploy/test-deploy.py
 pnpm --dir web install --frozen-lockfile
 pnpm --dir web typecheck && pnpm --dir web lint && pnpm --dir web test && pnpm --dir web build
 ```
 
-Integration tests skip without `SENT_TEST_DATABASE_URL` and refuse database names
-outside `sent_test_*`. They mutate/truncate their test database.
+Database integration tests run unconditionally, using a fresh temporary SQLite file per test.
 
 Live OAuth, provider attachment downloads and OpenAI hybrid search are not exercised
 by these checks; no production service or credentials are required.
@@ -127,8 +125,8 @@ retry five times starting at 30 seconds, both exponentially. Each sync attempt
 expires after 30 minutes. Account status and classification failures are persisted.
 
 Pending jobs and retry deadlines are checkpointed in the existing
-`worker_state.metadata` JSON and restored on restart. A session advisory lock
-89372413 enforces a single scheduler per database. SIGINT/SIGTERM stop scheduling, drain
+`worker_state.metadata` JSON and restored on restart. An exclusive file lock on
+`<database path>.worker.lock` enforces a single scheduler per database. SIGINT/SIGTERM stop scheduling, drain
 active work for up to 30 seconds, and checkpoint remaining work. Outbox delivery
 continues to use the existing lease, retry and durable pre-send checkpoint: an
 ambiguous dispatch or lost completion must not cause an automatic resend.
@@ -145,15 +143,15 @@ and send-checkpoint tests use local wiremock HTTP servers, not real credentials.
 database. Run the reproducible server/worker smoke check on a fresh local DB:
 
 ```sh
-docker exec sent-postgres-1 psql -U sent -d sent -c 'create database sent_test_worker'
 cargo build --release
-SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_worker python3 scripts/worker-smoke.py
+python3 scripts/worker-smoke.py
 ```
 
 The smoke check resets only fixture accounts, starts both Rust binaries, checks
 healthy sync/heartbeat, waits for an undoable archive to complete, verifies a
 draft send appears in Sent, and shuts down the worker via SIGTERM. Logs are in
-the ignored `parity-logs/` directory. It uses `psql` to inspect the outbox rows.
+the ignored `parity-logs/` directory. It uses Python's sqlite3 module to inspect
+outbox rows in its own temporary database.
 
 ### Web client
 
@@ -259,18 +257,9 @@ and incomplete body placeholders cannot be quoted into reply/forward drafts.
 Pending-body readers refetch on reconnect even while their cached headers are fresh.
 The static-only service worker still never handles `/api/*`.
 
-After release/web builds, check against an isolated, existing local test database:
-
-```sh
-SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_sqlite node web/scripts/replica-check.mjs
-```
-
-After the production web and Rust release builds, run the isolated Playwright
-offline/update/auth check (it resets only the named local `sent_test_*` database):
-
-```sh
-SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_sw pnpm --dir web sw:check
-```
+The legacy browser integration launchers `web/scripts/replica-check.mjs` and
+`pnpm --dir web sw:check` still provision Postgres. They have not yet been ported
+to the server's SQLite setup; use the Rust database tests for this migration.
 
 #### On-device search
 
@@ -344,7 +333,46 @@ After connecting each account in Settings, the worker pages through the entire a
 
 ## Production deployment
 
+The application uses `SENT_DATABASE_PATH`, default `./data/sent.sqlite`.
+`DATABASE_URL` remains in the shared environment for the importer and rollback
+to old releases; the SQLite application ignores it. Never edit that shared URL
+as part of the cutover.
+
+### PostgreSQL importer
+
+Build with `cargo build --release --locked --bin sent-import-postgres`. Export
+`DATABASE_URL` securely, then run:
+
+```sh
+MIGRATIONS_PATH=./migrations target/release/sent-import-postgres /new/path/mail.sqlite
+target/release/sent-import-postgres --check /new/path/mail.sqlite
+```
+
+The parent directory must exist. The target and `<target>.tmp` must not exist.
+The importer opens PostgreSQL with `default_transaction_read_only=on`, takes a
+repeatable-read snapshot, applies SQLite migrations, and copies every application
+table in batches of 100. It copies credentials unchanged and converts existing
+3072-dimensional vectors to little-endian f32 without any AI calls. FTS triggers
+populate the search index. Per-table counts and SHA-256 hashes of all normalized
+rows (including every embedding byte), integrity and foreign-key checks must
+pass before an atomic no-replace rename publishes the file. Failed imports
+remove their temporary files. Output contains counts/timings, never mailbox data
+or connection diagnostics. `--check` opens SQLite read-only and exercises the
+actual list/detail/search, sync/replica, draft/account and health repository
+functions; it uses a stored embedding for hybrid search and makes no AI calls.
+
+An optional automated integration test reads `SENT_IMPORT_TEST_DATABASE_URL`.
+Point it only at an isolated database with the original PostgreSQL migrations
+and, optionally, `server/tests/postgres_fixture.sql` applied. Without this
+variable, that one PostgreSQL integration test skips; SQLite tests always run.
+
 ### Native production: pull-based push-to-deploy
+
+Before the first SQLite deployment, install this revision's `deploy/deploy.sh`
+as `~/sent/bin/deploy.sh` using the bootstrap command below. The previously
+installed PostgreSQL deployer cannot perform the import. The new launcher
+refuses to start a SQLite release without its importer, runtime database path,
+and existing database, rather than silently creating an empty mailbox.
 
 The production box runs user systemd units as `sentinel` (linger must already
 be enabled). Every 30 seconds `sent-deploy.timer` checks GitHub's `master` SHA.
@@ -359,14 +387,26 @@ Solid app is built with pnpm. The release's `runtime.env` points `WEB_DIST_PATH`
 `MIGRATIONS_PATH` at that release. The shared `/opt/sent/app/.env` is symlinked, never
 copied. Each release installs its systemd units and `~/sent/bin/sent-run`, which starts
 the Rust binaries or, for older TypeScript releases kept for rollback, their Node entry
-points. A custom-format `pg_dump` is taken (last 10 retained), then `~/sent/current`
+points. SQLite releases also build/copy `sent-import-postgres` and export
+`SENT_DATABASE_PATH=~/sent/data/sent.sqlite` through their `runtime.env`.
+On the first SQLite deploy, both services stop, then a custom-format `pg_dump`
+is taken and the importer copies the quiescent PostgreSQL database. PostgreSQL
+is never modified. Later SQLite deploys take a consistent `sqlite3 .backup`
+instead of a PostgreSQL dump; the latest ten deployment backups are retained.
+PostgreSQL releases still take `pg_dump`. Then `~/sent/current`
 switches atomically and both units restart; the Rust services apply pending migrations at
-startup, after the dump. Health requires active units, database
+startup, after the backup. Health requires active units, database
 connectivity and a worker heartbeat after restart, not `status: "ok"`.
 If sync was fresh before deployment, its oldest successful sync must also be
 after restart. Old builds without `sync` do not impose that condition.
 Health has a four-minute budget. Failure restores and checks the previous
-release; dumps are not automatically restored. Successful releases install
+release; backups are not automatically restored. A failed first SQLite deploy
+stops the new services and moves the imported file (and any WAL/SHM files) to
+`data/sent.sqlite.failed-<timestamp>-<pid>`, so a retry reimports PostgreSQL.
+Rolling back to a PostgreSQL release retains the untouched PostgreSQL mailbox,
+but **does not include writes made while running SQLite**. Do not resume SQLite
+after a period of PostgreSQL writes without explicitly reconciling or moving
+the old SQLite file aside and reimporting. Successful releases install
 their own deploy script and retain about five releases, protecting current
 and previous.
 
@@ -380,7 +420,7 @@ mkdir -p ~/sent/{bin,tools,releases,dumps,state} ~/.config/systemd/user
 export PATH="$HOME/sent/tools/node/bin:$PATH"
 corepack enable
 corepack prepare pnpm@11.21.0 --activate
-# Also required on PATH: git, curl, flock, tar, pg_dump (matching the DB major).
+# Also required on PATH: git, curl, flock, tar, sqlite3, pg_dump (matching the DB major).
 # git ls-remote https://github.com/pmxi/sentinel.git must work non-interactively.
 install -m 700 deploy/deploy.sh ~/sent/bin/deploy.sh
 install -m 700 deploy/sent-run ~/sent/bin/sent-run
@@ -427,7 +467,42 @@ Paths/endpoints can be overridden with `SENT_DEPLOY_ROOT`, `SENT_DEPLOY_REPO`,
 
 ## Backups
 
-`scripts/backup.sh` can run from cron or a systemd timer. It writes compressed PostgreSQL dumps to `./backups` by default and retains 14 days. Override the destination with `SENT_BACKUP_DIR`, ideally to encrypted storage copied off the host.
+SQLite releases install and enable the user-level `sent-sqlite-backup.timer`.
+It runs nightly at 03:30 with up to 30 minutes jitter, uses SQLite's consistent
+backup API through `sqlite3 .backup`, and retains 14 days in `~/sent/backups`
+with private permissions. Run `systemctl --user start sent-sqlite-backup.service`
+to test it. Copy backups off-host. To restore, stop both services, preserve the
+current database and its `-wal`/`-shm` sidecars, then install a backup as
+`~/sent/data/sent.sqlite`, run `sent-import-postgres --check`, and restart.
+Never copy a live SQLite database without using the backup API.
+
+For local SQLite installations, `scripts/backup.sh` also uses the consistent
+SQLite backup API. It resolves `SENT_DATABASE_PATH` from the environment first,
+then the nearest `.env` in the current directory or its parents, then defaults
+to `./data/sent.sqlite`. A missing configured database is an error, not a reason
+to fall back. Set `SENT_BACKUP_DIR` to override `./backups`; backups are private and retained for
+14 days. Retention applies only to its `sent-script-backup-*.sqlite` files,
+never the source database. Both scripts use `sent-server --print-database-path`,
+which runs the app's exact configuration loader (including first-wins duplicate
+assignments and variable expansion), without starting services or opening the
+database. A built `sent-server` on PATH and the `sqlite3` command-line tool are
+required. Override the executable with `SENT_SERVER_BIN`, for example
+`SENT_SERVER_BIN=./target/release/sent-server scripts/backup.sh`. No Compose database
+service is used.
+
+Restore to a **new explicit path**; the script refuses existing targets or
+sidecars and the configured application database path, even if missing:
+
+```sh
+scripts/restore.sh /path/to/sent-backup.sqlite ./restore-check/sent.sqlite
+sent-import-postgres --check ./restore-check/sent.sqlite
+```
+
+Stop both services before installing the restored file at the configured database
+path. Preserve the old database and its sidecars together. Never replace a live
+database, and never reuse sidecars from the old file.
+
+### Legacy PostgreSQL backups (retained for rollback)
 
 On the native production host, `sent-backup.timer` is a **system** timer, separate
 from the user-level deploy timer. It runs a root-installed copy of
@@ -445,29 +520,11 @@ database credentials aren't passed on the command line. After installation
 and `sudo systemctl daemon-reload`, test via `sudo systemctl start sent-backup.service`
 and verify a fresh private archive appears. The app services do not need to restart.
 
-Test a custom-format dump in a fresh scratch database. Use PostgreSQL client
-tools matching the source major version. Have a database administrator create
-a database owned by the restore role and preinstall the extensions if that
-role cannot install them. For example, on the native host:
-
-```sh
-sudo -u postgres createdb --owner=sent sent_restore_check
-sudo -u postgres psql -X -v ON_ERROR_STOP=1 -d sent_restore_check \
-  -c 'CREATE EXTENSION pgcrypto; CREATE EXTENSION vector;'
-# Set PGHOST, PGPORT, PGUSER, and any required libpq connection options.
-# Authenticate with a private .pgpass or PGPASSWORD; never put secrets in argv.
-scripts/restore.sh --scratch sent_restore_check /path/to/sent-YYYYMMDDTHHMMSSZ.dump
-# After verifying counts, migrations, and vector data:
-dropdb --maintenance-db=postgres sent_restore_check
-```
-
-Scratch mode only accepts `sent_restore_*` names and does not create, drop, or
-clean the database. It restores atomically and skips source ownership, grants,
-and comments (the extension comments are owned by the administrator).
-
-For actual disaster recovery against the local Compose database, stop the server and worker, then run
-`scripts/restore.sh /path/to/sent.dump` **without** `--scratch`. That form requires
-an explicit `RESTORE` confirmation because it replaces the Compose database.
+Test legacy custom-format dumps with `pg_restore` in an isolated scratch
+PostgreSQL database, using matching client tools and the original extensions.
+Authenticate with a private `.pgpass` or environment, never secrets in argv.
+The local backup/restore scripts now handle SQLite only; they do not restore
+PostgreSQL or alter the rollback database.
 
 ## Common commands
 
@@ -488,7 +545,7 @@ The server and worker apply pending SQL migrations from `migrations/` at startup
 - HTML email is sanitized and rendered in a sandboxed iframe. Remote images load normally for now; proxying them is on the roadmap.
 - Generated reader text supports basic Markdown, including descriptive hyperlinks. Raw HTML, images, and unsafe link schemes are disabled in this view; the original email is always available.
 - The model selects short link references; Sent inserts the original URL definitions afterward so long signed links are not recopied by the model.
-- The mutation outbox first records an action in PostgreSQL, updates Sent optimistically, and then retries the provider write until it succeeds or surfaces as failed.
+- The mutation outbox first records an action in SQLite, updates Sent optimistically, and then retries the provider write until it succeeds or surfaces as failed.
 
 ## Live mailbox updates
 
@@ -498,22 +555,26 @@ non-default port. Requests without that Origin or a valid cookie are rejected;
 HTTP bearer tokens alone cannot open a socket. Logout closes the session's
 sockets, including other tabs, and expiry closes them without waiting for a
 subsequent API request. Logout revocations are kept in memory until JWT expiry
-and broadcast to other server processes; this does not add a persistent session
-table to the existing stateless authentication system.
+and shared through an expiry-pruned SQLite revocation table. Only opaque session
+keys and expiry times are stored, not cookies or credentials.
 
-Rust ingest/sync, classification, outbox results and API writes call `pg_notify`
-in their committing transaction. There are no migrations or triggers. Each
-server process holds one reconnecting LISTEN connection, coalesces bursts for
+Rust ingest/sync, classification, outbox results and API writes keep their
+transactional `live::notify_changed` calls. Each server holds a dedicated SQLite
+connection and polls `PRAGMA data_version` every 150 ms, so commits by the separate
+worker process also wake connected clients. Rolled-back transactions do not
+signal. The server reconnects on database errors, coalesces bursts for
 50 ms and reads a committed inventory once per batch. It fans out a shared-cursor
 delta when it fits (32 upserts, 512 removals and 64 KiB), otherwise a cursor hint.
 The replayable HTTP delta feed remains authoritative: a cursor mismatch or
 expired generation causes catch-up or a background resnapshot, not skipped rows.
 
-Repeated inventories memoize the existing body SHA-256 using PostgreSQL tuple
-MVCC versions, transaction epoch and server start time. The cache contains at
+Repeated inventories memoize the existing body SHA-256 using transactionally
+maintained per-message revision tokens. Triggers invalidate them on message or
+classification changes, including direct SQL edits and classification deletion.
+The cache contains at
 most 65,536 digests per process, not body text. Body hashes and HTTP JSON remain
 unchanged; even SQL edits that omit `updated_at` invalidate a cached digest.
-LISTEN reconnect clears the memo, and inventories publish in database-read order.
+Database reconnect clears the memo, and inventories publish in database-read order.
 The first inventory after a cold start/reconnect still hashes the full body corpus.
 
 Push and polling are serialized before applying SQLite/cache updates. While the
@@ -525,7 +586,7 @@ Both paths respect pending optimistic writes. Heartbeats run every 20 seconds
 with a 45-second idle deadline. The server caps connections at eight per session
 and 128 total, incoming frames at 16 KiB/32 messages per second, and write buffers
 at 128 KiB. Sends time out after five seconds; latest-only notification queues
-bound slow-client backpressure. Losing LISTEN closes sockets so clients poll
+bound slow-client backpressure. Losing the database poller closes sockets so clients poll
 until the single connection recovers.
 
 For nginx, forward the upgrade explicitly (the ordinary HTTP location can stay
@@ -545,13 +606,14 @@ location = /api/live {
 Use the external HTTPS origin for `SENT_PUBLIC_URL` when nginx terminates TLS.
 If Upgrade is not forwarded, the UI keeps using four-second HTTP delta polling.
 After release/web builds, the isolated live check exercises push, two-tab
-archive, authentication, expiry/logout, reconnect, connection limits, LISTEN
+archive, authentication, expiry/logout, reconnect, connection limits, database
 recovery, workerless operation and an Upgrade-stripping reverse proxy:
 
 ```sh
+# This legacy launcher still requires PostgreSQL and is not SQLite-compatible:
 SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_live node web/scripts/live-check.mjs
 ```
 
-It resets only the named local `sent_test_*` database and terminates only its own
+The unchanged legacy launcher resets only the named local `sent_test_*` database and terminates only its own
 LISTEN connection to simulate disconnect/recovery, not the shared Postgres server.
 Screenshots and logs are saved under `~/live-check/`.

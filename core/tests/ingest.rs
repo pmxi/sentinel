@@ -1,18 +1,13 @@
 use anyhow::Result;
+use sent_core::db::Uuid;
 use sent_core::{config::Config, db, ingest::NormalizedMessage, repository::Repository};
 use serde_json::json;
-use uuid::Uuid;
 
 #[tokio::test]
 async fn ingest_and_repository_ports() -> Result<()> {
-    let Ok(url) = std::env::var("SENT_TEST_DATABASE_URL") else {
-        return Ok(());
-    };
-    anyhow::ensure!(
-        reqwest::Url::parse(&url)?.path().starts_with("/sent_test_"),
-        "Use an isolated database named sent_test_*"
-    );
-    let pool = db::pool(&url, true).await?;
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("sent.sqlite");
+    let pool = db::pool(path.to_str().unwrap(), true).await?;
     db::migrate(&pool, &Config::from_env()?.migrations_path).await?;
     let repo = Repository(pool);
     let email = format!("{}@example.test", Uuid::new_v4());
@@ -91,7 +86,7 @@ async fn ingest_and_repository_ports() -> Result<()> {
             .is_none()
     );
     assert!(repo.upsert_message(Uuid::new_v4(), &message).await.is_err());
-    sqlx::query("delete from accounts where id=$1")
+    sqlx::query("delete from accounts where id=?1")
         .bind(account)
         .execute(&repo.0)
         .await?;

@@ -1,5 +1,6 @@
 use base64::{Engine, engine::general_purpose::STANDARD};
 use chrono::Utc;
+use sent_core::db::Uuid;
 use sent_core::{
     ai::{ClassificationResult, Intelligence, ReaderLinks, embedding_fallback_input},
     config::Config,
@@ -13,7 +14,6 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
-use uuid::Uuid;
 use wiremock::{
     Mock, MockServer, ResponseTemplate,
     matchers::{method, path, query_param},
@@ -44,8 +44,8 @@ fn account(provider: &str) -> StoredAccount {
 }
 fn providers(server: &MockServer, c: Config) -> Providers {
     let root = server.uri();
-    let pool = sqlx::postgres::PgPoolOptions::new()
-        .connect_lazy("postgres://localhost/sent_test_unused")
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .connect_lazy("sqlite::memory:")
         .unwrap();
     Providers::with_endpoints(
         c,

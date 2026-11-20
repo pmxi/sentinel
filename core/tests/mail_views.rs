@@ -1,5 +1,6 @@
 use anyhow::Result;
 use chrono::{Duration, TimeZone, Utc};
+use sent_core::db::Uuid;
 use sent_core::{
     db,
     repository::{
@@ -8,7 +9,6 @@ use sent_core::{
 };
 use serde_json::{Value, json};
 use sqlx::Row;
-use uuid::Uuid;
 
 struct Fixture {
     repo: Repository,
@@ -18,11 +18,11 @@ struct Fixture {
 
 impl Fixture {
     async fn reset(&self) -> Result<()> {
-        sqlx::raw_sql("truncate accounts cascade; truncate worker_state")
+        sqlx::raw_sql("delete from accounts; delete from worker_state")
             .execute(&self.repo.0)
             .await?;
         for id in [self.owner, self.other] {
-            sqlx::query("insert into accounts(id,provider,email,encrypted_credentials) values($1,'microsoft',$2,'test')").bind(id).bind(format!("{id}@example.test")).execute(&self.repo.0).await?;
+            sqlx::query("insert into accounts(id,provider,email,encrypted_credentials) values(?1,'microsoft',?2,'test')").bind(id).bind(format!("{id}@example.test")).execute(&self.repo.0).await?;
         }
         Ok(())
     }
@@ -35,11 +35,11 @@ impl Fixture {
             .unwrap_or(self.owner);
         let received = Utc.with_ymd_and_hms(2026, 9, 22, 0, 0, 0).unwrap() + Duration::hours(hour);
         let id = Uuid::new_v4();
-        let row=sqlx::query("insert into threads(account_id,provider_thread_id,subject,last_message_at) values($1,$2,$2,$3) on conflict(account_id,provider_thread_id) do update set last_message_at=greatest(threads.last_message_at,excluded.last_message_at) returning id").bind(owner).bind(thread).bind(received).fetch_one(&self.repo.0).await?;
-        sqlx::query("insert into messages(id,account_id,thread_id,provider_message_id,subject,from_addresses,sent_at,received_at,snippet,text_body,direction,read,archived,deleted,tombstone) values($1,$2,$3,$4,$5,$6,$7,$7,'Test',$8,$9::text::message_direction,$10,$11,$12,$13)")
+        let row=sqlx::query("insert into threads(account_id,provider_thread_id,subject,last_message_at,id) values(?1,?2,?2,?3,?4) on conflict(account_id,provider_thread_id) do update set last_message_at=max(threads.last_message_at,excluded.last_message_at) returning id").bind(owner).bind(thread).bind(sent_core::db::timestamp(received)).bind(Uuid::new_v4()).fetch_one(&self.repo.0).await?;
+        sqlx::query("insert into messages(id,account_id,thread_id,provider_message_id,subject,from_addresses,sent_at,received_at,snippet,text_body,direction,read,archived,deleted,tombstone) values(?1,?2,?3,?4,?5,?6,?7,?7,'Test',?8,?9,?10,?11,?12,?13)")
             .bind(id).bind(owner).bind(row.get::<Uuid,_>("id")).bind(id.to_string()).bind(options["subject"].as_str().unwrap_or(thread))
             .bind(options.get("from").cloned().unwrap_or(json!([{"name":"Sender","address":"sender@example.com"}])))
-            .bind(received).bind(options["textBody"].as_str().unwrap_or("Test"))
+            .bind(sent_core::db::timestamp(received)).bind(options["textBody"].as_str().unwrap_or("Test"))
             .bind(options["direction"].as_str().unwrap_or("inbound")).bind(options["read"].as_bool().unwrap_or(true))
             .bind(options["archived"].as_bool().unwrap_or(false)).bind(options["deleted"].as_bool().unwrap_or(false)).bind(options["tombstone"].as_bool().unwrap_or(false)).execute(&self.repo.0).await?;
         Ok(id)
@@ -102,7 +102,7 @@ impl Fixture {
     }
 
     async fn attempts(&self, id: Uuid, attempts: i32) -> Result<()> {
-        sqlx::query("update mutation_outbox set attempts=$2,status='processing' where id=$1")
+        sqlx::query("update mutation_outbox set attempts=?2,status='processing' where id=?1")
             .bind(id)
             .bind(attempts)
             .execute(&self.repo.0)
@@ -111,7 +111,7 @@ impl Fixture {
     }
     async fn status(&self, id: Uuid) -> Result<String> {
         Ok(
-            sqlx::query("select status::text from mutation_outbox where id=$1")
+            sqlx::query("select status from mutation_outbox where id=?1")
                 .bind(id)
                 .fetch_one(&self.repo.0)
                 .await?
@@ -119,7 +119,7 @@ impl Fixture {
         )
     }
     async fn state(&self, id: Uuid) -> Result<Value> {
-        Ok(sqlx::query_scalar("select jsonb_build_object('archived',archived,'deleted',deleted) from messages where id=$1")
+        Ok(sqlx::query_scalar("select json_object('archived',json(case when archived then 'true' else 'false' end),'deleted',json(case when deleted then 'true' else 'false' end)) from messages where id=?1")
             .bind(id).fetch_one(&self.repo.0).await?)
     }
 }
@@ -138,16 +138,9 @@ fn ids(value: &Value) -> Vec<Uuid> {
 
 #[tokio::test]
 async fn mail_views_and_send_checkpoints() -> Result<()> {
-    let Ok(url) = std::env::var("SENT_TEST_DATABASE_URL") else {
-        eprintln!("Skipping: SENT_TEST_DATABASE_URL is unset");
-        return Ok(());
-    };
-    let parsed = reqwest::Url::parse(&url)?;
-    anyhow::ensure!(
-        parsed.path().starts_with("/sent_test_"),
-        "Use an isolated database named sent_test_* for integration tests"
-    );
-    let pool = db::pool(&url, true).await?;
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("sent.sqlite");
+    let pool = db::pool(path.to_str().unwrap(), true).await?;
     let config = sent_core::config::Config::from_env()?;
     db::migrate(&pool, &config.migrations_path).await?;
     let f = Fixture {
@@ -222,7 +215,7 @@ async fn mail_views_and_send_checkpoints() -> Result<()> {
         assert!(f.repo.claim_mutations(50).await?.is_empty());
         assert!(ids(&f.list("l1", 50, None, None).await?).is_empty());
         for (id, column) in [(archived, "archived"), (deleted, "deleted")] {
-            let row = sqlx::query(&format!("select {column} from messages where id=$1"))
+            let row = sqlx::query(&format!("select {column} from messages where id=?1"))
                 .bind(id)
                 .fetch_one(&f.repo.0)
                 .await?;
@@ -291,7 +284,7 @@ async fn mail_views_and_send_checkpoints() -> Result<()> {
         } else {
             "deleted"
         };
-        let sql = format!("select {column} from messages where id=$1");
+        let sql = format!("select {column} from messages where id=?1");
         assert!(
             sqlx::query(&sql)
                 .bind(source)
@@ -327,7 +320,7 @@ async fn mail_views_and_send_checkpoints() -> Result<()> {
         .await?;
     f.repo.undo(id).await?;
     assert!(
-        sqlx::query("select archived from messages where id=$1")
+        sqlx::query("select archived from messages where id=?1")
             .bind(archived)
             .fetch_one(&f.repo.0)
             .await?
@@ -510,7 +503,7 @@ async fn mail_views_and_send_checkpoints() -> Result<()> {
     assert_eq!(manual["tier"], 2);
     assert!(manual["reasoning"].is_null());
     assert!(manual["modelTier"].is_null());
-    sqlx::query("update classifications set model='legacy',reasoning='A real model reason' where message_id=$1").bind(source).execute(&f.repo.0).await?;
+    sqlx::query("update classifications set model='legacy',reasoning='A real model reason' where message_id=?1").bind(source).execute(&f.repo.0).await?;
     let legacy = f.repo.get_message(source).await?.unwrap();
     assert_eq!(legacy["reasoning"], "A real model reason");
     assert_eq!(legacy["modelTier"], 1);
@@ -544,7 +537,7 @@ async fn mail_views_and_send_checkpoints() -> Result<()> {
         f.reset().await?;
         let (id, draft) = f.queued_draft().await?;
         if deleted {
-            sqlx::query("delete from messages where account_id=$1")
+            sqlx::query("delete from messages where account_id=?1")
                 .bind(f.owner)
                 .execute(&f.repo.0)
                 .await?;
@@ -577,7 +570,7 @@ async fn mail_views_and_send_checkpoints() -> Result<()> {
     }
     f.reset().await?;
     let (id, draft) = f.queued_draft().await?;
-    sqlx::query("insert into drafts(id,account_id,body) values($1,$2,'New content')")
+    sqlx::query("insert into drafts(id,account_id,body) values(?1,?2,'New content')")
         .bind(uuid(&draft["id"]))
         .bind(f.owner)
         .execute(&f.repo.0)
@@ -615,7 +608,13 @@ async fn mail_views_and_send_checkpoints() -> Result<()> {
     f.reset().await?;
     let (id, draft) = f.queued_draft().await?;
     f.attempts(id, 12).await?;
-    sqlx::query("update mutation_outbox set payload=jsonb_set(payload,'{draft,accountId}',to_jsonb($2::text)) where id=$1").bind(id).bind(Uuid::new_v4().to_string()).execute(&f.repo.0).await?;
+    sqlx::query(
+        "update mutation_outbox set payload=json_set(payload,'$.draft.accountId',?2) where id=?1",
+    )
+    .bind(id)
+    .bind(Uuid::new_v4().to_string())
+    .execute(&f.repo.0)
+    .await?;
     assert!(f.repo.fail_mutation(id, "Graph 502").await.is_err());
     assert_eq!(f.status(id).await?, "processing");
     assert!(f.repo.get_draft(uuid(&draft["id"])).await?.is_none());
@@ -630,7 +629,7 @@ async fn mail_views_and_send_checkpoints() -> Result<()> {
     assert_eq!(usize::from(a.is_ok()) + usize::from(b.is_ok()), 1);
     f.repo.fail_mutation(id, "Connection reset").await?;
     assert_eq!(f.status(id).await?, "failed");
-    let row = sqlx::query("select last_error,payload from mutation_outbox where id=$1")
+    let row = sqlx::query("select last_error,payload from mutation_outbox where id=?1")
         .bind(id)
         .fetch_one(&f.repo.0)
         .await?;
@@ -650,7 +649,7 @@ async fn mail_views_and_send_checkpoints() -> Result<()> {
     assert_eq!(recent["sync"]["stale"], 1);
     f.repo.finish_sync(f.other, None, true).await?;
     assert_eq!(f.repo.health().await?["status"], "ok");
-    sqlx::query("update accounts set last_synced_at=now()-interval '4 minutes' where id=$1")
+    sqlx::query("update accounts set last_synced_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now','-4 minutes') where id=?1")
         .bind(f.owner)
         .execute(&f.repo.0)
         .await?;
@@ -661,7 +660,7 @@ async fn mail_views_and_send_checkpoints() -> Result<()> {
     assert_eq!(health["status"], "degraded");
     assert_eq!(health["sync"]["needsReauth"], 1);
     assert_eq!(health["sync"]["stale"], 0);
-    sqlx::raw_sql("truncate accounts cascade; truncate worker_state")
+    sqlx::raw_sql("delete from accounts; delete from worker_state")
         .execute(&f.repo.0)
         .await?;
     let empty = f.repo.health().await?;

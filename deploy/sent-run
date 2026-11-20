@@ -6,8 +6,13 @@ release=$(readlink -e "${SENT_DEPLOY_ROOT:-$HOME/sent}/current")
 cd "$release"
 if [[ -x "bin/sent-$1" ]]; then
   while IFS='=' read -r key value; do
-    [[ "$key" == WEB_DIST_PATH || "$key" == MIGRATIONS_PATH ]] && export "$key=$value"
+    [[ "$key" == WEB_DIST_PATH || "$key" == MIGRATIONS_PATH || "$key" == SENT_DATABASE_PATH ]] && export "$key=$value"
   done <runtime.env
+  if [[ -f server/src/bin/sent-import-postgres.rs ]] &&
+    { [[ ! -x bin/sent-import-postgres || -z "${SENT_DATABASE_PATH:-}" ]] || [[ ! -f "$SENT_DATABASE_PATH" ]]; }; then
+    echo 'SQLite cutover is incomplete; install the updated deployer and run the import before starting this release.' >&2
+    exit 1
+  fi
   exec "bin/sent-$1"
 fi
 exec /usr/local/bin/node24 "apps/$1/dist/index.js"

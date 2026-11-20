@@ -15,7 +15,9 @@ CHECKS=${SENT_DEPLOY_CHECKS:-rust web}
 UNITS=${SENT_DEPLOY_UNITS:-$HOME/.config/systemd/user}
 TIMEOUT=${SENT_DEPLOY_TIMEOUT:-240}
 INTERVAL=${SENT_DEPLOY_INTERVAL:-5}
-mkdir -p "$ROOT"/{releases,dumps,state,bin,ci}
+mkdir -p "$ROOT"/{releases,dumps,state,bin,ci,data,backups}
+database="$ROOT/data/sent.sqlite"
+imported=false
 exec 9>"$ROOT/deploy.lock"
 flock -n 9 || exit 0
 
@@ -135,6 +137,14 @@ failed() {
   trap - ERR INT TERM
   set +e
   log "Deploy $sha failed; restoring $previous (migrations not reversed)"
+  if $imported; then
+    failed_database="$database.failed-$(date -u +%Y%m%dT%H%M%S)-$$"
+    systemctl --user stop sent-worker.service sent-server.service
+    if [[ -f "$database" ]]; then mv "$database" "$failed_database"; fi
+    for suffix in -wal -shm .tmp .tmp-wal .tmp-shm; do
+      if [[ -f "$database$suffix" ]]; then mv "$database$suffix" "$failed_database$suffix"; fi
+    done
+  fi
   record "failed-$sha"
   record failed
   link "$previous" "$ROOT/current"
@@ -167,22 +177,35 @@ if [[ "$release" != "$saved_previous" ]]; then
     if [[ -f sent-rs/Cargo.toml ]]; then rs=sent-rs/; fi
     migrations=migrations
     [[ -d "$migrations" ]] || migrations=packages/core/src/db/migrations
-    cargo build --release --locked --manifest-path "${rs}Cargo.toml" --target-dir "$ROOT/cargo-target" --bin sent-server --bin sent-worker
+    binaries=(--bin sent-server --bin sent-worker)
+    if [[ -f "${rs}server/src/bin/sent-import-postgres.rs" ]]; then binaries+=(--bin sent-import-postgres); fi
+    cargo build --release --locked --manifest-path "${rs}Cargo.toml" --target-dir "$ROOT/cargo-target" "${binaries[@]}"
     mkdir -p bin
     cp "$ROOT/cargo-target/release/sent-server" "$ROOT/cargo-target/release/sent-worker" bin/
+    if [[ -f "${rs}server/src/bin/sent-import-postgres.rs" ]]; then cp "$ROOT/cargo-target/release/sent-import-postgres" bin/; fi
     if [[ -n "$rs" ]]; then pnpm install --frozen-lockfile; fi
     pnpm --dir "${rs}web" install --frozen-lockfile
     NODE_ENV=production pnpm --dir "${rs}web" build
     [[ -f "${rs}web/dist/index.html" && -d "$migrations" ]]
     printf 'WEB_DIST_PATH=%s\nMIGRATIONS_PATH=%s\n' "$release/${rs}web/dist" "$release/$migrations" >runtime.env
+    if [[ -x bin/sent-import-postgres ]]; then printf 'SENT_DATABASE_PATH=%s\n' "$database" >>runtime.env; fi
   )
 fi
-for unit in sent-server.service sent-worker.service sent-deploy.service sent-deploy.timer; do
+for unit in sent-server.service sent-worker.service sent-deploy.service sent-deploy.timer sent-sqlite-backup.service sent-sqlite-backup.timer; do
   if [[ -f "$release/deploy/systemd/$unit" ]]; then install -D -m 644 "$release/deploy/systemd/$unit" "$UNITS/$unit"; fi
 done
 install -m 700 "$release/deploy/sent-run" "$ROOT/bin/sent-run.next"
 mv "$ROOT/bin/sent-run.next" "$ROOT/bin/sent-run"
 systemctl --user daemon-reload
+if [[ -x "$release/bin/sent-import-postgres" && ! -f "$database" ]]; then
+  log 'Stopping services for the initial SQLite import'
+  systemctl --user stop sent-worker.service sent-server.service
+fi
+if [[ -x "$release/bin/sent-import-postgres" && -f "$database" ]]; then
+  log 'Taking pre-migration SQLite backup'
+  dump="$ROOT/dumps/$(date -u +%Y%m%dT%H%M%S)-$sha.sqlite"
+  sqlite3 "$database" ".backup '${dump//\'/\'\'}'"
+else
 log 'Taking pre-migration database dump'
 # libpq does not expand a URL in PGDATABASE, and argv is visible to other users, so pass it as PG* variables.
 # shellcheck disable=SC2016
@@ -207,13 +230,27 @@ dump="$ROOT/dumps/$(date -u +%Y%m%dT%H%M%S)-$sha.dump"
 )
 mv "$dump.tmp" "$dump"
 unset pg_env
-mapfile -t dumps < <(find "$ROOT/dumps" -maxdepth 1 -name '*.dump' -printf '%f\n' | sort -r | tail -n +11)
+fi
+if [[ -x "$release/bin/sent-import-postgres" && ! -f "$database" ]]; then
+  log 'Importing PostgreSQL into SQLite'
+  imported=true
+  MIGRATIONS_PATH="$release/migrations" node --env-file="$ENV_FILE" -e '
+const {spawnSync} = require("node:child_process");
+const result = spawnSync(process.argv[1], [process.argv[2]], {stdio:"inherit", env:process.env});
+process.exit(result.status ?? 1);
+' "$release/bin/sent-import-postgres" "$database"
+fi
+mapfile -t dumps < <(find "$ROOT/dumps" -maxdepth 1 \( -name '*.dump' -o -name '*.sqlite' \) -printf '%f\n' | sort -r | tail -n +11)
 for old in "${dumps[@]}"; do rm -- "$ROOT/dumps/$old"; done
 # The Rust server applies pending migrations from runtime.env at startup, after this dump.
 link "$previous" "$ROOT/previous"
 link "$release" "$ROOT/current"
 restart
 healthy
+if [[ -x "$release/bin/sent-import-postgres" ]]; then
+  install -m 700 "$release/deploy/sqlite-backup.sh" "$ROOT/bin/sqlite-backup.sh"
+  systemctl --user enable --now sent-sqlite-backup.timer
+fi
 log "Release $sha healthy"
 install -m 700 "$release/deploy/deploy.sh" "$ROOT/bin/deploy.sh.next"
 mv "$ROOT/bin/deploy.sh.next" "$ROOT/bin/deploy.sh"

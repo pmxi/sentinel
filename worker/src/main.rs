@@ -1,5 +1,7 @@
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result};
 use chrono::{DateTime, Duration, Utc};
+use fs2::FileExt;
+use sent_core::db::Uuid;
 use sent_core::{config::Config, db, repository::Repository, services::Services};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -12,7 +14,6 @@ use tokio::{
     task::JoinSet,
     time::{MissedTickBehavior, interval},
 };
-use uuid::Uuid;
 
 #[derive(Clone, Copy, Debug, Hash, PartialEq, Eq, Serialize, Deserialize)]
 enum Kind {
@@ -132,19 +133,27 @@ async fn shutdown_signal() {
     }
 }
 
+fn worker_lock(path: &std::path::Path) -> Result<std::fs::File> {
+    let lock = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(format!(
+            "{}.worker.lock",
+            std::fs::canonicalize(path)?.display()
+        ))?;
+    lock.try_lock_exclusive()
+        .context("A Rust worker is already running for this database")?;
+    Ok(lock)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let config = Config::from_env()?;
-    let pool = db::pool(&config.database_url, false).await?;
+    let pool = db::pool(&config.database_path, false).await?;
     db::migrate(&pool, &config.migrations_path).await?;
-    let mut lock = pool.acquire().await?;
-    let acquired: bool = sqlx::query_scalar("select pg_try_advisory_lock(89372413)")
-        .fetch_one(&mut *lock)
-        .await?;
-    ensure!(
-        acquired,
-        "A Rust worker is already running for this database"
-    );
+    let lock = worker_lock(std::path::Path::new(&config.database_path))?;
     let services = Arc::new(Services::new(config, Repository(pool.clone())));
     let metadata: Option<serde_json::Value> =
         sqlx::query_scalar("select metadata from worker_state where name='main'")
@@ -183,7 +192,7 @@ async fn main() -> Result<()> {
                     Err(error)=>eprintln!("Account poll failed: {error}"),
                 }
             }
-            _=beat.tick()=>{sqlx::query("select 1").execute(&mut *lock).await?;if let Err(error)=checkpoint(&services,&jobs).await {eprintln!("Heartbeat failed: {error}");}}
+            _=beat.tick()=>{if let Err(error)=checkpoint(&services,&jobs).await {eprintln!("Heartbeat failed: {error}");}}
             _=drain.tick()=>{if outbox.is_empty(){let service=services.clone();outbox.spawn(async move{service.process_outbox().await});}}
             Some(result)=outbox.join_next(),if !outbox.is_empty()=>{match result {Ok(Ok(count))=>{if count>0 {println!("Processed {count} outbox mutations");}},Ok(Err(error))=>eprintln!("Outbox failed: {error}"),Err(error)=>eprintln!("Outbox task failed: {error}")}}
             Some(result)=tasks.join_next(),if !tasks.is_empty()=>{
@@ -249,16 +258,24 @@ async fn main() -> Result<()> {
         while outbox.join_next().await.is_some() {}
     }
     checkpoint(&services, &jobs).await?;
-    sqlx::query("select pg_advisory_unlock(89372413)")
-        .execute(&mut *lock)
-        .await?;
-    lock.close().await?;
+    drop(lock);
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn file_lock_is_exclusive_and_released_on_drop() -> Result<()> {
+        let database = tempfile::NamedTempFile::new()?;
+        let lock = worker_lock(database.path())?;
+        assert!(worker_lock(database.path()).is_err());
+        drop(lock);
+        drop(worker_lock(database.path())?);
+        std::fs::remove_file(format!("{}.worker.lock", database.path().display()))?;
+        assert!(worker_lock(&database.path().join("missing")).is_err());
+        Ok(())
+    }
     #[test]
     fn retries_are_exponential_and_bounded() {
         for (kind, count, delay) in [

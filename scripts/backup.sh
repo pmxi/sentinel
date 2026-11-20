@@ -1,9 +1,19 @@
 #!/bin/sh
 set -eu
+umask 077
 
+database=$("${SENT_SERVER_BIN:-sent-server}" --print-database-path)
 backup_dir=${SENT_BACKUP_DIR:-./backups}
-timestamp=$(date -u +%Y%m%dT%H%M%SZ)
+[ -f "$database" ] || { echo 'SQLite database does not exist.' >&2; exit 1; }
+database=$(realpath "$database")
 mkdir -p "$backup_dir"
-docker compose exec -T postgres pg_dump -U sent -d sent -Fc > "$backup_dir/sent-$timestamp.dump"
-find "$backup_dir" -type f -name 'sent-*.dump' -mtime +14 -delete
-echo "Created $backup_dir/sent-$timestamp.dump"
+cd "$backup_dir"
+backup="sent-script-backup-$(date -u +%Y%m%dT%H%M%S)-$$.sqlite"
+temporary="$backup.tmp"
+(set -C; : > "$temporary")
+trap 'rm -f "$temporary"' EXIT HUP INT TERM
+sqlite3 -readonly "$database" ".backup $temporary"
+mv -n "$temporary" "$backup"
+[ ! -e "$temporary" ] || { echo 'Backup destination already exists.' >&2; exit 1; }
+find . -maxdepth 1 -type f -name 'sent-script-backup-*.sqlite' ! -samefile "$database" -mtime +13 -delete
+printf 'Created %s/%s\n' "$(pwd)" "$backup"

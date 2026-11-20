@@ -6,6 +6,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use sent_core::db::Uuid;
 use sent_core::repository::{ReplicaInventory, replica_fingerprint};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -14,7 +15,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use uuid::Uuid;
 
 #[derive(Default)]
 pub struct Feed {
