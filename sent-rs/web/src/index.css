@@ -1,14 +1,16 @@
 :root {
-  color: #171717;
+  color: #202823;
   background: #fff;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --ink: #171717;
-  --muted: #666;
-  --faint: #999;
-  --line: #e2e2e2;
+  --ink: #202823;
+  --muted: #66706a;
+  --faint: #737c76;
+  --line: #e7ebe7;
   --paper: #fff;
+  --accent: #315d4b;
+  --accent-soft: #e8f0eb;
   --red: #b42318;
 }
 
@@ -74,7 +76,8 @@ a {
 }
 .login-card h1 {
   margin: 0 0 24px;
-  font-size: 18px;
+  font-size: 32px;
+  letter-spacing: -1.5px;
   line-height: 1.2;
 }
 .login-card label {
@@ -85,9 +88,9 @@ a {
 }
 .password-field {
   display: flex;
-  height: 36px;
+  height: 44px;
   border: 1px solid var(--line);
-  border-radius: 2px;
+  border-radius: 8px;
   background: #fff;
   overflow: hidden;
   transition:
@@ -129,7 +132,7 @@ a {
 .app-shell {
   height: 100%;
   display: grid;
-  grid-template-columns: 200px minmax(0, 1fr);
+  grid-template-columns: 224px minmax(0, 1fr);
 }
 .shortcuts-button {
   display: flex;
@@ -163,7 +166,8 @@ kbd {
 .global-search > kbd {
   position: absolute;
   right: 10px;
-  top: 7px;
+  top: 50%;
+  transform: translateY(-50%);
   pointer-events: none;
 }
 .global-search input {
@@ -325,9 +329,9 @@ kbd {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding: 18px 12px 14px;
+  padding: 22px 14px 18px;
   border-right: 1px solid var(--line);
-  background: #f5f5f5;
+  background: #f7f9f7;
 }
 .sidebar-brand {
   height: 40px;
@@ -337,7 +341,8 @@ kbd {
   justify-content: space-between;
 }
 .sidebar-brand a {
-  font-size: 16px;
+  font-size: 25px;
+  letter-spacing: -1px;
   font-weight: 600;
 }
 .mobile-close {
@@ -346,18 +351,19 @@ kbd {
   background: none;
 }
 .compose-button {
-  height: 32px;
+  height: 44px;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
-  margin: 14px 3px 18px;
-  padding: 0 10px;
-  border: 1px solid var(--line);
-  border-radius: 2px;
-  background: #fff;
-  color: #111;
-  font-size: 13px;
-  font-weight: 400;
+  justify-content: center;
+  gap: 10px;
+  margin: 18px 3px 26px;
+  padding: 0 16px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
 }
 .sidebar nav,
@@ -368,21 +374,22 @@ kbd {
 }
 .nav-label {
   padding: 4px 11px 7px;
-  color: #777;
+  color: var(--muted);
   font-size: 11px;
-  font-weight: 400;
+  font-weight: 600;
 }
 .nav-label.secondary {
   margin-top: 14px;
 }
 .sidebar nav a,
 .sidebar-bottom > a {
-  height: 32px;
+  min-height: 40px;
   display: flex;
   align-items: center;
   padding: 0 11px;
-  border-radius: 2px;
-  color: #555;
+  gap: 11px;
+  border-radius: 7px;
+  color: #58635c;
   font-size: 13px;
   font-weight: 400;
 }
@@ -392,8 +399,13 @@ kbd {
 }
 .sidebar nav a.active,
 .sidebar-bottom > a.active {
-  background: #e5e5e5;
-  color: #111;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.nav-icon {
+  display: inline-flex;
+  flex: 0 0 auto;
 }
 .sidebar nav a small {
   margin-left: auto;
@@ -432,27 +444,36 @@ kbd {
   overflow: hidden;
 }
 .topbar {
-  flex: 0 0 48px;
+  flex: 0 0 72px;
   display: flex;
   align-items: center;
   gap: 14px;
-  padding: 0 22px;
+  padding: 0 28px;
   border-bottom: 1px solid var(--line);
 }
-.mobile-menu {
+.mobile-menu,
+.mobile-compose {
   display: none;
   border: 0;
   background: none;
 }
 .global-search {
   width: min(480px, 62vw);
-  height: 30px;
+  min-width: 0;
+  height: 40px;
   display: flex;
   align-items: center;
+  gap: 10px;
   padding: 0 12px;
-  border: 1px solid #ddd;
-  border-radius: 2px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: #f3f5f3;
+  color: var(--muted);
+}
+.global-search:focus-within {
+  border-color: var(--accent);
   background: #fff;
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .global-search input {
   flex: 1;
@@ -461,7 +482,7 @@ kbd {
   outline: 0;
   background: transparent;
   color: var(--ink);
-  font-size: 13px;
+  font-size: 14px;
 }
 .connect-banner {
   display: flex;
@@ -484,7 +505,7 @@ kbd {
   min-height: 0;
   flex: 1;
   display: grid;
-  grid-template-columns: minmax(330px, 420px) minmax(440px, 1fr);
+  grid-template-columns: minmax(350px, 450px) minmax(0, 1fr);
 }
 .message-pane {
   min-width: 0;
@@ -495,7 +516,7 @@ kbd {
   background: #fff;
 }
 .pane-heading {
-  flex: 0 0 50px;
+  flex: 0 0 70px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -504,7 +525,8 @@ kbd {
 .pane-heading h1,
 .page-title h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: 22px;
+  letter-spacing: -0.5px;
   line-height: 1.2;
   font-weight: 600;
 }
@@ -524,6 +546,10 @@ kbd {
   font-size: 12px;
   text-align: right;
 }
+.pane-heading select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
 .message-list {
   flex: 1;
   min-height: 0;
@@ -534,7 +560,7 @@ kbd {
   position: relative;
   width: 100%;
   display: block;
-  padding: 10px 14px;
+  padding: 16px 18px 10px;
   border: 0;
   background: transparent;
   text-align: left;
@@ -552,8 +578,8 @@ kbd {
   margin-left: 8px;
 }
 .message-list-item.selected {
-  background: #ededed;
-  box-shadow: inset 2px 0 #171717;
+  background: #edf4ef;
+  box-shadow: inset 3px 0 var(--accent);
 }
 .message-ai-summary {
   display: flex;
@@ -561,7 +587,7 @@ kbd {
   gap: 5px;
   margin-top: 4px;
   color: #444;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.5;
 }
 .message-ai-summary > span:last-child {
@@ -576,7 +602,7 @@ kbd {
   font-weight: 600;
 }
 .ranking-reason {
-  margin: 0 14px 10px;
+  margin: 0 18px 14px;
   color: #666;
   font-size: 11px;
   line-height: 1.5;
@@ -604,9 +630,7 @@ kbd {
   font-weight: 500;
 }
 .ranking-preview {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: none;
 }
 .ranking-reason[open] .ranking-preview {
   display: none;
@@ -661,14 +685,14 @@ kbd {
   outline-offset: -2px;
 }
 .message-row.selected {
-  background: #ededed;
-  box-shadow: inset 2px 0 #171717;
+  background: #edf4ef;
+  box-shadow: inset 3px 0 var(--accent);
 }
 .message-row.unread {
   background: #fff;
 }
 .message-row.unread.selected {
-  background: #ededed;
+  background: #edf4ef;
 }
 .message-row.unclassified,
 .message-row.unclassified.unread {
@@ -681,6 +705,16 @@ kbd {
 .message-row.unread .message-subject {
   font-weight: 600;
   color: #111;
+}
+.message-row.unread .message-line::before {
+  content: "";
+  position: absolute;
+  top: 22px;
+  left: 7px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
 }
 .message-copy {
   display: block;
@@ -695,7 +729,7 @@ kbd {
 .message-line strong {
   overflow: hidden;
   color: #444;
-  font-size: 12px;
+  font-size: 13px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -737,7 +771,7 @@ kbd {
   margin-top: 3px;
   overflow: hidden;
   color: #444;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -747,7 +781,7 @@ kbd {
   margin-top: 2px;
   overflow: hidden;
   color: #777;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -758,8 +792,8 @@ kbd {
   gap: 5px;
   margin-top: 5px;
   overflow: hidden;
-  color: #999;
-  font-size: 10px;
+  color: var(--muted);
+  font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -810,7 +844,31 @@ kbd {
   font-weight: 400;
 }
 .empty-reader-pane {
-  background: #fff;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: #fbfcfa;
+  color: var(--muted);
+  text-align: center;
+  padding: 24px;
+  font-size: 13px;
+}
+.empty-reader-pane > svg {
+  margin-bottom: 8px;
+  color: #8b9b90;
+}
+.empty-reader-pane strong {
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 500;
+}
+.empty-reader-pane p {
+  margin: 0;
+  line-height: 1.6;
+}
+.empty-reader-pane .reader-hint {
+  margin-top: 12px;
+  font-size: 12px;
 }
 
 .reader {
@@ -821,7 +879,7 @@ kbd {
   overflow: hidden;
 }
 .reader-toolbar {
-  flex: 0 0 40px;
+  flex: 0 0 56px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -843,8 +901,8 @@ kbd {
   gap: 3px;
 }
 .icon-button {
-  width: 30px;
-  height: 30px;
+  width: 36px;
+  height: 36px;
   display: inline-grid;
   place-items: center;
   border: 0;
@@ -1174,13 +1232,15 @@ kbd {
   display: flex;
   flex-direction: column;
   border: 1px solid #ccc;
-  border-radius: 0;
+  border-radius: 12px;
   background: var(--paper);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.16);
+  box-shadow:
+    0 16px 64px #20332626,
+    0 2px 8px #20332612;
   overflow: hidden;
 }
 .composer-header {
-  min-height: 40px;
+  min-height: 52px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1274,17 +1334,17 @@ kbd {
   gap: 7px;
 }
 .primary-button {
-  height: 30px;
+  height: 36px;
   display: flex;
   align-items: center;
   gap: 7px;
   padding: 0 15px;
-  border: 1px solid var(--line);
-  border-radius: 2px;
-  background: #fff;
-  color: #111;
-  font-size: 12px;
-  font-weight: 400;
+  border: 1px solid var(--accent);
+  border-radius: 7px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
 }
 .file-button {
@@ -1402,6 +1462,10 @@ kbd {
   padding: 8px 0;
   border-bottom: 1px solid var(--line);
   font-size: 12px;
+}
+.connected-account span:first-child {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .connected-account span:last-child {
   color: #666;
@@ -1605,6 +1669,236 @@ kbd {
   .connect-banner {
     gap: 12px;
   }
+}
+
+/* Let the document, not an inset application rectangle, own phone scrolling.
+   Safari can then collapse its bars; safe-area padding protects notch/home controls. */
+@media (max-width: 700px) {
+  html,
+  body,
+  #root {
+    height: auto;
+    min-height: 100%;
+  }
+  body {
+    overflow: auto;
+    background: var(--paper);
+  }
+  #root,
+  .app-shell,
+  .app-main {
+    min-height: 100svh;
+  }
+  .app-shell,
+  .app-main {
+    height: auto;
+    overflow: visible;
+  }
+  .topbar {
+    position: sticky;
+    z-index: 10;
+    top: 0;
+    flex: none;
+    min-height: calc(64px + env(safe-area-inset-top));
+    padding: env(safe-area-inset-top) max(12px, env(safe-area-inset-right)) 0
+      max(12px, env(safe-area-inset-left));
+    gap: 8px;
+    background: var(--paper);
+  }
+  .mobile-menu,
+  .mobile-close,
+  .mobile-compose {
+    display: inline-grid;
+    flex: 0 0 44px;
+    width: 44px;
+    height: 44px;
+    place-items: center;
+    padding: 0;
+    border-radius: 8px;
+  }
+  .mobile-compose {
+    color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .global-search {
+    min-width: 0;
+    height: 44px;
+  }
+  .global-search input {
+    width: 100%;
+    font-size: 16px;
+    padding-right: 0;
+  }
+  .global-search > kbd {
+    display: none;
+  }
+  .sidebar {
+    height: 100dvh;
+    width: min(300px, calc(100vw - 48px));
+    padding-top: max(20px, env(safe-area-inset-top));
+    padding-bottom: max(20px, env(safe-area-inset-bottom));
+    padding-left: max(14px, env(safe-area-inset-left));
+    overflow-y: auto;
+  }
+  .sidebar nav a,
+  .sidebar-bottom > a,
+  .shortcuts-button {
+    min-height: 44px;
+  }
+  .mail-layout {
+    overflow: visible;
+  }
+  .message-pane {
+    height: auto;
+  }
+  .message-list {
+    flex: none;
+    overflow: visible;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .pane-heading {
+    min-height: 68px;
+    padding-inline: max(18px, env(safe-area-inset-left)) max(18px, env(safe-area-inset-right));
+  }
+  .pane-heading h1 {
+    font-size: 23px;
+  }
+  .pane-heading select {
+    min-height: 44px;
+  }
+  .message-row {
+    padding: 16px max(18px, env(safe-area-inset-right)) 10px max(18px, env(safe-area-inset-left));
+  }
+  .message-line strong {
+    font-size: 14px;
+  }
+  .message-subject {
+    font-size: 15px;
+  }
+  .message-meta {
+    margin-top: 8px;
+  }
+  .ranking-reason summary {
+    min-height: 28px;
+  }
+  .ranking-reason {
+    margin-bottom: 10px;
+  }
+  .has-reader .message-pane {
+    display: none;
+  }
+  .reader {
+    position: static;
+    transform: none;
+    overflow: visible;
+  }
+  .empty-reader-pane {
+    display: none;
+  }
+  .reader-toolbar {
+    min-height: 56px;
+    gap: 4px;
+    padding-inline: max(8px, env(safe-area-inset-left)) max(8px, env(safe-area-inset-right));
+  }
+  .back-button {
+    min-height: 44px;
+    padding: 0 8px;
+  }
+  .toolbar-actions {
+    gap: 0;
+  }
+  .icon-button {
+    width: 44px;
+    height: 44px;
+  }
+  .tier-picker {
+    gap: 0;
+    margin-right: 0;
+  }
+  .tier-picker > span {
+    display: none;
+  }
+  .tier-picker select {
+    min-height: 44px;
+    padding: 0 2px;
+  }
+  .message-reader {
+    overflow: visible;
+    padding: 24px max(20px, env(safe-area-inset-right)) max(40px, env(safe-area-inset-bottom))
+      max(20px, env(safe-area-inset-left));
+  }
+  .latest-message-heading {
+    overflow-wrap: anywhere;
+  }
+  .single-page {
+    overflow: visible;
+    padding-bottom: max(48px, env(safe-area-inset-bottom));
+  }
+  .composer {
+    height: 100dvh;
+    padding-top: env(safe-area-inset-top);
+  }
+  .composer-footer {
+    min-height: calc(64px + env(safe-area-inset-bottom));
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+  .compose-row input,
+  .compose-row select,
+  .compose-body {
+    font-size: 16px;
+  }
+  .primary-button,
+  .reply-actions button,
+  .connect-actions button,
+  .logout-button {
+    min-height: 44px;
+  }
+  .action-toasts {
+    bottom: max(20px, env(safe-area-inset-bottom));
+  }
+  .login-page {
+    min-height: 100svh;
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom);
+  }
+  .password-field input {
+    font-size: 16px;
+  }
+}
+@media (pointer: coarse) {
+  .global-search > kbd,
+  .shortcuts-button kbd,
+  .command-option kbd,
+  .command-footer {
+    display: none;
+  }
+}
+button:focus-visible,
+a:focus-visible,
+select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.compose-button:hover,
+.primary-button:hover {
+  filter: brightness(0.92);
+}
+.empty-list {
+  padding: 32px 20px;
+  line-height: 1.6;
+}
+.empty-list strong {
+  color: var(--ink);
+  font-weight: 500;
+  font-size: 15px;
+}
+.empty-list svg {
+  margin-bottom: 8px;
+  color: #8b9b90;
+}
+.login-card > p {
+  margin: -12px 0 28px;
+  color: var(--muted);
+  font-size: 14px;
 }
 
 @media (prefers-reduced-motion: reduce) {

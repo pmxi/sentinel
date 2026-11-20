@@ -130,7 +130,11 @@ function Shell({ accounts }: { accounts: Account[] }) {
           <Link to="/">
             <strong>Sent</strong>
           </Link>
-          <button className="mobile-close" onClick={() => setMenuOpen(false)}>
+          <button
+            className="mobile-close"
+            aria-label="Close navigation"
+            onClick={() => setMenuOpen(false)}
+          >
             <X size={20} />
           </button>
         </div>
@@ -186,7 +190,12 @@ function Shell({ accounts }: { accounts: Account[] }) {
       )}
       <main className="app-main">
         <header className="topbar">
-          <button className="mobile-menu" onClick={() => setMenuOpen(true)}>
+          <button
+            className="mobile-menu"
+            aria-label="Open navigation"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen(true)}
+          >
             <Menu size={21} />
           </button>
           <form className="global-search" onSubmit={submitSearch}>
@@ -196,6 +205,8 @@ function Shell({ accounts }: { accounts: Account[] }) {
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder="Search"
+              type="search"
+              enterKeyHint="search"
               onKeyDown={(event) => {
                 if (event.key === "Escape") event.currentTarget.blur();
               }}

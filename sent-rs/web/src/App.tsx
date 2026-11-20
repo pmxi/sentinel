@@ -1,6 +1,20 @@
 import type { Account, Draft } from "@sent/shared";
 import { createMutation, createQuery, useQueryClient } from "@tanstack/solid-query";
-import { Command, Menu, X } from "lucide-solid";
+import {
+  Command,
+  FilePenLine,
+  Inbox,
+  Layers,
+  Mail,
+  Menu,
+  PencilLine,
+  Search,
+  Send,
+  Settings2,
+  Sparkles,
+  Trash2,
+  X,
+} from "lucide-solid";
 import {
   type Accessor,
   createContext,
@@ -147,7 +161,11 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
               <Link href="/">
                 <strong>Sent</strong>
               </Link>
-              <button class="mobile-close" onClick={() => setMenuOpen(false)}>
+              <button
+                class="mobile-close"
+                aria-label="Close navigation"
+                onClick={() => setMenuOpen(false)}
+              >
                 <X size={20} />
               </button>
             </div>
@@ -158,19 +176,24 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
                 setMenuOpen(false);
               }}
             >
-              Compose
+              <PencilLine size={17} aria-hidden="true" />
+              <span>Compose</span>
             </button>
             <nav>
-              <span class="nav-label">Attention</span>
-              <NavItem href="/inbox/l1" label="Important" badge="L1" />
-              <NavItem href="/inbox/l2" label="Updates" badge="L2" />
-              <NavItem href="/inbox/l3" label="Low priority" badge="L3" />
+              <span class="nav-label">Your inbox</span>
+              <NavItem href="/inbox/l1" label="Important" icon={<Inbox size={17} />} />
+              <NavItem href="/inbox/l2" label="Updates" icon={<Layers size={17} />} />
+              <NavItem href="/inbox/l3" label="Low priority" icon={<Mail size={17} />} />
               <span class="nav-label secondary">Mail</span>
-              <NavItem href="/inbox/unclassified" label="Sorting" />
-              <NavItem href="/inbox/all" label="All mail" />
-              <NavItem href="/inbox/sent" label="Sent" />
-              <NavItem href="/drafts" label="Drafts" />
-              <NavItem href="/inbox/trash" label="Trash" />
+              <NavItem
+                href="/inbox/unclassified"
+                label="Awaiting sorting"
+                icon={<Sparkles size={17} />}
+              />
+              <NavItem href="/inbox/all" label="All mail" icon={<Mail size={17} />} />
+              <NavItem href="/inbox/sent" label="Sent" icon={<Send size={17} />} />
+              <NavItem href="/drafts" label="Drafts" icon={<FilePenLine size={17} />} />
+              <NavItem href="/inbox/trash" label="Trash" icon={<Trash2 size={17} />} />
             </nav>
             <div class="sidebar-bottom">
               <button
@@ -184,7 +207,7 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
                 <span>Commands</span>
                 <kbd>{navigator.platform.includes("Mac") ? "⌘ K" : "Ctrl K"}</kbd>
               </button>
-              <NavItem href="/settings" label="Settings" />
+              <NavItem href="/settings" label="Settings" icon={<Settings2 size={17} />} />
               <div class="account-stack">
                 {props.accounts.map((account) => (
                   <div title={account.email}>
@@ -203,10 +226,16 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
           )}
           <main class="app-main">
             <header class="topbar">
-              <button class="mobile-menu" onClick={() => setMenuOpen(true)}>
+              <button
+                class="mobile-menu"
+                aria-label="Open navigation"
+                aria-expanded={menuOpen()}
+                onClick={() => setMenuOpen(true)}
+              >
                 <Menu size={21} />
               </button>
               <form class="global-search" onSubmit={submitSearch}>
+                <Search size={17} aria-hidden="true" />
                 <input
                   ref={(element) => {
                     searchInput.current = element;
@@ -214,13 +243,22 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
                   aria-label="Search mail"
                   value={query()}
                   onInput={(event) => setQuery(event.currentTarget.value)}
-                  placeholder="Search"
+                  placeholder="Search mail"
+                  type="search"
+                  enterkeyhint="search"
                   onKeyDown={(event) => {
                     if (event.key === "Escape") event.currentTarget.blur();
                   }}
                 />
                 <kbd>/</kbd>
               </form>
+              <button
+                class="mobile-compose"
+                aria-label="Compose a message"
+                onClick={() => compose.openCompose()}
+              >
+                <PencilLine size={21} aria-hidden="true" />
+              </button>
             </header>
             {props.accounts.length === 0 && location.pathname !== "/settings" && (
               <div class="connect-banner">
@@ -235,13 +273,15 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
     </>
   );
 }
-function NavItem(props: { href: string; label: string; badge?: string }) {
+function NavItem(props: { href: string; label: string; icon?: JSX.Element }) {
   return (
     <>
       {
         <NavLink href={props.href}>
+          <span class="nav-icon" aria-hidden="true">
+            {props.icon}
+          </span>
           <span>{props.label}</span>
-          {props.badge && <small>{props.badge}</small>}
         </NavLink>
       }
     </>

@@ -7,7 +7,7 @@ import type {
   Tier,
 } from "@sent/shared";
 import { createMutation, createQuery, useQueryClient } from "@tanstack/solid-query";
-import { createVirtualizer } from "@tanstack/solid-virtual";
+import { createVirtualizer, createWindowVirtualizer } from "@tanstack/solid-virtual";
 import { Archive, Flag, Mail, MailOpen, Paperclip, Trash2 } from "lucide-solid";
 import {
   type Accessor,
@@ -87,7 +87,7 @@ const viewDetails: Record<
   l1: { title: "Important" },
   l2: { title: "Updates" },
   l3: { title: "Low priority" },
-  unclassified: { title: "Sorting" },
+  unclassified: { title: "Awaiting sorting" },
   all: { title: "All mail" },
   sent: { title: "Sent" },
   trash: { title: "Trash" },
@@ -126,6 +126,7 @@ export function InboxPage(props: { accounts: Account[] }) {
               </div>
               {props.accounts.length > 1 && (
                 <select
+                  aria-label="Filter by account"
                   value={accountId() ?? ""}
                   onInput={(event) => {
                     const next = new URLSearchParams(params());
@@ -153,6 +154,20 @@ export function InboxPage(props: { accounts: Account[] }) {
               error={messages.error?.message}
               selectedId={selectedId()}
               onSelect={select}
+              emptyTitle={
+                route.view === "unclassified"
+                  ? "Everything is sorted"
+                  : route.view === "trash"
+                    ? "Nothing in Trash"
+                    : "No conversations here"
+              }
+              emptyDescription={
+                route.view === "unclassified"
+                  ? "New mail will appear here while Sent finds its place."
+                  : route.view === "trash"
+                    ? "Deleted conversations will appear here."
+                    : "You're up to date. New mail will appear here."
+              }
             />
           </section>
           <Show when={selectedId()} keyed fallback={<EmptyReader />}>
@@ -223,6 +238,8 @@ export function SearchResults(props: { accounts: Account[] }) {
               loading={result.isLoading}
               error={result.error?.message}
               selectedId={selectedId()}
+              emptyTitle="No matching conversations"
+              emptyDescription="Try a different name, phrase, or email address."
               onSelect={(message) => {
                 const next = new URLSearchParams(params());
                 next.set("message", message.id);
@@ -262,34 +279,86 @@ function MessageList(props: {
   loadingMore?: boolean;
   loadError?: string;
   onLoadMore?(): Promise<void>;
+  emptyTitle?: string;
+  emptyDescription?: string;
 }) {
   const [list, setList] = createSignal<HTMLDivElement>();
+  const mobileQuery = window.matchMedia("(max-width: 700px)");
+  const [mobile, setMobile] = createSignal(mobileQuery.matches);
+  const updateMobile = () => setMobile(mobileQuery.matches);
+  mobileQuery.addEventListener("change", updateMobile);
+  onCleanup(() => mobileQuery.removeEventListener("change", updateMobile));
   const itemKey = createMemo(() => {
     const ids = props.messages.map((message) => message.threadId);
     return (index: number) => ids[index];
   });
-  const virtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
+  const sharedOptions = {
     get count() {
       return props.messages.length;
     },
-    getScrollElement: () => list() ?? null,
     get getItemKey() {
       return itemKey();
     },
-    estimateSize: () => 124,
-    measureElement: (element, entry) =>
-      entry?.borderBoxSize?.[0]?.blockSize || element.offsetHeight || 124,
+    estimateSize: () => 150,
+    measureElement: (element: HTMLDivElement, entry: ResizeObserverEntry | undefined) =>
+      entry?.borderBoxSize?.[0]?.blockSize || element.offsetHeight || 150,
     overscan: 5,
     initialRect: { width: 400, height: 700 },
+  };
+  const paneVirtualizer = createVirtualizer<HTMLDivElement, HTMLDivElement>({
+    ...sharedOptions,
+    get count() {
+      return sharedOptions.count;
+    },
+    get getItemKey() {
+      return itemKey();
+    },
+    getScrollElement: () => list() ?? null,
+    get enabled() {
+      return !mobile();
+    },
+  });
+  // Native document scrolling lets mobile Safari collapse its browser bars.
+  // Keep desktop's independently scrolling, virtualized split view unchanged.
+  const pageVirtualizer = createWindowVirtualizer<HTMLDivElement>({
+    ...sharedOptions,
+    get count() {
+      return sharedOptions.count;
+    },
+    get getItemKey() {
+      return itemKey();
+    },
+    get enabled() {
+      return mobile() && !props.selectedId;
+    },
+    get scrollMargin() {
+      return list() ? (list()?.getBoundingClientRect().top ?? 0) + window.scrollY : 0;
+    },
+  });
+  const virtualizer = () => (mobile() ? pageVirtualizer : paneVirtualizer);
+  let listScroll = 0;
+  const rememberScroll = () => {
+    if (mobile() && !props.selectedId) listScroll = window.scrollY;
+  };
+  window.addEventListener("scroll", rememberScroll, { passive: true });
+  onCleanup(() => window.removeEventListener("scroll", rememberScroll));
+  createEffect(() => {
+    const selected = props.selectedId;
+    if (mobile()) queueMicrotask(() => window.scrollTo(0, selected ? 0 : listScroll));
   });
   const positions = createMemo(
     () => new Map(props.messages.map((message, index) => [message.threadId, index])),
   );
   const slots = createMemo(
-    () => new Map(virtualizer.getVirtualItems().map((row) => [row.key, row])),
+    () =>
+      new Map(
+        virtualizer()
+          .getVirtualItems()
+          .map((row) => [row.key, row]),
+      ),
   );
   const rendered = createMemo(() =>
-    virtualizer
+    virtualizer()
       .getVirtualItems()
       .flatMap((row) => (props.messages[row.index] ? [props.messages[row.index]] : [])),
   );
@@ -305,7 +374,7 @@ function MessageList(props: {
     if (!message) return;
     setCursorThreadId(message.threadId);
     setPendingFocus(message.threadId);
-    virtualizer.scrollToIndex(index, { align: "auto" });
+    virtualizer().scrollToIndex(index, { align: "auto" });
     if (props.selectedId && props.selectedId !== message.id) props.onSelect(message);
   };
   const move = (direction: number) => {
@@ -336,7 +405,7 @@ function MessageList(props: {
     if (element && id)
       queueMicrotask(() => {
         if (list() === element && selectedThread() === id)
-          virtualizer.scrollToIndex(positions().get(id) ?? 0, { align: "auto" });
+          if (!mobile()) virtualizer().scrollToIndex(positions().get(id) ?? 0, { align: "auto" });
       });
   });
   createEffect(() => {
@@ -355,7 +424,7 @@ function MessageList(props: {
     });
   });
   createEffect(() => {
-    const last = virtualizer.getVirtualItems().at(-1)?.index ?? -1;
+    const last = virtualizer().getVirtualItems().at(-1)?.index ?? -1;
     if (
       props.hasMore &&
       !props.loadingMore &&
@@ -415,7 +484,9 @@ function MessageList(props: {
       <Match when={props.messages.length === 0}>
         {
           <div class="empty-list">
-            <strong>No messages</strong>
+            <MailOpen size={26} stroke-width={1.5} aria-hidden="true" />
+            <strong>{props.emptyTitle ?? "No conversations here"}</strong>
+            {props.emptyDescription && <span>{props.emptyDescription}</span>}
           </div>
         }
       </Match>
@@ -431,7 +502,7 @@ function MessageList(props: {
           >
             <div
               style={{
-                height: `${virtualizer.getTotalSize()}px`,
+                height: `${virtualizer().getTotalSize()}px`,
                 position: "relative",
                 width: "100%",
               }}
@@ -442,14 +513,14 @@ function MessageList(props: {
                     data-index={positions().get(message.threadId)}
                     ref={(element) => {
                       element.dataset.index = String(positions().get(message.threadId));
-                      virtualizer.measureElement(element);
+                      virtualizer().measureElement(element);
                     }}
                     style={{
                       position: "absolute",
                       top: "0",
                       left: "0",
                       width: "100%",
-                      transform: `translateY(${slots().get(message.threadId)?.start ?? 0}px)`,
+                      transform: `translateY(${(slots().get(message.threadId)?.start ?? 0) - (mobile() ? (pageVirtualizer.options.scrollMargin ?? 0) : 0)}px)`,
                     }}
                     class={`message-list-item ${props.selectedId === message.id ? "selected" : ""}`}
                   >
@@ -996,7 +1067,16 @@ function TierPicker(props: { tier: Tier | null; disabled?: boolean; onChange(val
   );
 }
 function EmptyReader() {
-  return <>{<section class="reader empty-reader-pane" aria-label="No message selected" />}</>;
+  return (
+    <section class="reader empty-reader-pane" aria-label="No message selected">
+      <MailOpen size={34} stroke-width={1.25} aria-hidden="true" />
+      <strong>A little room to focus.</strong>
+      <p>Choose a conversation to read it here.</p>
+      <p class="reader-hint">
+        <kbd>j</kbd> <kbd>k</kbd> to move · <kbd>Enter</kbd> to open
+      </p>
+    </section>
+  );
 }
 function EmailFrame(props: { title: string; html: string }) {
   const frameRef = { current: null } as {
