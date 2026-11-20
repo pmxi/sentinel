@@ -577,4 +577,111 @@ mod tests {
         assert!(start(state.clone()).await.is_err());
         assert!(!state.live.available.load(Ordering::Acquire));
     }
+
+    #[tokio::test]
+    async fn direct_sql_commits_publish_fresh_inventory_without_notifications() {
+        async fn next(updates: &mut watch::Receiver<Update>) -> (String, Arc<ReplicaInventory>) {
+            tokio::time::timeout(Duration::from_secs(3), async {
+                loop {
+                    updates.changed().await.unwrap();
+                    if let Update::Changed { cursor, inventory } =
+                        updates.borrow_and_update().clone()
+                    {
+                        return (cursor, inventory);
+                    }
+                }
+            })
+            .await
+            .unwrap()
+        }
+        const FIXTURE: &str = "insert into accounts(id,provider,email,encrypted_credentials) values('00000000-0000-4000-8000-000000000001','gmail','fixture@example.test','test');
+            insert into threads(id,account_id,provider_thread_id,last_message_at) values('00000000-0000-4000-8000-000000000002','00000000-0000-4000-8000-000000000001','thread','2026-01-01T00:00:00.000000Z');
+            insert into messages(id,account_id,thread_id,provider_message_id,received_at,direction,text_body) values('00000000-0000-4000-8000-000000000003','00000000-0000-4000-8000-000000000001','00000000-0000-4000-8000-000000000002','message','2026-01-01T00:00:00.000000Z','inbound','Original');";
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("direct.sqlite");
+        let pool = sent_core::db::pool(path.to_str().unwrap(), true)
+            .await
+            .unwrap();
+        sent_core::db::migrate(
+            &pool,
+            &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../migrations"),
+        )
+        .await
+        .unwrap();
+        let state = Arc::new(State::new(
+            sent_core::config::Config::from_env().unwrap(),
+            sent_core::repository::Repository(pool),
+        ));
+        start(state.clone()).await.unwrap();
+        let mut updates = state.live.updates.subscribe();
+        assert!(next(&mut updates).await.1.messages.is_empty());
+        let writer = sent_core::db::pool(path.to_str().unwrap(), true)
+            .await
+            .unwrap();
+        let signal: i64 = sqlx::query_scalar("select revision from sent_live_signal")
+            .fetch_one(&writer)
+            .await
+            .unwrap();
+        let mut tx = writer.begin().await.unwrap();
+        sqlx::raw_sql(FIXTURE).execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+        let (_, inserted) = next(&mut updates).await;
+        assert_eq!(inserted.messages.len(), 1);
+        let original = inserted.messages[0]["bodyVersion"].clone();
+        sqlx::query("update messages set text_body='Direct edit',subject='Fresh subject'")
+            .execute(&writer)
+            .await
+            .unwrap();
+        let (_, edited) = next(&mut updates).await;
+        assert_eq!(edited.messages[0]["subject"], "Fresh subject");
+        assert_ne!(edited.messages[0]["bodyVersion"], original);
+        sqlx::query("insert into classifications(message_id,model_tier,reasoning,model,prompt_version,plain_text) values('00000000-0000-4000-8000-000000000003',1,'test','test','test','Direct classification')").execute(&writer).await.unwrap();
+        let (cursor, classified) = next(&mut updates).await;
+        assert_eq!(classified.messages[0]["tier"], 1);
+        assert_ne!(
+            classified.messages[0]["bodyVersion"],
+            edited.messages[0]["bodyVersion"]
+        );
+        sqlx::query("update threads set subject='Direct thread edit'")
+            .execute(&writer)
+            .await
+            .unwrap();
+        let (thread_cursor, thread_edit) = next(&mut updates).await;
+        assert_ne!(thread_cursor, cursor);
+        assert_eq!(thread_edit.messages, classified.messages);
+        sqlx::query("delete from classifications")
+            .execute(&writer)
+            .await
+            .unwrap();
+        let (_, unclassified) = next(&mut updates).await;
+        assert_eq!(
+            unclassified.messages[0]["bodyVersion"],
+            edited.messages[0]["bodyVersion"]
+        );
+        let mut tx = writer.begin().await.unwrap();
+        sqlx::query("delete from accounts")
+            .execute(&mut *tx)
+            .await
+            .unwrap();
+        sqlx::raw_sql(FIXTURE).execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+        let (_, reseeded) = next(&mut updates).await;
+        assert_eq!(reseeded.messages[0]["bodyVersion"], original);
+        assert_ne!(
+            reseeded.messages[0]["bodyVersion"],
+            unclassified.messages[0]["bodyVersion"]
+        );
+        sqlx::query("delete from threads")
+            .execute(&writer)
+            .await
+            .unwrap();
+        assert!(next(&mut updates).await.1.messages.is_empty());
+        assert_eq!(
+            sqlx::query_scalar::<_, i64>("select revision from sent_live_signal")
+                .fetch_one(&writer)
+                .await
+                .unwrap(),
+            signal
+        );
+    }
 }
