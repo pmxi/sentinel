@@ -3,6 +3,31 @@ import { describe, expect, it, vi } from "vitest";
 import { prepareWarmReload } from "../src/warm.ts";
 
 describe("warm reload preparation", () => {
+  it("bounds a failed install's never-settling readiness and can prepare the next sample", async () => {
+    vi.useFakeTimers();
+    try {
+      const page = {
+        waitForLoadState: vi.fn().mockResolvedValue(undefined),
+        evaluate: vi
+          .fn()
+          .mockReturnValueOnce(new Promise(() => {}))
+          .mockResolvedValue({ registered: false, controlled: false }),
+        reload: vi.fn(),
+      };
+      const failures: string[] = [];
+      const pending = prepareWarmReload(page as unknown as Page).catch((cause: Error) => {
+        failures.push(cause.message);
+      });
+      await vi.advanceTimersByTimeAsync(30_001);
+      expect(failures).toEqual(["Warm reload setup timed out after 30000ms"]);
+      await pending;
+      await prepareWarmReload(page as unknown as Page);
+      expect(page.evaluate).toHaveBeenCalledTimes(2);
+      expect(page.reload).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it.each([
     { registered: false, controlled: false },
     { registered: true, controlled: true },
