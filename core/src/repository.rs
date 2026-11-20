@@ -2,6 +2,7 @@ use crate::db::Uuid;
 use anyhow::{Context, Result, bail};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, SecondsFormat, Utc};
+use futures_util::TryStreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -514,52 +515,49 @@ impl Repository {
           left join cached_values cached on cached.key=m.id
           where not m.tombstone and (?1 is null or m.id in (select value from json_each(?1))) order by m.id");
         let mut tx = self.0.begin().await?;
-        let rows = sqlx::query(&query)
+        let mut rows = sqlx::query(&query)
             .bind(ids.map(|ids| json!(ids)))
             .bind(cache.parameters(ids))
-            .fetch_all(&mut *tx)
-            .await?;
-        let accounts = sqlx::query("select id,provider,email,display_name,status,last_synced_at from accounts order by created_at").fetch_all(&mut *tx).await?.iter().map(|row| json!({
-            "id":row.get::<Uuid,_>("id"),"provider":row.get::<String,_>("provider"),"email":row.get::<String,_>("email"),"displayName":row.get::<String,_>("display_name"),"status":row.get::<String,_>("status"),"lastSyncedAt":date(row,"last_synced_at")
-        })).collect();
+            .fetch(&mut *tx);
         let mut versions = Vec::new();
-        let messages = rows
-            .iter()
-            .map(|row| {
-                let mut value = cached_detail(row, true);
+        let mut messages = Vec::new();
+        let mut computed = 0;
+        while let Some(row) = rows.try_next().await? {
+            let mut value = cached_detail(&row, true);
+            let version = if row.get::<bool, _>("body_cache_hit") {
+                row.get::<String, _>("cached_version")
+            } else {
+                computed += 1;
                 let body = [
                     json!(row.get::<Option<String>, _>("hash_text_body")),
                     json!(row.get::<Option<String>, _>("hash_html_body")),
                     json!(row.get::<Option<String>, _>("hash_plain_text")),
                 ];
                 let input = format!("[{}, {}, {}]", body[0], body[1], body[2]);
-                let version = if row.get::<bool, _>("body_cache_hit") {
-                    row.get::<String, _>("cached_version")
-                } else {
-                    format!("{:x}", Sha256::digest(input.as_bytes()))
-                };
-                versions.push((
-                    row.get::<Uuid, _>("id"),
-                    row.get::<String, _>("source_revision"),
-                    version.clone(),
-                ));
-                value["bodyVersion"] = json!(version);
-                value["bodyAvailable"] = json!(row.get::<bool, _>("body_available"));
-                value["sortReceivedAt"] = json!(
-                    row.get::<DateTime<Utc>, _>("sort_received_at")
-                        .to_rfc3339_opts(SecondsFormat::Micros, true)
-                );
-                value
-            })
-            .collect();
+                format!("{:x}", Sha256::digest(input.as_bytes()))
+            };
+            versions.push((
+                row.get::<Uuid, _>("id"),
+                row.get::<String, _>("source_revision"),
+                version.clone(),
+            ));
+            value["bodyVersion"] = json!(version);
+            value["bodyAvailable"] = json!(row.get::<bool, _>("body_available"));
+            value["sortReceivedAt"] = json!(
+                row.get::<DateTime<Utc>, _>("sort_received_at")
+                    .to_rfc3339_opts(SecondsFormat::Micros, true)
+            );
+            messages.push(value);
+        }
+        drop(rows);
+        let accounts = sqlx::query("select id,provider,email,display_name,status,last_synced_at from accounts order by created_at").fetch_all(&mut *tx).await?.iter().map(|row| json!({
+            "id":row.get::<Uuid,_>("id"),"provider":row.get::<String,_>("provider"),"email":row.get::<String,_>("email"),"displayName":row.get::<String,_>("display_name"),"status":row.get::<String,_>("status"),"lastSyncedAt":date(row,"last_synced_at")
+        })).collect();
         tx.commit().await?;
         if ids.is_none() {
             cache.entries.clear();
         }
-        cache.computed = rows
-            .iter()
-            .filter(|row| !row.get::<bool, _>("body_cache_hit"))
-            .count();
+        cache.computed = computed;
         for (id, revision, version) in versions {
             cache.remember(id, &revision, &version);
         }

@@ -2091,6 +2091,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dotenvy",
+ "futures-util",
  "html2text",
  "lettre",
  "libsqlite3-sys",

@@ -4,6 +4,72 @@ use sent_core::{
     db,
     repository::{BodyVersionCache, Repository},
 };
+use serde_json::json;
+use sha2::{Digest, Sha256};
+
+#[tokio::test]
+async fn streamed_body_versions_match_the_buffered_digest_format() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("digest-compatibility.sqlite");
+    let pool = db::pool(path.to_str().unwrap(), true).await?;
+    db::migrate(
+        &pool,
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../migrations"),
+    )
+    .await?;
+    let repo = Repository(pool.clone());
+    let account = Uuid::new_v4();
+    let thread = Uuid::new_v4();
+    sqlx::query("insert into accounts(id,provider,email,encrypted_credentials) values(?1,'gmail','fixture@example.test','test')").bind(account).execute(&pool).await?;
+    sqlx::query("insert into threads(id,account_id,provider_thread_id,last_message_at) values(?1,?2,'fixture','2026-01-01T00:00:00.000000Z')").bind(thread).bind(account).execute(&pool).await?;
+    let fixtures = [
+        ("Original".to_owned(), None, None),
+        (String::new(), Some(String::new()), Some(String::new())),
+        (
+            "Unicode 雪 🦀 \"quoted\" \\ slash\n\t\0".into(),
+            Some("<p>HTML &amp; é</p>".to_owned()),
+            Some("Plain\r\ntext".to_owned()),
+        ),
+        (
+            "large body\n".repeat(30_000),
+            None,
+            Some("Reader text".to_owned()),
+        ),
+    ];
+    let mut expected = std::collections::HashMap::new();
+    for (text, html, plain) in fixtures {
+        let id = Uuid::new_v4();
+        sqlx::query("insert into messages(id,account_id,thread_id,provider_message_id,received_at,direction,text_body,html_body) values(?1,?2,?3,?1,'2026-01-01T00:00:00.000000Z','inbound',?4,?5)").bind(id).bind(account).bind(thread).bind(&text).bind(&html).execute(&pool).await?;
+        if let Some(plain) = &plain {
+            sqlx::query("insert into classifications(message_id,model_tier,reasoning,model,prompt_version,plain_text) values(?1,1,'test','test','test',?2)").bind(id).bind(plain).execute(&pool).await?;
+        }
+        let input = format!("[{}, {}, {}]", json!(text), json!(html), json!(plain));
+        expected.insert(
+            id.to_string(),
+            format!("{:x}", Sha256::digest(input.as_bytes())),
+        );
+    }
+    let mut cache = BodyVersionCache::default();
+    for bodies in [false, false, true] {
+        let inventory = repo
+            .replica_inventory_cached(None, bodies, &mut cache)
+            .await?;
+        assert_eq!(inventory.messages.len(), expected.len());
+        for message in inventory.messages {
+            assert_eq!(
+                message["bodyVersion"].as_str().unwrap(),
+                expected[message["id"].as_str().unwrap()]
+            );
+            if !bodies {
+                assert_eq!(message["textBody"], "");
+                assert_eq!(message["htmlBody"], json!(null));
+                assert_eq!(message["plainText"], json!(null));
+            }
+        }
+    }
+    assert_eq!(cache.computed(), 0);
+    Ok(())
+}
 
 #[tokio::test]
 async fn cached_body_versions_follow_committed_mvcc_rows_without_timestamp_assumptions()
