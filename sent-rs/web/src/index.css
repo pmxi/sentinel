@@ -543,6 +543,14 @@ kbd {
 .message-list-item {
   border-bottom: 1px solid var(--line);
 }
+.message-pagination {
+  padding: 14px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.message-pagination button {
+  margin-left: 8px;
+}
 .message-list-item.selected {
   background: #ededed;
   box-shadow: inset 2px 0 #171717;

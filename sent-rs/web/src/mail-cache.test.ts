@@ -46,6 +46,26 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 describe("optimistic mailbox transactions", () => {
+  it("keeps later loaded pages during optimistic writes and rollback", () => {
+    const client = fixture();
+    const messages = Array.from({ length: 150 }, (_, index) => ({
+      ...row,
+      id: index === 0 ? "one" : `message-${index}`,
+      threadId: index === 0 ? "thread" : `thread-${index}`,
+      receivedAt: new Date(Date.UTC(2026, 0, 1) - index * 1000).toISOString(),
+    }));
+    client.setQueryData(["messages", "l1"], { messages, pageCount: 2, nextCursor: "third" });
+    const transaction = optimistic(client, { id: "one", action: "flag" });
+    expect(client.getQueryData<{ messages: unknown[] }>(["messages", "l1"])?.messages).toHaveLength(
+      150,
+    );
+    transaction.rollback();
+    expect(client.getQueryData(["messages", "l1"])).toEqual({
+      messages,
+      pageCount: 2,
+      nextCursor: "third",
+    });
+  });
   it.each([false, true])(
     "restores overlapping automatic/manual reads when both fail (reverse=%s)",
     (reverse) => {

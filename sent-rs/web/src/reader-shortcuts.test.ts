@@ -63,6 +63,26 @@ function mount(
   children: () => ReturnType<typeof createComponent>,
   configure?: (client: QueryClient) => void,
 ) {
+  vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return this.classList.contains("message-list") ? 700 : 0;
+  });
+  vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(400);
+  vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (
+    this: HTMLElement,
+  ) {
+    return (
+      Number.parseFloat((this.firstElementChild as HTMLElement | null)?.style.height ?? "0") || 0
+    );
+  });
+  vi.spyOn(HTMLElement.prototype, "scrollTo").mockImplementation(function (
+    this: HTMLElement,
+    options?: ScrollToOptions | number,
+  ) {
+    if (typeof options === "object") this.scrollTop = options.top ?? this.scrollTop;
+    this.dispatchEvent(new Event("scroll"));
+  });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   configure?.(client);
   const container = document.createElement("div");
@@ -139,6 +159,111 @@ function press(key: string) {
 }
 
 describe("reader triage shortcuts", () => {
+  it("finishes a boundary j after a slow next page is delivered", async () => {
+    const first = {
+      ...message,
+      read: true,
+      messageCount: 1,
+      unreadCount: 0,
+      participants: message.from,
+    };
+    const after = {
+      ...first,
+      id: "after",
+      threadId: "after-thread",
+      subject: "After the first page",
+    };
+    const rows = [
+      ...Array.from({ length: 74 }, (_, index) => ({
+        ...first,
+        id: `before-${index}`,
+        threadId: `before-thread-${index}`,
+      })),
+      first,
+    ];
+    let deliver!: (value: { messages: typeof rows; nextCursor: null }) => void;
+    const more = new Promise<{ messages: typeof rows; nextCursor: null }>((resolve) => {
+      deliver = resolve;
+    });
+    const container = await reader(true, false, "l1", undefined, undefined, () => {
+      vi.mocked(sentApi.messages)
+        .mockResolvedValueOnce({ messages: rows, nextCursor: "next" })
+        .mockReturnValueOnce(more);
+      vi.mocked(sentApi.message).mockImplementation(async (id) => (id === "after" ? after : first));
+      vi.mocked(sentApi.thread).mockImplementation(async (id) => ({
+        messages: [id === "after-thread" ? after : first],
+      }));
+    });
+    await vi.waitFor(() => expect(sentApi.messages).toHaveBeenCalledTimes(2));
+    press("j");
+    expect(container.querySelector('[aria-current="true"]')?.getAttribute("data-thread-id")).toBe(
+      "first-thread",
+    );
+    deliver({ messages: [after], nextCursor: null });
+    await vi.waitFor(() =>
+      expect(container.querySelector('[aria-current="true"]')?.getAttribute("data-thread-id")).toBe(
+        "after-thread",
+      ),
+    );
+  });
+  it("windows rows and moves keyboard focus into an offscreen thread", async () => {
+    vi.spyOn(HTMLElement.prototype, "offsetHeight", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return this.classList.contains("message-list")
+        ? 700
+        : this.classList.contains("message-list-item")
+          ? 124
+          : 0;
+    });
+    vi.spyOn(HTMLElement.prototype, "offsetWidth", "get").mockReturnValue(400);
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      return (
+        Number.parseFloat((this.firstElementChild as HTMLElement | null)?.style.height ?? "0") || 0
+      );
+    });
+    vi.spyOn(HTMLElement.prototype, "scrollTo").mockImplementation(function (
+      this: HTMLElement,
+      options?: ScrollToOptions | number,
+    ) {
+      if (typeof options === "object") this.scrollTop = options.top ?? this.scrollTop;
+      this.dispatchEvent(new Event("scroll"));
+    });
+    const rows = Array.from({ length: 75 }, (_, index) => ({
+      ...message,
+      id: index ? `message-${index}` : "first",
+      threadId: index ? `thread-${index}` : "first-thread",
+      subject: `Conversation ${index}`,
+      read: true,
+      messageCount: 1,
+      unreadCount: 0,
+      participants: message.from,
+    }));
+    const container = await reader(true, false, "l1", undefined, undefined, () => {
+      vi.mocked(sentApi.messages).mockResolvedValue({ messages: rows, nextCursor: null });
+      vi.mocked(sentApi.message).mockImplementation(
+        async (id) => rows.find((item) => item.id === id) ?? rows[0],
+      );
+      vi.mocked(sentApi.thread).mockImplementation(async (id) => ({
+        messages: rows.filter((item) => item.threadId === id),
+      }));
+    });
+    expect(container.querySelectorAll("button.message-row").length).toBeLessThan(20);
+    expect(container.querySelector('button.message-row[data-index="40"]')).toBeNull();
+    for (let index = 1; index <= 14; index++) {
+      press("j");
+      await vi.waitFor(() =>
+        expect(document.activeElement?.getAttribute("data-index")).toBe(String(index)),
+      );
+    }
+    expect(container.querySelector(".message-list")?.scrollTop).toBeGreaterThan(0);
+    expect(container.querySelectorAll("button.message-row").length).toBeLessThan(25);
+    expect(container.querySelector('[aria-current="true"]')?.getAttribute("data-thread-id")).toBe(
+      "thread-14",
+    );
+  });
   it.each([404, 500])(
     "ends loading when an uncached message fails with %s and has no thread ID",
     async (status) => {
