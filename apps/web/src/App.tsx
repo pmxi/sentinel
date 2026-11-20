@@ -80,14 +80,20 @@ function Shell({ accounts }: { accounts: Account[] }) {
       label: "Compose a message",
       group: "Mail",
       keys: ["c"],
-      run: () => compose.openCompose(),
+      run: () => {
+        setMenuOpen(false);
+        compose.openCompose();
+      },
     },
     {
       id: "search",
       label: "Search mail",
       group: "Mail",
       keys: ["/"],
-      run: () => searchInput.current?.focus(),
+      run: () => {
+        setMenuOpen(false);
+        searchInput.current?.focus();
+      },
     },
     ...(
       [
