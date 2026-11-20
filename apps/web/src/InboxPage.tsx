@@ -7,7 +7,7 @@ import type {
 } from "@sent/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Flag, Mail, MailOpen, Paperclip, Trash2 } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { sentApi } from "./api";
 import { useCommands, useFrameCommands } from "./commands";
@@ -16,6 +16,21 @@ import { messageCursorIndex, nextMessageIndex } from "./keyboard";
 import { MessagePreview, RankingReason, ReaderInsights } from "./MessageInsights";
 import { ReaderText } from "./ReaderText";
 import { nextMessageId, useTriage, visibleConversations } from "./triage";
+
+// Hiding a long mobile mailbox for the reader shrinks the document. Remember
+// its offset before that happens and restore it when Back reveals the list.
+function useMobileReaderScroll(selectedId: string | null) {
+  const listScroll = useRef(0);
+  useLayoutEffect(() => {
+    if (!window.matchMedia?.("(max-width: 700px)").matches) return;
+    window.scrollTo(0, selectedId ? 0 : listScroll.current);
+    const remember = () => {
+      if (!selectedId) listScroll.current = window.scrollY;
+    };
+    window.addEventListener("scroll", remember, { passive: true });
+    return () => window.removeEventListener("scroll", remember);
+  }, [selectedId]);
+}
 
 function useMessageNavigation<Message extends MessageSummary>(messages: Message[]) {
   const location = useLocation();
@@ -59,6 +74,7 @@ export function InboxPage({ accounts }: { accounts: Account[] }) {
   const { view = "l1" } = useParams();
   const [params, setParams] = useSearchParams();
   const selectedId = params.get("message");
+  useMobileReaderScroll(selectedId);
   const accountId = params.get("account") ?? undefined;
   const query = new URLSearchParams({ view, limit: "75" });
   if (accountId) query.set("accountId", accountId);
@@ -135,6 +151,7 @@ export function SearchResults({ accounts }: { accounts: Account[] }) {
   const [params, setParams] = useSearchParams();
   const q = params.get("q") ?? "";
   const selectedId = params.get("message");
+  useMobileReaderScroll(selectedId);
   const result = useQuery({
     queryKey: ["search", q],
     queryFn: () => sentApi.search(new URLSearchParams({ q, limit: "75" })),
