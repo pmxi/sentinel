@@ -309,8 +309,14 @@ fn draft(row: &SqliteRow) -> Value {
 impl Repository {
     pub async fn claim_mutations(&self, limit: i64) -> Result<Vec<Value>> {
         let mut tx = self.0.begin_with("BEGIN IMMEDIATE").await?;
-        let rows = sqlx::query("update mutation_outbox set status='processing',attempts=attempts+1,next_attempt_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now','+5 minutes') where id in (select id from mutation_outbox where status in ('pending','processing') and next_attempt_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now') order by created_at limit ?1) returning id,account_id,message_id,action,payload")
+        let mut rows = sqlx::query("update mutation_outbox set status='processing',attempts=attempts+1,next_attempt_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now','+5 minutes') where id in (select id from mutation_outbox where status in ('pending','processing') and next_attempt_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now') order by created_at,id limit ?1) returning id,account_id,message_id,action,payload,created_at")
             .bind(limit).fetch_all(&mut *tx).await?;
+        rows.sort_by_key(|row| {
+            (
+                row.get::<String, _>("created_at"),
+                row.get::<String, _>("id"),
+            )
+        });
         tx.commit().await?;
         Ok(rows.iter().map(|r|json!({"id":r.get::<Uuid,_>("id"),"accountId":r.get::<Uuid,_>("account_id"),"messageId":r.get::<Option<Uuid>,_>("message_id"),"action":r.get::<String,_>("action"),"payload":r.get::<Value,_>("payload")})).collect())
     }
