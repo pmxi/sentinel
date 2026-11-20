@@ -284,6 +284,16 @@ Attachments (file contents) and embeddings are never stored in SQLite. Attachmen
 metadata/counts remain available for the existing UI. The original per-message
 256 KiB body limit still applies; larger messages retain the network reader path.
 
+Replica schema version 3 stores compact metadata tuples and shares account records.
+Lists scan a chronological filter/order index with an early limit, then batch thread
+counts and senders through a second covering index. Only conversation-summary
+columns cross the worker boundary. Snapshot commit vacuums discarded staging and
+obsolete schema pages before advertising readiness. Full bodies retain all reader
+forms losslessly: the worker gzip-compresses them with `CompressionStream` when
+smaller and restores them before publishing reader data. Equal text/plain forms
+share one stored value; browsers without compression keep ordinary JSON bodies.
+The older-body LRU continues charging uncompressed bytes.
+
 Tradeoff: each delta scans the current header inventory on the server; it is not
 an indexed, durable event log. The server retains 16 bounded cursor generations,
 including at most two full snapshots, with a 15-minute idle lifetime. Restart or
@@ -294,6 +304,10 @@ Mail is stored in the browser's private OPFS storage, not encrypted by this
 application. Logout/401 revokes the local session, closes/wipes its database and
 notifies other tabs. LocalStorage contains no mail, passwords or bearer tokens.
 Pending shell activation waits for these private database wipes before reloading.
+Sign-out waits up to two seconds before navigating; unfinished cleanup keeps a
+durable revoked identifier. Startup retries orphaned/revoked database deletion
+before opening a replica. Query connectivity gating never blocks SQLite reads,
+and incomplete body placeholders cannot be quoted into reply/forward drafts.
 The static-only service worker still never handles `/api/*`.
 
 After release/web builds, check against an isolated, existing local test database:

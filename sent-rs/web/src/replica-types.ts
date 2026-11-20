@@ -30,7 +30,7 @@ export type ReplicaChange = {
   accountId?: string;
   patch?: Partial<MessagePatch>;
 };
-export type ReplicaDetail = { message: MessageDetail; hasBody: boolean };
+export type ReplicaDetail = { message: MessageDetail; hasBody: boolean; packedBody?: Uint8Array };
 export type ReplicaList = { messages: ConversationSummary[]; nextCursor: string | null };
 export const REPLICA_SESSION_KEY = "sent:replica:session:v1";
 export const MAX_BODY_BYTES = 262144;

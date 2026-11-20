@@ -132,28 +132,94 @@ describe("real SQLite replica", () => {
     expect(store.db.selectValue("select count(*) from bodies")).toBe(129);
     expect(store.storageStats().bodyPayloadBytes).toBeGreaterThan(MAX_BODY_CACHE_BYTES);
   });
-  it("ranks mailbox headers through a covering index instead of scanning full metadata", () => {
-    seed([row("a"), row("b", { direction: "outbound" })]);
-    const exec = vi.spyOn(store.db, "exec");
-    expect(store.list({ view: "sent" }).messages.map((row) => row.id)).toEqual(["b"]);
-    const query = exec.mock.calls
-      .map(([input]) => input)
-      .find(
-        (input) =>
-          typeof input === "object" &&
-          input !== null &&
-          "sql" in input &&
-          String(input.sql).startsWith("with ranked"),
-      );
-    exec.mockRestore();
-    if (!query) throw new Error("Mailbox query not captured");
-    const plan = store.db.exec({
-      sql: `explain query plan ${query.sql}`,
-      bind: query.bind,
-      rowMode: "object",
-      returnValue: "resultRows",
+  it("uses ordered early limits and one covering aggregate query for every view", () => {
+    seed([
+      row("a"),
+      row("b", { direction: "outbound" }),
+      row("c", { tier: 2, classified: true }),
+      row("d", { tier: 3, classified: true }),
+      row("e", { deleted: true }),
+    ]);
+    for (const view of ["l1", "l2", "l3", "unclassified", "all", "sent", "trash"]) {
+      for (const accountId of [undefined, "owner"]) {
+        const { profile } = store.profileList({ view, accountId });
+        expect(profile.statements).toHaveLength(2);
+        const plans = JSON.stringify(store.queryPlans({ view, accountId }));
+        expect(plans).toContain("USING INDEX messages_order");
+        expect(plans).toContain("COVERING INDEX messages_thread");
+        expect(plans).not.toContain("TEMP B-TREE");
+      }
+    }
+    expect(
+      store.profileList({ view: "all", accountId: "missing" }).profile.statements,
+    ).toHaveLength(1);
+  });
+  it("keeps compact headers lossless across reopen and scopes representatives before pagination", () => {
+    const first = row("a", {
+      reasoning: "Keep offline reasons",
+      aiSummary: "Keep offline summaries",
+      attachments: [
+        {
+          id: "attachment",
+          filename: "a.txt",
+          contentType: "text/plain",
+          size: 5,
+          inline: false,
+          contentId: null,
+        },
+      ],
     });
-    expect(JSON.stringify(plan)).toContain("COVERING INDEX messages_mailbox");
+    seed([
+      first,
+      row("z", {
+        threadId: "a",
+        account: { ...first.account, id: "other" },
+        receivedAt: "2026-10-01T00:00:00.000Z",
+        sortReceivedAt: "2026-10-01T00:00:00.000000Z",
+        from: [{ name: "New name", address: "SENDER@test" }],
+        read: true,
+      }),
+      row("b"),
+    ]);
+    const detail = store.detail("a")?.message;
+    expect(detail).toMatchObject(first);
+    expect(store.db.selectValue("select count(*) from accounts")).toBe(2);
+    expect(String(store.db.selectValue("select data from messages where id='a'"))).not.toContain(
+      '"subject":',
+    );
+    store = new ReplicaStore(store.db);
+    expect(store.detail("a")?.message).toEqual(detail);
+    const page = store.list({ view: "all", accountId: "owner", limit: 1 });
+    expect(page.messages[0]?.id).toBe("b");
+    const next = store.list({
+      view: "all",
+      accountId: "owner",
+      limit: 1,
+      cursor: page.nextCursor ?? undefined,
+    });
+    expect(next.messages[0]).toMatchObject({
+      id: "a",
+      messageCount: 2,
+      unreadCount: 1,
+      participants: [{ name: "New name", address: "SENDER@test" }],
+    });
+    expect(next.messages[0]).not.toHaveProperty("textBody");
+    expect(next.messages[0]).not.toHaveProperty("to");
+    expect(store.storageStats().freeBytes).toBe(0);
+  });
+  it("stores binary body payloads without charging compressed bytes to the policy budget", () => {
+    seed([row("a")]);
+    const packed = new Uint8Array([1, 2, 3]);
+    store.bodies(
+      [row("a", { bodyAvailable: true, textBody: "Raw content" })],
+      false,
+      ["a"],
+      new Map([["a", packed]]),
+    );
+    expect(store.detail("a")).toMatchObject({ hasBody: true, packedBody: packed });
+    expect(store.storageStats().bodyPayloadBytes).toBe(11);
+    expect(store.db.selectValue("select typeof(data) from bodies")).toBe("blob");
+    expect(store.storageDetails()).toHaveProperty("bodyStorage");
   });
   it("recovers unfinished optimistic writes and invalidates incompatible schemas", () => {
     seed([row("a")]);

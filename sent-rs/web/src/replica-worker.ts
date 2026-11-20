@@ -1,5 +1,6 @@
 import sqlite3InitModule, { type SAHPoolUtil } from "@sqlite.org/sqlite-wasm";
 import type { CacheResponse } from "./api";
+import { packBody, unpackDetail } from "./replica-body";
 import { ReplicaStore } from "./replica-store";
 import type { ReplicaChange, ReplicaDelta, ReplicaRow } from "./replica-types";
 
@@ -40,19 +41,32 @@ async function dispatch(method: string, args: unknown[]) {
     case "list":
       return store.list(args[0] as Parameters<ReplicaStore["list"]>[0]);
     case "detail":
-      return store.detail(String(args[0]), Boolean(args[1]));
+      return unpackDetail(store.detail(String(args[0]), Boolean(args[1])));
     case "thread":
-      return store.thread(String(args[0]), Boolean(args[1]), Boolean(args[2]));
-    case "bodies":
-      return store.bodies(
-        args[0] as ReplicaRow[],
-        args[1] !== false,
-        args[2] as string[] | undefined,
+      return Promise.all(
+        store.thread(String(args[0]), Boolean(args[1]), Boolean(args[2])).map(unpackDetail),
       );
+    case "bodies": {
+      const rows = args[0] as ReplicaRow[],
+        packed = new Map<string, Uint8Array>();
+      await Promise.all(
+        rows
+          .filter((row) => row.bodyAvailable)
+          .map(async (row) => {
+            const bytes = await packBody(row);
+            if (bytes) packed.set(row.id, bytes);
+          }),
+      );
+      return store.bodies(rows, args[1] !== false, args[2] as string[] | undefined, packed);
+    }
     case "recent":
       return store.recentBodies();
     case "stats":
       return store.storageStats();
+    case "diagnostics":
+      return store.storageDetails();
+    case "plans":
+      return store.queryPlans(args[0] as Parameters<ReplicaStore["list"]>[0]);
     case "opened":
       return store.opened(args[0] as string[]);
     case "begin":
@@ -71,10 +85,30 @@ async function dispatch(method: string, args: unknown[]) {
       throw new Error("Unknown replica operation");
   }
 }
-self.onmessage = (event: MessageEvent<{ id: number; method: string; args: unknown[] }>) => {
+self.onmessage = (
+  event: MessageEvent<{ id: number; method: string; args: unknown[]; profile?: boolean }>,
+) => {
   const { id, method, args } = event.data;
+  const receivedAt = performance.timeOrigin + performance.now();
   sequence = sequence.then(async () => {
     try {
+      if (event.data.profile && method === "list" && store) {
+        const startedAt = performance.timeOrigin + performance.now();
+        const { result, profile } = store.profileList(
+          args[0] as Parameters<ReplicaStore["list"]>[0],
+        );
+        self.postMessage({
+          id,
+          result,
+          profile: {
+            ...profile,
+            receivedAt,
+            startedAt,
+            endedAt: performance.timeOrigin + performance.now(),
+          },
+        });
+        return;
+      }
       self.postMessage({ id, result: await dispatch(method, args) });
     } catch (cause) {
       self.postMessage({ id, error: cause instanceof Error ? cause.message : String(cause) });

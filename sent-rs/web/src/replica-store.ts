@@ -13,38 +13,73 @@ import {
 } from "./replica-types";
 
 const columns =
-  "id text primary key, thread_id text not null, account_id text not null, received_at text not null, read integer not null, archived integer not null, deleted integer not null, classified integer not null, tier integer, direction text not null, body_version text not null, data text not null";
-function condition(view: string) {
-  const live = `deleted=${view === "trash" ? 1 : 0}`;
-  if (view === "sent") return `${live} and direction='outbound'`;
+  "id text primary key, thread_id text not null, account_id text not null, received_at text not null, read integer not null, archived integer not null, deleted integer not null, classified integer not null, tier integer, direction text not null, body_version text not null, from_json text not null, data text not null";
+const fields = [
+  "subject",
+  "snippet",
+  "flagged",
+  "modelTier",
+  "reasoning",
+  "aiSummary",
+  "attachmentCount",
+  "syncPending",
+  "to",
+  "cc",
+  "bcc",
+  "sentAt",
+  "attachments",
+  "internetMessageId",
+] as const;
+type StoredRow = {
+  id: string;
+  thread_id: string;
+  account_id: string;
+  received_at: string;
+  read: number;
+  archived: number;
+  deleted: number;
+  classified: number;
+  tier: ReplicaRow["tier"];
+  direction: ReplicaRow["direction"];
+  body_version: string;
+  from_json: string;
+  data: string;
+};
+function condition(view: string, alias = "") {
+  const col = (name: string) => `${alias}${name}`;
+  const live = `${col("deleted")}=${view === "trash" ? 1 : 0}`;
+  if (view === "sent") return `${live} and ${col("direction")}='outbound'`;
   if (["l1", "l2", "l3", "unclassified"].includes(view)) {
     const tier =
       view === "unclassified"
-        ? "classified=0"
+        ? `${col("classified")}=0`
         : view === "l1"
-          ? "(tier=1 or classified=0)"
-          : `tier=${Number(view.slice(1))}`;
-    return `${live} and archived=0 and direction='inbound' and ${tier}`;
+          ? `(${col("tier")}=1 or ${col("classified")}=0)`
+          : `${col("tier")}=${Number(view.slice(1))}`;
+    return `${live} and ${col("archived")}=0 and ${col("direction")}='inbound' and ${tier}`;
   }
   return live;
 }
 export class ReplicaStore {
+  private accounts = new Map<string, ReplicaRow["account"]>();
   constructor(readonly db: Database) {
-    if (Number(db.selectValue("pragma user_version")) !== 2) {
+    if (Number(db.selectValue("pragma user_version")) !== 3) {
       this.run(
-        "drop table if exists messages; drop table if exists staging; drop table if exists bodies; drop table if exists meta; drop table if exists base; drop table if exists operations;",
+        "drop table if exists messages; drop table if exists staging; drop table if exists bodies; drop table if exists meta; drop table if exists base; drop table if exists operations; drop table if exists accounts;",
       );
     }
     this.run(`create table if not exists messages(${columns}); create table if not exists staging(${columns});
-      create index if not exists messages_thread on messages(thread_id,deleted,received_at);
-      create index if not exists messages_order on messages(received_at desc,id desc);
-      create index if not exists messages_mailbox on messages(deleted,direction,archived,tier,classified,account_id,thread_id,received_at desc,id desc);
+      create index if not exists messages_thread on messages(thread_id,deleted,received_at desc,id desc,read,from_json);
+      create index if not exists messages_order on messages(received_at desc,id desc,deleted,direction,archived,tier,classified,account_id,thread_id);
+      create table if not exists accounts(id text primary key,data text not null);
       create table if not exists bodies(id text primary key, version text not null, data text not null, bytes integer not null, touched integer not null, opened integer not null, received_at text not null);
       create index if not exists bodies_age on bodies(received_at,opened,bytes,id,touched);
       create table if not exists meta(key text primary key,value text not null);
       create table if not exists base(id text primary key,data text not null);
       create table if not exists operations(seq integer primary key autoincrement,token text not null,id text not null,patch text not null,status text not null);
-      pragma user_version=2;`);
+      pragma user_version=3;`);
+    for (const row of this.rows<{ id: string; data: string }>("select id,data from accounts"))
+      this.accounts.set(row.id, JSON.parse(row.data));
     this.transaction(() => {
       this.run("update operations set status='failed' where status='pending'");
       for (const { id } of this.rows<{ id: string }>("select id from base")) this.recompute(id);
@@ -64,12 +99,21 @@ export class ReplicaStore {
       return value;
     } catch (error) {
       this.run("rollback");
+      this.accounts.clear();
+      for (const row of this.rows<{ id: string; data: string }>("select id,data from accounts"))
+        this.accounts.set(row.id, JSON.parse(row.data));
       throw error;
     }
   }
   private put(row: ReplicaRow, table = "messages") {
-    const data = { ...row, textBody: "", htmlBody: null, plainText: null, bodyAvailable: false };
-    this.run(`insert or replace into ${table} values(?,?,?,?,?,?,?,?,?,?,?,?)`, [
+    if (JSON.stringify(this.accounts.get(row.account.id)) !== JSON.stringify(row.account)) {
+      this.run("insert or replace into accounts values(?,?)", [
+        row.account.id,
+        JSON.stringify(row.account),
+      ]);
+      this.accounts.set(row.account.id, row.account);
+    }
+    this.run(`insert or replace into ${table} values(?,?,?,?,?,?,?,?,?,?,?,?,?)`, [
       row.id,
       row.threadId,
       row.account.id,
@@ -81,7 +125,8 @@ export class ReplicaStore {
       row.tier,
       row.direction,
       row.bodyVersion,
-      JSON.stringify(data),
+      JSON.stringify(row.from),
+      JSON.stringify(fields.map((field) => row[field])),
     ]);
   }
   cursor() {
@@ -103,6 +148,7 @@ export class ReplicaStore {
       this.setCursor(cursor);
       this.pruneBodies();
     });
+    this.run("vacuum");
   }
   private setCursor(cursor: string) {
     this.run("insert or replace into meta values('cursor',?)", [cursor]);
@@ -195,15 +241,99 @@ export class ReplicaStore {
       ),
     };
   }
+  storageDetails() {
+    const columnNames = this.rows<{ name: string }>("pragma table_info(messages)").map(
+      (row) => row.name,
+    );
+    const physical = this.rows<Record<string, number>>(
+      `select ${columnNames.map((name) => `sum(length(cast(${name} as blob))) as ${name}`).join(",")} from messages`,
+    )[0];
+    return {
+      ...this.storageStats(),
+      tables: this.rows(
+        "select name,sum(pgsize) bytes,sum(payload) payload,sum(unused) unused from dbstat group by name order by bytes desc",
+      ),
+      physicalColumns: physical,
+      columns: this.rows<{ name: string; bytes: number }>(
+        "select 'messages.'||j.key name,sum(length(cast(j.value as blob))) bytes from messages,json_each(data) j group by j.key order by bytes desc",
+      ).map((row) => ({
+        ...row,
+        name: `messages.${fields[Number(row.name.slice("messages.".length))]}`,
+      })),
+      bodies: this.rows(
+        "select 'bodies.'||j.key name,sum(length(cast(j.value as blob))) bytes from bodies,json_each(case when typeof(data)='text' then data else '{}' end) j group by j.key order by bytes desc",
+      ),
+      bodyStorage: this.rows(
+        "select typeof(data) encoding,count(*) count,sum(length(data)) bytes from bodies group by typeof(data)",
+      ),
+    };
+  }
+  profileList(input: Parameters<ReplicaStore["list"]>[0]) {
+    const statements: { sql: string; bind: SqlValue[]; ms: number; rows: number }[] = [];
+    const exec = this.db.exec;
+    this.db.exec = ((...args: unknown[]) => {
+      const start = performance.now();
+      const result = Reflect.apply(exec, this.db, args);
+      statements.push({
+        sql: String((args[0] as { sql?: string })?.sql ?? args[0]),
+        bind: (args[0] as { bind?: SqlValue[] })?.bind ?? [],
+        ms: performance.now() - start,
+        rows: Array.isArray(result) ? result.length : 0,
+      });
+      return result;
+    }) as Database["exec"];
+    const start = performance.now();
+    try {
+      const result = this.list(input);
+      const totalMs = performance.now() - start,
+        sqlMs = statements.reduce((sum, statement) => sum + statement.ms, 0);
+      return { result, profile: { totalMs, sqlMs, jsMs: totalMs - sqlMs, statements } };
+    } finally {
+      this.db.exec = exec;
+    }
+  }
+  queryPlans(input: Parameters<ReplicaStore["list"]>[0]) {
+    const { profile } = this.profileList(input);
+    return [
+      ...new Map(profile.statements.map((statement) => [statement.sql, statement])).values(),
+    ].map((statement) => ({
+      sql: statement.sql,
+      plan: this.rows(`explain query plan ${statement.sql}`, statement.bind),
+    }));
+  }
   private headers(sql: string, bind: SqlValue[] = []): ReplicaRow[] {
-    return this.rows<{ data: string }>(sql, bind).map((row) => JSON.parse(row.data));
+    return this.rows<StoredRow>(sql, bind).map((row) => {
+      const values = JSON.parse(row.data),
+        account = this.accounts.get(row.account_id);
+      if (!account) throw new Error("Replica account is missing");
+      return {
+        ...Object.fromEntries(fields.map((field, index) => [field, values[index]])),
+        id: row.id,
+        threadId: row.thread_id,
+        account,
+        receivedAt: new Date(row.received_at).toISOString(),
+        sortReceivedAt: row.received_at,
+        read: Boolean(row.read),
+        archived: Boolean(row.archived),
+        deleted: Boolean(row.deleted),
+        classified: Boolean(row.classified),
+        tier: row.tier,
+        direction: row.direction,
+        bodyVersion: row.body_version,
+        from: JSON.parse(row.from_json),
+        textBody: "",
+        htmlBody: null,
+        plainText: null,
+        bodyAvailable: false,
+      } as ReplicaRow;
+    });
   }
   private header(id: string) {
-    return this.headers("select data from messages where id=?", [id])[0];
+    return this.headers("select * from messages where id=?", [id])[0];
   }
   private members(id: string, trash: boolean) {
     return this.headers(
-      "select data from messages where thread_id=? and deleted=? order by received_at desc,id desc",
+      "select * from messages where thread_id=? and deleted=? order by received_at desc,id desc",
       [id, Number(trash)],
     );
   }
@@ -216,31 +346,67 @@ export class ReplicaStore {
         throw new Error("Invalid local cursor");
     }
     const limit = Math.max(1, Math.min(100, input.limit ?? 75));
+    const account = input.accountId !== undefined ? " and m.account_id=?" : "",
+      newerAccount = input.accountId !== undefined ? " and n.account_id=?" : "";
     const rows = this.headers(
-      `with ranked as(select id,thread_id,received_at,row_number() over(partition by thread_id order by received_at desc,id desc) rank from messages indexed by messages_mailbox where ${condition(input.view)} and (? is null or account_id=?)),page as materialized(select id,received_at from ranked where rank=1 and (? is null or (received_at,id)<(?,?)) order by received_at desc,id desc limit ?) select m.data from page join messages m on m.id=page.id order by page.received_at desc,page.id desc`,
+      `select m.* from messages m indexed by messages_order where ${condition(input.view, "m.")}${account}${after ? " and (m.received_at,m.id)<(?,?)" : ""} and not exists(select 1 from messages n where n.thread_id=m.thread_id and ${condition(input.view, "n.")}${newerAccount} and (n.received_at,n.id)>(m.received_at,m.id)) order by m.received_at desc,m.id desc limit ?`,
       [
-        input.accountId ?? null,
-        input.accountId ?? null,
-        after?.receivedAt ?? null,
-        after?.receivedAt ?? null,
-        after?.id ?? null,
+        ...(input.accountId !== undefined ? [input.accountId] : []),
+        ...(after ? [after.receivedAt, after.id] : []),
+        ...(input.accountId !== undefined ? [input.accountId] : []),
         limit + 1,
       ],
     );
     const more = rows.length > limit;
     rows.length = Math.min(rows.length, limit);
+    const aggregates = new Map<
+      string,
+      { count: number; unread: number; people: Map<string, MailAddress> }
+    >();
+    if (rows.length)
+      for (const member of this.rows<{ thread_id: string; read: number; from_json: string }>(
+        `select thread_id,read,from_json from messages where thread_id in (${rows.map(() => "?").join(",")}) and deleted=? order by thread_id,received_at desc,id desc`,
+        [...rows.map((row) => row.threadId), Number(input.view === "trash")],
+      )) {
+        let aggregate = aggregates.get(member.thread_id);
+        if (!aggregate) {
+          aggregate = { count: 0, unread: 0, people: new Map() };
+          aggregates.set(member.thread_id, aggregate);
+        }
+        aggregate.count++;
+        if (!member.read) aggregate.unread++;
+        for (const person of JSON.parse(member.from_json) as MailAddress[])
+          if (!aggregate.people.has(person.address.toLowerCase()))
+            aggregate.people.set(person.address.toLowerCase(), person);
+      }
     const messages = rows.map((row) => {
-      const members = this.members(row.threadId, input.view === "trash"),
-        people = new Map<string, MailAddress>();
-      for (const message of members)
-        for (const person of message.from)
-          if (!people.has(person.address.toLowerCase()))
-            people.set(person.address.toLowerCase(), person);
-      const unreadCount = members.filter((message) => !message.read).length;
+      const {
+        count,
+        unread: unreadCount,
+        people,
+      } = aggregates.get(row.threadId) as {
+        count: number;
+        unread: number;
+        people: Map<string, MailAddress>;
+      };
       const result: ConversationSummary = {
-        ...row,
+        id: row.id,
+        threadId: row.threadId,
+        account: row.account,
+        subject: row.subject,
+        from: row.from,
+        snippet: row.snippet,
+        receivedAt: row.receivedAt,
+        flagged: row.flagged,
+        direction: row.direction,
+        tier: row.tier,
+        modelTier: row.modelTier,
+        reasoning: row.reasoning,
+        aiSummary: row.aiSummary,
+        attachmentCount: row.attachmentCount,
+        syncPending: row.syncPending,
         read: unreadCount === 0,
-        messageCount: members.length,
+        messageCount: count,
         unreadCount,
         participants: [...people.values()].sort((a, b) =>
           a.address < b.address ? -1 : a.address > b.address ? 1 : 0,
@@ -261,16 +427,20 @@ export class ReplicaStore {
     if (opened) this.opened([id]);
     const row = this.header(id);
     if (!row) return;
-    const body = this.rows<{ data: string }>("select data from bodies where id=? and version=?", [
-      id,
-      row.bodyVersion,
-    ])[0];
+    const body = this.rows<{ data: string | Uint8Array }>(
+      "select data from bodies where id=? and version=?",
+      [id, row.bodyVersion],
+    )[0];
     if (body)
       this.run(
         "update bodies set touched=?,opened=max(opened,?) where id=? and (touched<? or opened<?)",
         [Date.now(), Number(opened), id, Date.now() - 60_000, Number(opened)],
       );
-    return { message: { ...row, ...(body ? JSON.parse(body.data) : {}) }, hasBody: Boolean(body) };
+    return {
+      message: { ...row, ...(body && typeof body.data === "string" ? JSON.parse(body.data) : {}) },
+      hasBody: Boolean(body),
+      ...(body && typeof body.data !== "string" ? { packedBody: body.data } : {}),
+    };
   }
   thread(id: string, trash: boolean, opened = false) {
     const members = this.members(id, trash);
@@ -292,7 +462,12 @@ export class ReplicaStore {
       }
     });
   }
-  bodies(rows: ReplicaRow[], opened = true, requested = rows.map((row) => row.id)) {
+  bodies(
+    rows: ReplicaRow[],
+    opened = true,
+    requested = rows.map((row) => row.id),
+    packed?: Map<string, Uint8Array>,
+  ) {
     this.transaction(() => {
       const returned = new Set(rows.map((row) => row.id));
       for (const id of requested)
@@ -334,7 +509,7 @@ export class ReplicaStore {
           [
             row.id,
             row.bodyVersion,
-            JSON.stringify(fields),
+            packed?.get(row.id) ?? JSON.stringify(fields),
             bytes,
             Date.now(),
             Number(
@@ -355,9 +530,9 @@ export class ReplicaStore {
   begin(token: string, change: ReplicaChange) {
     this.transaction(() => {
       const rows = change.id
-        ? this.headers("select data from messages where id=?", [change.id])
+        ? this.headers("select * from messages where id=?", [change.id])
         : this.headers(
-            `select data from messages where thread_id=? and ${condition(change.view ?? "all")} and (? is null or account_id=?)`,
+            `select * from messages where thread_id=? and ${condition(change.view ?? "all")} and (? is null or account_id=?)`,
             [change.threadId ?? "", change.accountId ?? null, change.accountId ?? null],
           );
       for (const row of rows) {
