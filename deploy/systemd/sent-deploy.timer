@@ -1,10 +1,10 @@
 [Unit]
-Description=Check for a new Sent release every two minutes
+Description=Check for a new Sent release every 30 seconds
 
 [Timer]
-OnBootSec=2min
-OnUnitInactiveSec=2min
-RandomizedDelaySec=10s
+OnBootSec=1min
+OnUnitInactiveSec=30s
+RandomizedDelaySec=5s
 
 [Install]
 WantedBy=timers.target

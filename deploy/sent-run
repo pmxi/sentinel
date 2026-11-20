@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# Starts the current release's server or worker: Rust releases ship bin/, older TypeScript releases do not.
+set -euo pipefail
+[[ "${1:-}" == server || "${1:-}" == worker ]] || { echo 'Usage: sent-run server|worker' >&2; exit 2; }
+release=$(readlink -e "${SENT_DEPLOY_ROOT:-$HOME/sent}/current")
+cd "$release"
+if [[ -x "bin/sent-$1" ]]; then
+  while IFS='=' read -r key value; do
+    [[ "$key" == WEB_DIST_PATH || "$key" == MIGRATIONS_PATH ]] && export "$key=$value"
+  done <runtime.env
+  exec "bin/sent-$1"
+fi
+exec /usr/local/bin/node24 "apps/$1/dist/index.js"

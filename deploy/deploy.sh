@@ -8,10 +8,14 @@ API=${SENT_DEPLOY_CI_URL:-https://api.github.com/repos/pmxi/sentinel/commits}
 ENV_FILE=${SENT_DEPLOY_ENV:-/opt/sent/app/.env}
 LEGACY=${SENT_DEPLOY_LEGACY:-/opt/sent/app}
 HEALTH=${SENT_DEPLOY_HEALTH:-http://127.0.0.1:3000/api/health}
-export PATH="${SENT_DEPLOY_TOOLS:-$ROOT/tools/node}/bin:$PATH"
+TOOLS=${SENT_DEPLOY_TOOLS:-$ROOT/tools}
+export RUSTUP_HOME=${RUSTUP_HOME:-$TOOLS/rustup} CARGO_HOME=${CARGO_HOME:-$TOOLS/cargo}
+export PATH="$TOOLS/node/bin:$CARGO_HOME/bin:$PATH"
+CHECKS=${SENT_DEPLOY_CHECKS:-rust web}
+UNITS=${SENT_DEPLOY_UNITS:-$HOME/.config/systemd/user}
 TIMEOUT=${SENT_DEPLOY_TIMEOUT:-240}
 INTERVAL=${SENT_DEPLOY_INTERVAL:-5}
-mkdir -p "$ROOT"/{releases,dumps,state,bin}
+mkdir -p "$ROOT"/{releases,dumps,state,bin,ci}
 exec 9>"$ROOT/deploy.lock"
 flock -n 9 || exit 0
 
@@ -87,15 +91,30 @@ elif [[ "$mode" == auto && $# -le 1 ]]; then
     if [[ -f "$ROOT/state/$state" ]] && read -r recorded _ <"$ROOT/state/$state" && [[ "$recorded" == "$sha" ]]; then exit 0; fi
     [[ ! -f "$ROOT/state/$state-$sha" ]] || exit 0
   done
-  checks=$(curl -fsS --max-time 20 -H 'Accept: application/vnd.github+json' "$API/$sha/check-runs?per_page=100")
-  verdict=$(printf '%s' "$checks" | node -e '
-let s=""; for await (const c of process.stdin) s+=c;
-const data=JSON.parse(s);
-const checks=data.check_runs?.filter(c=>c.name==="check" && c.app?.slug==="github-actions") ?? [];
-checks.sort((a,b)=>b.id-a.id);
-const c=checks[0];
-console.log(!c || data.total_count>100 || c.status!=="completed" ? "pending" : c.conclusion==="success" ? "success" : "skipped");
-')
+  # Conditional requests that return 304 do not count against GitHub's 60/hour unauthenticated limit.
+  ci="$ROOT/ci/$sha"
+  find "$ROOT/ci" -maxdepth 1 -type f ! -name "$sha.*" -delete
+  request=(-H 'Accept: application/vnd.github+json')
+  if [[ -s "$ci.etag" && -s "$ci.json" ]]; then request+=(-H "If-None-Match: $(<"$ci.etag")"); fi
+  code=$(curl -sS --max-time 20 "${request[@]}" -D "$ci.headers" -o "$ci.body" -w '%{http_code}' "$API/$sha/check-runs?per_page=100")
+  case "$code" in
+    200)
+      mv "$ci.body" "$ci.json"
+      tr -d '\r' <"$ci.headers" | sed -n 's/^[Ee][Tt][Aa][Gg]: *//p' | tail -1 >"$ci.etag"
+      ;;
+    304) rm -f "$ci.body" ;;
+    *) log "CI query failed with HTTP $code"; exit 1 ;;
+  esac
+  verdict=$(node -e '
+const data=JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+const verdicts=process.argv.slice(2).map(name=>{
+  const runs=data.check_runs?.filter(c=>c.name===name && c.app?.slug==="github-actions") ?? [];
+  runs.sort((a,b)=>b.id-a.id);
+  const c=runs[0];
+  return !c || data.total_count>100 || c.status!=="completed" ? "pending" : c.conclusion==="success" ? "success" : "skipped";
+});
+console.log(verdicts.includes("skipped") ? "skipped" : verdicts.includes("pending") ? "pending" : "success");
+' "$ci.json" $CHECKS)
   case "$verdict" in
     pending) log "CI pending for $sha"; exit 0 ;;
     skipped) record "skipped-$sha"; record skipped; log "CI rejected $sha; skipped"; exit 0 ;;
@@ -138,10 +157,26 @@ if [[ "$release" != "$saved_previous" ]]; then
   (
     trap - ERR
     cd "$release"
-    pnpm install --frozen-lockfile
-    pnpm build
+    rs=sent-rs
+    [[ -f "$rs/Cargo.toml" ]] || rs=.
+    migrations=$rs/migrations
+    [[ -d "$migrations" ]] || migrations=packages/core/src/db/migrations
+    cargo build --release --locked --manifest-path "$rs/Cargo.toml" --target-dir "$ROOT/cargo-target" --bin sent-server --bin sent-worker
+    mkdir -p bin
+    cp "$ROOT/cargo-target/release/sent-server" "$ROOT/cargo-target/release/sent-worker" bin/
+    if [[ -f pnpm-workspace.yaml && "$rs" != . ]]; then pnpm install --frozen-lockfile; fi
+    pnpm --dir "$rs/web" install --frozen-lockfile
+    NODE_ENV=production pnpm --dir "$rs/web" build
+    [[ -f "$rs/web/dist/index.html" && -d "$migrations" ]]
+    printf 'WEB_DIST_PATH=%s\nMIGRATIONS_PATH=%s\n' "$release/$rs/web/dist" "$release/$migrations" >runtime.env
   )
 fi
+for unit in sent-server.service sent-worker.service sent-deploy.service sent-deploy.timer; do
+  if [[ -f "$release/deploy/systemd/$unit" ]]; then install -D -m 644 "$release/deploy/systemd/$unit" "$UNITS/$unit"; fi
+done
+install -m 700 "$release/deploy/sent-run" "$ROOT/bin/sent-run.next"
+mv "$ROOT/bin/sent-run.next" "$ROOT/bin/sent-run"
+systemctl --user daemon-reload
 log 'Taking pre-migration database dump'
 # libpq does not expand a URL in PGDATABASE, and argv is visible to other users, so pass it as PG* variables.
 # shellcheck disable=SC2016
@@ -168,8 +203,7 @@ mv "$dump.tmp" "$dump"
 unset pg_env
 mapfile -t dumps < <(find "$ROOT/dumps" -maxdepth 1 -name '*.dump' -printf '%f\n' | sort -r | tail -n +11)
 for old in "${dumps[@]}"; do rm -- "$ROOT/dumps/$old"; done
-log 'Applying migrations'
-(trap - ERR; cd "$release" && MIGRATIONS_PATH="$release/packages/core/src/db/migrations" pnpm --filter @sent/core db:migrate)
+# The Rust server applies pending migrations from runtime.env at startup, after this dump.
 link "$previous" "$ROOT/previous"
 link "$release" "$ROOT/current"
 restart

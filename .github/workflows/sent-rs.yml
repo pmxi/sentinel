@@ -1,10 +1,9 @@
 name: Sent Rust and Solid
 
 on:
+  # Production deploys require rust and web to pass on every master commit.
   push:
-    paths:
-      - "sent-rs/**"
-      - ".github/workflows/sent-rs.yml"
+    branches: [master]
   pull_request:
     paths:
       - "sent-rs/**"
