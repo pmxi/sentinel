@@ -28,6 +28,8 @@ export class LiveUpdates {
   private queued = false;
   private pending?: LiveDelta;
   private remoteCursor?: string;
+  private subscribed = false;
+  private subscribedCursor?: string;
   private quiet?: ReturnType<typeof setTimeout>;
   private releaseQuiet?: () => void;
   constructor(
@@ -66,6 +68,9 @@ export class LiveUpdates {
       url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
       const socket = new WebSocket(url);
       this.socket = socket;
+      this.remoteCursor = undefined;
+      this.subscribed = false;
+      this.subscribedCursor = undefined;
       socket.onmessage = (event) => this.receive(socket, event.data);
       socket.onerror = () => this.disconnected(socket);
       socket.onclose = (event) => {
@@ -108,10 +113,11 @@ export class LiveUpdates {
         this.attempts = 0;
         this.health(true);
         this.subscribe();
-        if (!this.options.cursor()) this.queue();
+        this.queue();
       } else if (frame.type === "ping") {
         socket.send(JSON.stringify({ type: "pong" }));
       } else if (frame.type === "changed" && typeof frame.cursor === "string") {
+        if (frame.cursor === this.remoteCursor) return;
         this.remoteCursor = frame.cursor;
         this.queue();
       } else if (
@@ -131,8 +137,12 @@ export class LiveUpdates {
   }
   subscribe() {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN || !this.healthy()) return;
+    const cursor = this.options.cursor();
+    if (this.subscribed && cursor === this.subscribedCursor) return;
     try {
-      this.socket.send(JSON.stringify({ type: "subscribe", cursor: this.options.cursor() }));
+      this.subscribed = true;
+      this.subscribedCursor = cursor;
+      this.socket.send(JSON.stringify({ type: "subscribe", cursor }));
     } catch {
       this.disconnected(this.socket);
     }

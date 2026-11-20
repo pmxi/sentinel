@@ -256,6 +256,20 @@ async fn close(socket: &mut WebSocket, code: u16, reason: &'static str) {
     )
     .await;
 }
+fn update_frame(
+    feed: &mut crate::sync::Feed,
+    cursor: Option<&str>,
+    target: &str,
+    inventory: &ReplicaInventory,
+    subscription: bool,
+) -> Option<String> {
+    if cursor == Some(target) {
+        return None;
+    }
+    cursor
+        .and_then(|from| feed.live_delta(from, target, inventory).ok())
+        .or_else(|| (!subscription).then(|| json!({"type":"changed","cursor":target}).to_string()))
+}
 async fn serve(mut socket: WebSocket, state: Arc<State>, session: auth::Session) {
     let mut updates = state.live.updates.subscribe();
     let mut cursor: Option<String> = None;
@@ -306,7 +320,14 @@ async fn serve(mut socket: WebSocket, state: Arc<State>, session: auth::Session)
                         match value["type"].as_str() {
                             Some("subscribe") => {
                                 cursor = value["cursor"].as_str().filter(|cursor| cursor.len() <= 512).map(str::to_owned);
-                                if cursor.is_some() { state.live.changed.notify_one(); }
+                                let update = updates.borrow().clone();
+                                if let Update::Changed { cursor: target, inventory } = update {
+                                    let value = update_frame(&mut state.sync_feed.lock().unwrap(), cursor.as_deref(), &target, &inventory, true);
+                                    if let Some(value) = value {
+                                        if !send_text(&mut socket, value).await { return; }
+                                        cursor = Some(target);
+                                    }
+                                }
                             }
                             Some("pong") => {}
                             _ => { close(&mut socket, 1008, "Invalid message").await; return; }
@@ -324,12 +345,12 @@ async fn serve(mut socket: WebSocket, state: Arc<State>, session: auth::Session)
                 match update {
                     Update::Unavailable => { close(&mut socket, 1013, "Listener unavailable").await; return; }
                     Update::Changed { cursor: target, inventory } => {
-                        let hint = json!({"type":"changed","cursor":target}).to_string();
-                        let value = cursor.as_deref().and_then(|from| state.sync_feed.lock().unwrap().live_delta(from, &target, &inventory).ok())
-                            .unwrap_or(hint);
+                        let value = update_frame(&mut state.sync_feed.lock().unwrap(), cursor.as_deref(), &target, &inventory, false);
                         drop(inventory);
-                        if !send_text(&mut socket, value).await { return; }
-                        if cursor.is_some() { cursor = Some(target); }
+                        if let Some(value) = value {
+                            if !send_text(&mut socket, value).await { return; }
+                            if cursor.is_some() { cursor = Some(target); }
+                        }
                     }
                     _ => {}
                 }
@@ -341,6 +362,42 @@ async fn serve(mut socket: WebSocket, state: Arc<State>, session: auth::Session)
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn foreign_cursor_subscriptions_stay_quiet_but_real_changes_still_hint() {
+        let empty = ReplicaInventory {
+            messages: vec![],
+            accounts: vec![],
+        };
+        let mut feed = crate::sync::Feed::default();
+        let target = feed.publish(&empty);
+        let foreign = crate::sync::Feed::default().publish(&empty);
+        for from in [
+            None,
+            Some(foreign.as_str()),
+            Some("invalid"),
+            Some(target.as_str()),
+        ] {
+            for _ in 0..10 {
+                assert!(update_frame(&mut feed, from, &target, &empty, true).is_none());
+            }
+        }
+        let hint: Value = serde_json::from_str(
+            &update_frame(&mut feed, Some(&foreign), &target, &empty, false).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(hint, json!({"type":"changed","cursor":target}));
+        let changed = ReplicaInventory {
+            messages: vec![json!({"id":"one","subject":"New mail"})],
+            accounts: vec![],
+        };
+        let next = feed.publish(&changed);
+        let delta: Value = serde_json::from_str(
+            &update_frame(&mut feed, Some(&target), &next, &changed, true).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(delta["type"], "delta");
+        assert_eq!(delta["delta"]["upserts"].as_array().unwrap().len(), 1);
+    }
     #[test]
     fn origin_is_required_and_bound_to_the_configured_public_origin() {
         let mut headers = HeaderMap::new();

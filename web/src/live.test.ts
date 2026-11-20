@@ -52,6 +52,41 @@ afterEach(() => {
   vi.useRealTimers();
 });
 describe("live updates", () => {
+  it("does not loop catch-up and subscriptions when HTTP and sockets use different cursors", async () => {
+    const { options, live } = setup("http-0");
+    let polls = 0;
+    options.changed.mockImplementation(() => {
+      polls++;
+    });
+    options.cursor = () => `http-${polls}`;
+    await vi.advanceTimersByTimeAsync(0);
+    const socket = Socket.instances[0];
+    const send = socket.send.bind(socket);
+    let replies = 0;
+    let serverCursor = "socket-cursor";
+    vi.spyOn(socket, "send").mockImplementation((value) => {
+      send(value);
+      if (JSON.parse(value).type === "subscribe" && replies++ < 10) {
+        setTimeout(() => socket.message({ type: "changed", cursor: serverCursor }), 1);
+      }
+    });
+    socket.message({ type: "ready" });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(polls).toBeLessThanOrEqual(2);
+    expect(socket.sent.length).toBeLessThanOrEqual(3);
+    const settled = polls;
+    const subscriptions = socket.sent.length;
+    live.subscribe();
+    live.subscribe();
+    expect(socket.sent.length).toBe(subscriptions);
+    socket.message({ type: "changed", cursor: "socket-cursor" });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(polls).toBe(settled);
+    serverCursor = "real-next-change";
+    socket.message({ type: "changed", cursor: serverCursor });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(polls).toBe(settled + 1);
+  });
   it("uses a cookie-authenticated same-origin URL and only slows polling after ready", async () => {
     const { client, options } = setup("base");
     expect(liveInterval(client)).toBe(4000);
