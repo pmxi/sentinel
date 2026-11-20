@@ -3,6 +3,7 @@ import type {
   ConversationSummary,
   MessageDetail,
   MessageSummary,
+  SearchResponse,
   Tier,
 } from "@sent/shared";
 import { createMutation, createQuery, useQueryClient } from "@tanstack/solid-query";
@@ -24,6 +25,8 @@ import { useCommands, useFrameCommands } from "./commands";
 import { replySeed, useCompose } from "./compose";
 import { messageCursorIndex, nextMessageIndex } from "./keyboard";
 import { MessagePreview, RankingReason, ReaderInsights } from "./MessageInsights";
+import { optimistic, quietUntil } from "./mail-cache";
+import { cachedRow, headerData, usePrefetch } from "./prefetch";
 import { ReaderText } from "./ReaderText";
 import { useLocation, useNavigate, useParams, useSearchParams } from "./router";
 import { nextMessageId, useTriage, visibleConversations } from "./triage";
@@ -88,6 +91,7 @@ const viewDetails: Record<
   trash: { title: "Trash" },
 };
 export function InboxPage(props: { accounts: Account[] }) {
+  const client = useQueryClient();
   const route = useParams();
   const [params, setParams] = useSearchParams();
   const selectedId = createMemo(() => params().get("message"));
@@ -101,11 +105,17 @@ export function InboxPage(props: { accounts: Account[] }) {
   const messages = createQuery(() => ({
     queryKey: ["messages", route.view ?? "l1", accountId()],
     queryFn: () => sentApi.messages(query()),
-    refetchInterval: 4000,
+    refetchInterval: () => (quietUntil(client) > Date.now() ? false : 4000),
     reconcile: "threadId",
   }));
   const detail = createMemo(() => viewDetails[route.view ?? "l1"] ?? viewDetails.all);
   const navigation = useMessageNavigation(() => messages.data?.messages ?? []);
+  const prefetch = usePrefetch(
+    client,
+    () => navigation.visible,
+    selectedId,
+    () => route.view === "trash",
+  );
   const select = (message: MessageSummary) => {
     setParams((current) => {
       const next = new URLSearchParams(current);
@@ -141,6 +151,7 @@ export function InboxPage(props: { accounts: Account[] }) {
               )}
             </header>
             <MessageList
+              prefetch={prefetch}
               messages={navigation.visible}
               loading={messages.isLoading}
               error={messages.error?.message}
@@ -152,6 +163,7 @@ export function InboxPage(props: { accounts: Account[] }) {
             {(id) => (
               <Reader
                 messageId={id}
+                summary={messages.data?.messages.find((item) => item.id === id)}
                 accounts={props.accounts}
                 advance={navigation.advance.bind(null, id)}
                 restore={navigation.restore.bind(null, id)}
@@ -169,16 +181,31 @@ export function InboxPage(props: { accounts: Account[] }) {
   );
 }
 export function SearchResults(props: { accounts: Account[] }) {
+  const client = useQueryClient();
   const [params, setParams] = useSearchParams();
   const q = createMemo(() => params().get("q") ?? "");
+  const [debounced, setDebounced] = createSignal(q());
+  createEffect(() => {
+    const value = q();
+    const timer = setTimeout(() => setDebounced(value), 150);
+    onCleanup(() => clearTimeout(timer));
+  });
   const selectedId = createMemo(() => params().get("message"));
-  const result = createQuery(() => ({
-    queryKey: ["search", q()],
-    queryFn: () => sentApi.search(new URLSearchParams({ q: q(), limit: "75" })),
-    enabled: Boolean(q()),
+  const result = createQuery<SearchResponse>(() => ({
+    queryKey: ["search", client.getQueryData(["search", q()]) ? q() : debounced()],
+    queryFn: ({ queryKey }) =>
+      sentApi.search(new URLSearchParams({ q: String(queryKey[1]), limit: "75" })),
+    enabled: Boolean(q()) && (q() === debounced() || Boolean(client.getQueryData(["search", q()]))),
+    placeholderData: (previous) => previous,
     reconcile: "threadId",
   }));
   const navigation = useMessageNavigation(() => result.data?.messages ?? []);
+  const prefetch = usePrefetch(
+    client,
+    () => navigation.visible,
+    selectedId,
+    () => false,
+  );
   return (
     <>
       {
@@ -195,6 +222,7 @@ export function SearchResults(props: { accounts: Account[] }) {
               </div>
             </header>
             <MessageList
+              prefetch={prefetch}
               messages={navigation.visible}
               loading={result.isLoading}
               error={result.error?.message}
@@ -210,6 +238,7 @@ export function SearchResults(props: { accounts: Account[] }) {
             {(id) => (
               <Reader
                 messageId={id}
+                summary={result.data?.messages.find((item) => item.id === id)}
                 accounts={props.accounts}
                 advance={navigation.advance.bind(null, id)}
                 restore={navigation.restore.bind(null, id)}
@@ -227,6 +256,7 @@ export function SearchResults(props: { accounts: Account[] }) {
   );
 }
 function MessageList(props: {
+  prefetch?(message: ConversationSummary): void;
   messages: ConversationSummary[];
   loading: boolean;
   error?: string;
@@ -323,7 +353,11 @@ function MessageList(props: {
                 >
                   <button
                     aria-current={props.selectedId === message.id ? "true" : undefined}
-                    onFocus={() => setCursorThreadId(message.threadId)}
+                    onFocus={() => {
+                      setCursorThreadId(message.threadId);
+                      props.prefetch?.(message);
+                    }}
+                    onMouseEnter={() => props.prefetch?.(message)}
                     class={`message-row ${!message.read ? "unread" : ""} ${message.tier === null && message.direction === "inbound" ? "unclassified" : ""} ${props.selectedId === message.id ? "selected" : ""}`}
                     onClick={() => props.onSelect(message)}
                   >
@@ -386,6 +420,7 @@ function MessageList(props: {
 }
 function Reader(props: {
   messageId: string;
+  summary?: MessageSummary;
   accounts: Account[];
   close(): void;
   advance(): void;
@@ -404,63 +439,46 @@ function Reader(props: {
   };
   const openedMessages = { current: new Set<string>() };
   const scrolledToNewest = { current: false };
-  const detail = createQuery(() => ({
+  const detail = createQuery<MessageDetail>(() => ({
     queryKey: ["message", props.messageId],
-    queryFn: () => sentApi.message(props.messageId),
+    queryFn: ({ signal }) => sentApi.message(props.messageId, signal),
+    placeholderData: headerData(props.summary ?? cachedRow(queryClient, props.messageId)),
   }));
-  const threadId = createMemo(() => detail.data?.threadId);
+  const threadId = createMemo(() => props.summary?.threadId ?? detail.data?.threadId);
   const thread = createQuery(() => ({
     queryKey: ["thread", threadId(), trash()],
-    queryFn: () => sentApi.thread(threadId() ?? "", trash()),
+    queryFn: ({ signal }) => sentApi.thread(threadId() ?? "", trash(), signal),
     enabled: Boolean(threadId()),
-    refetchInterval: 4000,
+    refetchInterval: () => (quietUntil(queryClient) > Date.now() ? false : 4000),
   }));
   const orderedMessages = createMemo(
     () => thread.data?.messages ?? (detail.data ? [detail.data] : []),
   );
-  const readerLoading = createMemo(
-    () => detail.isLoading || (thread.isLoading && !hasShownFallback()),
-  );
+  const readerLoading = createMemo(() => !thread.data && !detail.data && !hasShownFallback());
   // Do not expose actions for the selected fallback while the newest reply is loading.
   const message = createMemo(() => (readerLoading() ? undefined : orderedMessages().at(-1)));
   const conversation = createMemo(() => orderedMessages().slice(0, -1));
   const actionOptions = () => ({
     mutationFn: ({ id, action }: { id: string; action: string }) => sentApi.action(id, action),
-    onSuccess: (_result: unknown, { id, action }: { id: string; action: string }) => {
-      const updateMessage = (item: MessageDetail): MessageDetail => {
-        if (item.id !== id) return item;
-        if (action === "mark_read" || action === "mark_unread")
-          return { ...item, read: action === "mark_read" };
-        if (action === "flag" || action === "unflag")
-          return { ...item, flagged: action === "flag" };
-        return item;
-      };
-      // A successful write must remain visible even when refreshing the thread
-      // fails. Otherwise cached toolbar controls keep acting on stale state.
-      queryClient.setQueriesData<{
-        messages: MessageDetail[];
-      }>({ queryKey: ["thread", threadId()] }, (cached) =>
-        cached ? { ...cached, messages: cached.messages.map(updateMessage) } : cached,
-      );
-      queryClient.setQueryData<MessageDetail>(["message", id], (cached) =>
-        cached ? updateMessage(cached) : cached,
-      );
-      void queryClient.invalidateQueries({ queryKey: ["messages"] });
-      void queryClient.invalidateQueries({ queryKey: ["message"] });
-      void queryClient.invalidateQueries({ queryKey: ["thread", threadId()] });
-      void queryClient.invalidateQueries({ queryKey: ["search"] });
-    },
+    onMutate: (input: { id: string; action: string }) => optimistic(queryClient, input),
+    onSuccess: (
+      result: Awaited<ReturnType<typeof sentApi.action>>,
+      _input: { id: string; action: string },
+      transaction: ReturnType<typeof optimistic> | undefined,
+    ) => transaction?.commit(result),
+    onError: (
+      _error: Error,
+      _input: { id: string; action: string },
+      transaction: ReturnType<typeof optimistic> | undefined,
+    ) => transaction?.rollback(),
   });
   const action = createMutation(actionOptions);
   const markRead = createMutation(actionOptions);
   const tier = createMutation(() => ({
-    mutationFn: (value: Tier) => sentApi.tier(message()?.id ?? props.messageId, value),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ["messages"] });
-      void queryClient.invalidateQueries({ queryKey: ["message"] });
-      void queryClient.invalidateQueries({ queryKey: ["search"] });
-      void queryClient.invalidateQueries({ queryKey: ["thread", threadId()] });
-    },
+    mutationFn: (input: { id: string; tier: Tier }) => sentApi.tier(input.id, input.tier),
+    onMutate: (input: { id: string; tier: Tier }) => optimistic(queryClient, input),
+    onSuccess: (result, _input, transaction) => transaction?.commit(result),
+    onError: (_error, _input, transaction) => transaction?.rollback(),
   }));
   const account = createMemo(() =>
     props.accounts.find((item) => item.id === message()?.account.id),
@@ -475,7 +493,7 @@ function Reader(props: {
   };
   const triageAction = (action: "archive" | "delete") => {
     const item = message();
-    if (item)
+    if (item && (thread.data || thread.isError))
       triage.perform(
         item.threadId,
         action,
@@ -507,7 +525,9 @@ function Reader(props: {
       forwardOfMessageId: item.id,
     });
   };
-  const unavailable = createMemo(() => !message() || action.isPending);
+  const unavailable = createMemo(
+    () => !message() || action.isPending || (!thread.data && !thread.isError),
+  );
   useCommands("reader", () => [
     {
       id: "archive",
@@ -574,7 +594,7 @@ function Reader(props: {
     },
   ]);
   createEffect(() => {
-    [thread.data, thread.isError, detail.data, action.mutate];
+    [thread.data, thread.isError, detail.data, markRead.mutate];
     const cleanup = untrack(() => {
       if (thread.isError) setHasShownFallback(true);
       const visible = thread.data?.messages ?? (thread.isError && detail.data ? [detail.data] : []);
@@ -625,7 +645,10 @@ function Reader(props: {
                 <span>Back</span>
               </button>
               <div class="toolbar-actions">
-                <TierPicker tier={current().tier} onChange={(value) => tier.mutate(value)} />
+                <TierPicker
+                  tier={current().tier}
+                  onChange={(value) => tier.mutate({ id: current().id, tier: value })}
+                />
                 <button
                   class="icon-button"
                   title="Archive conversation"
@@ -741,9 +764,14 @@ function Reader(props: {
                 </p>
                 {conversation().length > 0 && <span class="latest-label">Latest message</span>}
                 <ReaderInsights message={current()} />
-                <div class="email-body">
-                  <MessageBody message={current()} view={bodyView()} title="Email content" />
-                </div>
+                <Show
+                  when={thread.data || !detail.isPlaceholderData}
+                  fallback={<div class="reader-skeleton" />}
+                >
+                  <div class="email-body">
+                    <MessageBody message={current()} view={bodyView()} title="Email content" />
+                  </div>
+                </Show>
                 <MessageAttachments message={current()} />
               </section>
               <div class="reply-actions">

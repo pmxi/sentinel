@@ -169,6 +169,23 @@ async fn mail_views_and_send_checkpoints() -> Result<()> {
         f.message("group", 14, json!({"direction":"outbound"}))
             .await?;
         let thread = uuid(&f.repo.get_message(members[0]).await?.unwrap()["threadId"]);
+        assert!(
+            f.repo
+                .get_message(members[0])
+                .await?
+                .unwrap()
+                .get("archived")
+                .is_none()
+        );
+        let cached = f.repo.get_thread_with_state(thread, false, true).await?;
+        assert_eq!(cached.as_array().unwrap().len(), 6);
+        assert!(
+            cached
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| item["deleted"] == false && item["classified"].is_boolean())
+        );
         let input = ThreadActionInput {
             action: action.into(),
             view: "l1".into(),
@@ -183,6 +200,21 @@ async fn mail_views_and_send_checkpoints() -> Result<()> {
             .fetch_all(&f.repo.0)
             .await?;
         assert_eq!(rows.len(), 3);
+        let affected = f.repo.mutation_message_ids(receipt).await?;
+        assert_eq!(affected.len(), 3);
+        let patches = f.repo.message_states(&affected).await?;
+        assert_eq!(patches.as_array().unwrap().len(), 3);
+        assert!(
+            patches
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|item| item[if action == "archive" {
+                    "archived"
+                } else {
+                    "deleted"
+                }] == true)
+        );
         assert!(
             rows.iter()
                 .all(|row| row.get::<Value, _>("payload")["groupId"] == receipt.to_string())

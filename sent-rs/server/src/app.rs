@@ -472,11 +472,18 @@ async fn messages(
 async fn message(
     ExtractState(state): ExtractState<Shared>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
 ) -> ApiResult<Response> {
-    Ok(match state.repository.get_message(id).await? {
-        Some(value) => Json(value).into_response(),
-        None => error(StatusCode::NOT_FOUND, "Message not found"),
-    })
+    Ok(
+        match state
+            .repository
+            .get_message_with_state(id, cache_requested(&headers))
+            .await?
+        {
+            Some(value) => Json(value).into_response(),
+            None => error(StatusCode::NOT_FOUND, "Message not found"),
+        },
+    )
 }
 #[derive(Deserialize)]
 struct ThreadQuery {
@@ -485,6 +492,7 @@ struct ThreadQuery {
 async fn thread(
     ExtractState(state): ExtractState<Shared>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     ZodQuery(input): ZodQuery<ThreadQuery>,
 ) -> ApiResult<Json<Value>> {
     if input
@@ -495,7 +503,7 @@ async fn thread(
         return Err(anyhow::anyhow!("Invalid request").into());
     }
     Ok(Json(
-        json!({"messages":state.repository.get_thread(id,input.trash.as_deref()==Some("true")).await?}),
+        json!({"messages":state.repository.get_thread_with_state(id,input.trash.as_deref()==Some("true"),cache_requested(&headers)).await?}),
     ))
 }
 #[derive(Deserialize)]
@@ -507,6 +515,7 @@ struct Action {
 async fn thread_action(
     ExtractState(state): ExtractState<Shared>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     ZodJson(input): ZodJson<ThreadActionInput>,
 ) -> ApiResult<Response> {
     let until = input.undoable.then(|| Utc::now() + Duration::seconds(5));
@@ -514,11 +523,12 @@ async fn thread_action(
         .repository
         .enqueue_thread_action(id, &input, until)
         .await?;
-    Ok(receipt(mutation, until))
+    cached_receipt(&state, mutation, until, &headers).await
 }
 async fn action(
     ExtractState(state): ExtractState<Shared>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     ZodJson(input): ZodJson<Action>,
 ) -> ApiResult<Response> {
     let until = if input.undoable && ["archive", "delete"].contains(&input.action.as_str()) {
@@ -530,7 +540,28 @@ async fn action(
         .repository
         .enqueue_action(id, &input.action, until)
         .await?;
-    Ok(receipt(mutation, until))
+    cached_receipt(&state, mutation, until, &headers).await
+}
+fn cache_requested(headers: &HeaderMap) -> bool {
+    headers
+        .get("x-sent-cache")
+        .is_some_and(|value| value == "1")
+}
+async fn cached_receipt(
+    state: &State,
+    id: Uuid,
+    until: Option<chrono::DateTime<Utc>>,
+    headers: &HeaderMap,
+) -> ApiResult<Response> {
+    if !cache_requested(headers) {
+        return Ok(receipt(id, until));
+    }
+    let ids = state.repository.mutation_message_ids(id).await?;
+    let mut value = json!({"mutationId":id,"patches":state.repository.message_states(&ids).await?});
+    if let Some(until) = until {
+        value["undoUntil"] = json!(timestamp(until));
+    }
+    Ok((StatusCode::ACCEPTED, Json(value)).into_response())
 }
 fn receipt(id: Uuid, until: Option<chrono::DateTime<Utc>>) -> Response {
     let mut value = json!({"mutationId":id});
@@ -542,8 +573,18 @@ fn receipt(id: Uuid, until: Option<chrono::DateTime<Utc>>) -> Response {
 async fn undo(
     ExtractState(state): ExtractState<Shared>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
 ) -> ApiResult<Json<Value>> {
-    Ok(Json(json!({"draft":state.repository.undo(id).await?})))
+    let ids = if cache_requested(&headers) {
+        state.repository.mutation_message_ids(id).await?
+    } else {
+        Vec::new()
+    };
+    let mut value = json!({"draft":state.repository.undo(id).await?});
+    if cache_requested(&headers) {
+        value["patches"] = state.repository.message_states(&ids).await?;
+    }
+    Ok(Json(value))
 }
 #[derive(Deserialize)]
 struct Tier {
@@ -552,10 +593,15 @@ struct Tier {
 async fn tier(
     ExtractState(state): ExtractState<Shared>,
     Path(id): Path<Uuid>,
+    headers: HeaderMap,
     ZodJson(input): ZodJson<Tier>,
 ) -> ApiResult<Json<Value>> {
     state.repository.set_tier(id, input.tier).await?;
-    Ok(Json(json!({"ok":true})))
+    let mut value = json!({"ok":true});
+    if cache_requested(&headers) {
+        value["patches"] = state.repository.message_states(&[id]).await?;
+    }
+    Ok(Json(value))
 }
 async fn search(
     ExtractState(state): ExtractState<Shared>,

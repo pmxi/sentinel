@@ -78,7 +78,13 @@ function mount(children: () => ReturnType<typeof createComponent>) {
   });
   return container;
 }
-async function reader(read = false, empty = false, view = "l1", accountId?: string) {
+async function reader(
+  read = false,
+  empty = false,
+  view = "l1",
+  accountId?: string,
+  pending?: { detail: Promise<MessageDetail>; thread: Promise<{ messages: MessageDetail[] }> },
+) {
   const item = { ...message, read };
   vi.spyOn(sentApi, "session").mockResolvedValue({ authenticated: true });
   vi.spyOn(sentApi, "accounts").mockResolvedValue({ accounts: [account] });
@@ -88,8 +94,10 @@ async function reader(read = false, empty = false, view = "l1", accountId?: stri
       : [{ ...item, messageCount: 1, unreadCount: read ? 0 : 1, participants: item.from }],
     nextCursor: null,
   });
-  vi.spyOn(sentApi, "message").mockResolvedValue(item);
-  vi.spyOn(sentApi, "thread").mockResolvedValue({ messages: [item] });
+  vi.spyOn(sentApi, "message").mockReturnValue(pending?.detail ?? Promise.resolve(item));
+  vi.spyOn(sentApi, "thread").mockReturnValue(
+    pending?.thread ?? Promise.resolve({ messages: [item] }),
+  );
   vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
   const path = `/inbox/${view}${empty ? "" : `?message=first${accountId ? `&account=${accountId}` : ""}`}`;
   window.history.replaceState(null, "", path);
@@ -105,7 +113,11 @@ async function reader(read = false, empty = false, view = "l1", accountId?: stri
     }),
   );
   await vi.waitFor(() =>
-    expect(container.querySelector(empty ? ".empty-list" : ".email-body")).not.toBeNull(),
+    expect(
+      container.querySelector(
+        empty ? ".empty-list" : pending ? ".conversation-heading h2" : ".email-body",
+      ),
+    ).not.toBeNull(),
   );
   return container;
 }
@@ -116,6 +128,22 @@ function press(key: string) {
 }
 
 describe("reader triage shortcuts", () => {
+  it("starts detail and thread together, paints the cached header and then a real thread body", async () => {
+    const detail = deferred<MessageDetail>();
+    const thread = deferred<{ messages: MessageDetail[] }>();
+    const container = await reader(true, false, "l1", undefined, {
+      detail: detail.promise,
+      thread: thread.promise,
+    });
+    expect(sentApi.message).toHaveBeenCalled();
+    expect(sentApi.thread).toHaveBeenCalled();
+    expect(container.querySelector(".conversation-heading h2")?.textContent).toBe(message.subject);
+    expect(container.querySelector(".email-body")).toBeNull();
+    thread.resolve({ messages: [{ ...message, read: true }] });
+    await vi.waitFor(() =>
+      expect(container.querySelector(".email-body")?.textContent).toContain(message.textBody),
+    );
+  });
   it.each([
     ["e", "archive"],
     ["#", "delete"],
