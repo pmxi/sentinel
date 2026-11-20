@@ -17,6 +17,7 @@ import { sentApi } from "./api";
 import { useCommands, useFrameCommands } from "./commands";
 import { replySeed, useCompose } from "./compose";
 import { messageCursorIndex, nextMessageIndex } from "./keyboard";
+import { liveInterval } from "./live";
 import { MessagePreview, RankingReason, ReaderInsights } from "./MessageInsights";
 import { optimistic, quietUntil } from "./mail-cache";
 import { useMailbox } from "./mailbox";
@@ -561,7 +562,9 @@ function Reader(props: {
     queryFn: ({ signal }) => threadRead(queryClient, threadId() ?? "", trash(), signal),
     enabled: Boolean(threadId()),
     refetchInterval:
-      replicaReady(queryClient) || quietUntil(queryClient) > Date.now() ? false : 4000,
+      replicaReady(queryClient) || quietUntil(queryClient) > Date.now()
+        ? false
+        : liveInterval(queryClient),
   }));
   const orderedMessages = createMemo(
     () => thread.data?.messages ?? (detail.data ? [detail.data] : []),

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use sqlx::{PgPool, Row, postgres::PgRow};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -13,6 +14,67 @@ pub struct Repository(pub PgPool);
 pub struct ReplicaInventory {
     pub messages: Vec<Value>,
     pub accounts: Vec<Value>,
+}
+
+#[derive(Default)]
+pub struct BodyVersionCache {
+    entries: HashMap<Uuid, Value>,
+    computed: usize,
+}
+const BODY_VERSION_CACHE_LIMIT: usize = 65_536;
+
+impl BodyVersionCache {
+    pub fn clear(&mut self) {
+        self.entries.clear();
+        self.computed = 0;
+    }
+    pub fn computed(&self) -> usize {
+        self.computed
+    }
+    fn remember(&mut self, id: Uuid, revision: &str, version: &str) {
+        if self.entries.len() < BODY_VERSION_CACHE_LIMIT || self.entries.contains_key(&id) {
+            self.entries.insert(id, json!({"r":revision,"v":version}));
+        }
+    }
+    fn parameters(&self, ids: Option<&[Uuid]>) -> Value {
+        let values: serde_json::Map<String, Value> = match ids {
+            Some(ids) => ids
+                .iter()
+                .filter_map(|id| {
+                    self.entries
+                        .get(id)
+                        .map(|value| (id.to_string(), value.clone()))
+                })
+                .collect(),
+            None => self
+                .entries
+                .iter()
+                .map(|(id, value)| (id.to_string(), value.clone()))
+                .collect(),
+        };
+        Value::Object(values)
+    }
+}
+
+#[cfg(test)]
+mod body_cache_tests {
+    use super::*;
+
+    #[test]
+    fn cache_is_bounded_and_selective_parameters_do_not_copy_unrelated_entries() {
+        let mut cache = BodyVersionCache::default();
+        for id in 0..=BODY_VERSION_CACHE_LIMIT {
+            cache.remember(Uuid::from_u128(id as u128), "revision", "version");
+        }
+        assert_eq!(cache.entries.len(), BODY_VERSION_CACHE_LIMIT);
+        let id = Uuid::nil();
+        cache.remember(id, "updated", "version");
+        assert_eq!(cache.entries[&id]["r"], "updated");
+        assert_eq!(cache.parameters(Some(&[id])).as_object().unwrap().len(), 1);
+        assert!(cache.parameters(Some(&[])).as_object().unwrap().is_empty());
+        cache.clear();
+        assert!(cache.parameters(None).as_object().unwrap().is_empty());
+    }
 }
 
 pub fn replica_fingerprint(value: &Value) -> String {
@@ -220,11 +282,15 @@ impl Repository {
     }
 
     pub async fn complete_mutation(&self, id: Uuid) -> Result<()> {
-        sqlx::query("update mutation_outbox set status='complete',completed_at=now(),last_error=null where id=$1").bind(id).execute(&self.0).await?;
+        let mut tx = self.0.begin().await?;
+        sqlx::query("update mutation_outbox set status='complete',completed_at=now(),last_error=null where id=$1").bind(id).execute(&mut *tx).await?;
+        crate::live::notify_changed(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
     pub async fn fail_mutation(&self, id: Uuid, error: &str) -> Result<()> {
+        let mut tx = self.0.begin().await?;
         sqlx::query("with failed_mutation as (
           update mutation_outbox set status=case when attempts>=12 or payload ? 'sendAttemptedAt' then 'failed'::mutation_status else 'pending'::mutation_status end,
           next_attempt_at=now() + (least(3600,power(2,attempts)::int) * interval '1 second'),
@@ -235,7 +301,9 @@ impl Repository {
           (select id from messages where id=(draft->>'replyToMessageId')::uuid),
           (select id from messages where id=(draft->>'forwardOfMessageId')::uuid),(draft->>'createdAt')::timestamptz,now()
           from (select payload->'draft' as draft from failed_mutation where action='send' and status='failed' and not (payload ? 'sendAttemptedAt')) restored on conflict(id) do nothing")
-          .bind(id).bind(error.chars().take(2000).collect::<String>()).execute(&self.0).await?;
+          .bind(id).bind(error.chars().take(2000).collect::<String>()).execute(&mut *tx).await?;
+        crate::live::notify_changed(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -247,6 +315,7 @@ impl Repository {
             .bind(id)
             .execute(&mut *tx)
             .await?;
+        crate::live::notify_changed(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -266,12 +335,16 @@ impl Repository {
         sqlx::query("insert into sync_cursors(account_id,cursor,backfill_complete,last_successful_at,updated_at) values($1,$2,$3,now(),now()) on conflict(account_id) do update set cursor=excluded.cursor,backfill_complete=excluded.backfill_complete,last_successful_at=now(),updated_at=now()")
             .bind(id).bind(cursor).bind(backfill_complete).execute(&mut *tx).await?;
         sqlx::query("update accounts set status='active',last_synced_at=now(),last_error=null,updated_at=now() where id=$1").bind(id).execute(&mut *tx).await?;
+        crate::live::notify_changed(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }
 
     pub async fn fail_sync(&self, id: Uuid, error: &str, needs_reauth: bool) -> Result<()> {
-        sqlx::query("update accounts set status=$2::text::account_status,last_error=$3,updated_at=now() where id=$1").bind(id).bind(if needs_reauth {"needs_reauth"} else {"error"}).bind(error.chars().take(2000).collect::<String>()).execute(&self.0).await?;
+        let mut tx = self.0.begin().await?;
+        sqlx::query("update accounts set status=$2::text::account_status,last_error=$3,updated_at=now() where id=$1").bind(id).bind(if needs_reauth {"needs_reauth"} else {"error"}).bind(error.chars().take(2000).collect::<String>()).execute(&mut *tx).await?;
+        crate::live::notify_changed(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
     pub async fn list_accounts(&self) -> Result<Value> {
@@ -356,16 +429,29 @@ impl Repository {
         ids: Option<&[Uuid]>,
         bodies: bool,
     ) -> Result<ReplicaInventory> {
+        self.replica_inventory_cached(ids, bodies, &mut BodyVersionCache::default())
+            .await
+    }
+
+    pub async fn replica_inventory_cached(
+        &self,
+        ids: Option<&[Uuid]>,
+        bodies: bool,
+        cache: &mut BodyVersionCache,
+    ) -> Result<ReplicaInventory> {
         let fits = "octet_length(m.text_body)+coalesce(octet_length(m.html_body),0)+coalesce(octet_length(c.plain_text),0)<=262144";
         let include = if bodies { fits } else { "false" };
         let selection = SELECT.replace(
             "c.plain_text",
             &format!("case when {include} then c.plain_text end plain_text"),
         );
+        let revision = "($3::text || ':' || m.xmin::text || ':' || coalesce(c.xmin::text,''))";
+        let hit = format!("coalesce(($2::jsonb -> m.id::text ->> 'r')={revision},false)");
         let query = format!("select {selection},m.archived,m.deleted,c.message_id is not null classified,m.to_addresses,m.cc_addresses,m.bcc_addresses,m.sent_at,m.internet_message_id,
           case when {include} then m.text_body else '' end text_body,
           case when {include} then m.html_body end html_body,({include}) body_available,
-          encode(sha256(convert_to(jsonb_build_array(m.text_body,m.html_body,c.plain_text)::text,'UTF8')),'hex') body_version,
+          case when {hit} then $2::jsonb -> m.id::text ->> 'v' else encode(sha256(convert_to(jsonb_build_array(m.text_body,m.html_body,c.plain_text)::text,'UTF8')),'hex') end body_version,
+          {revision} source_revision, {hit} body_cache_hit,
           m.received_at sort_received_at
           from messages m join accounts a on a.id=m.account_id left join classifications c on c.message_id=m.id
           where not m.tombstone and ($1::uuid[] is null or m.id=any($1)) order by m.id");
@@ -373,7 +459,18 @@ impl Repository {
         sqlx::query("set transaction isolation level repeatable read read only")
             .execute(&mut *tx)
             .await?;
-        let rows = sqlx::query(&query).bind(ids).fetch_all(&mut *tx).await?;
+        let (started, snapshot): (String, String) = sqlx::query_as(
+            "select pg_postmaster_start_time()::text,pg_snapshot_xmax(pg_current_snapshot())::text",
+        )
+        .fetch_one(&mut *tx)
+        .await?;
+        let epoch = format!("{started}:{}", snapshot.parse::<u64>()? >> 32);
+        let rows = sqlx::query(&query)
+            .bind(ids)
+            .bind(cache.parameters(ids))
+            .bind(epoch)
+            .fetch_all(&mut *tx)
+            .await?;
         let accounts = sqlx::query("select id,provider::text,email,display_name,status::text,last_synced_at from accounts order by created_at").fetch_all(&mut *tx).await?.iter().map(|row| json!({
             "id":row.get::<Uuid,_>("id"),"provider":row.get::<String,_>("provider"),"email":row.get::<String,_>("email"),"displayName":row.get::<String,_>("display_name"),"status":row.get::<String,_>("status"),"lastSyncedAt":date(row,"last_synced_at")
         })).collect();
@@ -391,6 +488,17 @@ impl Repository {
             })
             .collect();
         tx.commit().await?;
+        if ids.is_none() {
+            cache.entries.clear();
+        }
+        cache.computed = rows
+            .iter()
+            .filter(|row| !row.get::<bool, _>("body_cache_hit"))
+            .count();
+        for row in &rows {
+            let id = row.get::<Uuid, _>("id");
+            cache.remember(id, row.get("source_revision"), row.get("body_version"));
+        }
         Ok(ReplicaInventory { messages, accounts })
     }
 
@@ -521,21 +629,27 @@ impl Repository {
         {
             bail!("Invalid request");
         }
+        let mut tx = self.0.begin().await?;
         let row = if let Some(id) = input.id {
             sqlx::query("update drafts set account_id=$1,to_addresses=$2,cc_addresses=$3,bcc_addresses=$4,subject=$5,body=$6,reply_to_message_id=$7,forward_of_message_id=$8,updated_at=now() where id=$9 returning *")
-                .bind(input.account_id).bind(json!(input.to)).bind(json!(input.cc)).bind(json!(input.bcc)).bind(input.subject).bind(input.body).bind(input.reply_to_message_id).bind(input.forward_of_message_id).bind(id).fetch_optional(&self.0).await?.context("Draft not found")?
+                .bind(input.account_id).bind(json!(input.to)).bind(json!(input.cc)).bind(json!(input.bcc)).bind(input.subject).bind(input.body).bind(input.reply_to_message_id).bind(input.forward_of_message_id).bind(id).fetch_optional(&mut *tx).await?.context("Draft not found")?
         } else {
             sqlx::query("insert into drafts(account_id,to_addresses,cc_addresses,bcc_addresses,subject,body,reply_to_message_id,forward_of_message_id) values($1,$2,$3,$4,$5,$6,$7,$8) returning *")
-                .bind(input.account_id).bind(json!(input.to)).bind(json!(input.cc)).bind(json!(input.bcc)).bind(input.subject).bind(input.body).bind(input.reply_to_message_id).bind(input.forward_of_message_id).fetch_one(&self.0).await?
+                .bind(input.account_id).bind(json!(input.to)).bind(json!(input.cc)).bind(json!(input.bcc)).bind(input.subject).bind(input.body).bind(input.reply_to_message_id).bind(input.forward_of_message_id).fetch_one(&mut *tx).await?
         };
+        crate::live::notify_changed(&mut *tx).await?;
+        tx.commit().await?;
         Ok(draft(&row))
     }
 
     pub async fn delete_draft(&self, id: Uuid) -> Result<()> {
+        let mut tx = self.0.begin().await?;
         sqlx::query("delete from drafts where id=$1")
             .bind(id)
-            .execute(&self.0)
+            .execute(&mut *tx)
             .await?;
+        crate::live::notify_changed(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -543,17 +657,20 @@ impl Repository {
         if tier.is_some_and(|t| !(1..=3).contains(&t)) {
             bail!("Invalid request");
         }
+        let mut tx = self.0.begin().await?;
         if let Some(tier) = tier {
             sqlx::query("insert into classifications(message_id,model_tier,manual_tier,reasoning,model,prompt_version) values($1,1,$2,'Manual classification before model result','manual','manual') on conflict(message_id) do update set manual_tier=excluded.manual_tier,updated_at=now()")
-                .bind(id).bind(tier).execute(&self.0).await?;
+                .bind(id).bind(tier).execute(&mut *tx).await?;
         } else {
             sqlx::query(
                 "update classifications set manual_tier=null,updated_at=now() where message_id=$1",
             )
             .bind(id)
-            .execute(&self.0)
+            .execute(&mut *tx)
             .await?;
         }
+        crate::live::notify_changed(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -595,6 +712,7 @@ impl Repository {
         .bind(message_id)
         .execute(&mut *tx)
         .await?;
+        crate::live::notify_changed(&mut *tx).await?;
         tx.commit().await?;
         Ok(id)
     }
@@ -648,6 +766,7 @@ impl Repository {
         if inserted == 0 {
             bail!("This action is already pending");
         }
+        crate::live::notify_changed(&mut *tx).await?;
         tx.commit().await?;
         Ok(group_id)
     }
@@ -672,6 +791,7 @@ impl Repository {
             .bind(draft_id)
             .execute(&mut *tx)
             .await?;
+        crate::live::notify_changed(&mut *tx).await?;
         tx.commit().await?;
         Ok(id)
     }
@@ -712,12 +832,13 @@ impl Repository {
                 .execute(&mut *tx)
                 .await?;
         }
+        crate::live::notify_changed(&mut *tx).await?;
         tx.commit().await?;
         Ok(result)
     }
 
     pub async fn health(&self) -> Result<Value> {
-        let row = sqlx::query("select (select max(heartbeat_at) from worker_state) worker_heartbeat,(select count(*) from mutation_outbox where status='failed') failed_mutations,(select count(*) from classification_failures) classification_failures,count(*) accounts,count(*) filter(where status='needs_reauth') needs_reauth,min(last_synced_at) oldest_successful_sync_at,count(*) filter(where last_synced_at is null or last_synced_at<now()-interval '3 minutes') stale from accounts").fetch_one(&self.0).await?;
+        let row = sqlx::query("select (select max(heartbeat_at) from worker_state where name not like 'session-revoked:%') worker_heartbeat,(select count(*) from mutation_outbox where status='failed') failed_mutations,(select count(*) from classification_failures) classification_failures,count(*) accounts,count(*) filter(where status='needs_reauth') needs_reauth,min(last_synced_at) oldest_successful_sync_at,count(*) filter(where last_synced_at is null or last_synced_at<now()-interval '3 minutes') stale from accounts").fetch_one(&self.0).await?;
         let heartbeat: Option<DateTime<Utc>> = row.get("worker_heartbeat");
         let failed: i64 = row.get("failed_mutations");
         let needs: i64 = row.get("needs_reauth");

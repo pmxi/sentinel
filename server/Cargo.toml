@@ -8,7 +8,7 @@ publish.workspace = true
 sent-core = { path = "../core" }
 anyhow.workspace = true
 tokio.workspace = true
-axum = { version = "0.8", features = ["multipart"] }
+axum = { version = "0.8", features = ["multipart", "ws"] }
 argon2 = "0.5"
 base64.workspace = true
 chrono.workspace = true

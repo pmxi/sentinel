@@ -3,6 +3,7 @@ pub mod config;
 pub mod crypto;
 pub mod db;
 pub mod ingest;
+pub mod live;
 pub mod normalize;
 pub mod providers;
 pub mod repository;

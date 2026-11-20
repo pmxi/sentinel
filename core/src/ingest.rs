@@ -80,13 +80,16 @@ impl Repository {
         display_name: &str,
         encrypted_credentials: &str,
     ) -> Result<Uuid> {
+        let mut tx = self.0.begin().await?;
         let row=sqlx::query("insert into accounts(provider,email,display_name,encrypted_credentials,status,updated_at) values($1::text::provider,$2,$3,$4,'active',now()) on conflict(provider,email) do update set display_name=excluded.display_name,encrypted_credentials=excluded.encrypted_credentials,status='active',last_error=null,updated_at=now() returning id")
-            .bind(provider).bind(email.to_lowercase()).bind(display_name).bind(encrypted_credentials).fetch_one(&self.0).await?;
+            .bind(provider).bind(email.to_lowercase()).bind(display_name).bind(encrypted_credentials).fetch_one(&mut *tx).await?;
         let id: Uuid = row.get("id");
         sqlx::query("insert into sync_cursors(account_id) values($1) on conflict do nothing")
             .bind(id)
-            .execute(&self.0)
+            .execute(&mut *tx)
             .await?;
+        crate::live::notify_changed(&mut *tx).await?;
+        tx.commit().await?;
         Ok(id)
     }
 
@@ -138,13 +141,17 @@ impl Repository {
             r.get::<String, _>("subject") != message.subject
                 || r.get::<String, _>("text_body") != message.text_body
         });
+        crate::live::notify_changed(&mut *tx).await?;
         tx.commit().await?;
         Ok((id, changed))
     }
 
     pub async fn tombstone_messages(&self, account_id: Uuid, ids: &[String]) -> Result<()> {
         if !ids.is_empty() {
-            sqlx::query("update messages set tombstone=true,deleted=true,updated_at=now() where account_id=$1 and provider_message_id=any($2)").bind(account_id).bind(ids).execute(&self.0).await?;
+            let mut tx = self.0.begin().await?;
+            sqlx::query("update messages set tombstone=true,deleted=true,updated_at=now() where account_id=$1 and provider_message_id=any($2)").bind(account_id).bind(ids).execute(&mut *tx).await?;
+            crate::live::notify_changed(&mut *tx).await?;
+            tx.commit().await?;
         }
         Ok(())
     }
@@ -164,8 +171,11 @@ impl Repository {
     }
 
     pub async fn save_classification_failure(&self, id: Uuid, error: &str) -> Result<()> {
+        let mut tx = self.0.begin().await?;
         sqlx::query("insert into classification_failures(message_id,last_error) values($1,$2) on conflict(message_id) do update set attempts=classification_failures.attempts+1,last_error=excluded.last_error,updated_at=now()")
-            .bind(id).bind(error.chars().take(2000).collect::<String>()).execute(&self.0).await?;
+            .bind(id).bind(error.chars().take(2000).collect::<String>()).execute(&mut *tx).await?;
+        crate::live::notify_changed(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -176,8 +186,11 @@ impl Repository {
         model: &str,
         hash: &str,
     ) -> Result<()> {
+        let mut tx = self.0.begin().await?;
         sqlx::query("insert into embeddings(message_id,embedding,model,content_hash) values($1,$2::vector,$3,$4) on conflict(message_id) do update set embedding=excluded.embedding,model=excluded.model,content_hash=excluded.content_hash,created_at=now()")
-            .bind(id).bind(serde_json::to_string(embedding)?).bind(model).bind(hash).execute(&self.0).await?;
+            .bind(id).bind(serde_json::to_string(embedding)?).bind(model).bind(hash).execute(&mut *tx).await?;
+        crate::live::notify_changed(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
