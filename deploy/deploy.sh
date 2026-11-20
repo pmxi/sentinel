@@ -188,7 +188,7 @@ if [[ "$release" != "$saved_previous" ]]; then
     NODE_ENV=production pnpm --dir "${rs}web" build
     [[ -f "${rs}web/dist/index.html" && -d "$migrations" ]]
     printf 'WEB_DIST_PATH=%s\nMIGRATIONS_PATH=%s\n' "$release/${rs}web/dist" "$release/$migrations" >runtime.env
-    if [[ -x bin/sent-import-postgres ]]; then printf 'SENT_DATABASE_PATH=%s\n' "$database" >>runtime.env; fi
+    printf 'SENT_DATABASE_PATH=%s\n' "$database" >>runtime.env
   )
 fi
 for unit in sent-server.service sent-worker.service sent-deploy.service sent-deploy.timer sent-sqlite-backup.service sent-sqlite-backup.timer; do
@@ -201,7 +201,7 @@ if [[ -x "$release/bin/sent-import-postgres" && ! -f "$database" ]]; then
   log 'Stopping services for the initial SQLite import'
   systemctl --user stop sent-worker.service sent-server.service
 fi
-if [[ -x "$release/bin/sent-import-postgres" && -f "$database" ]]; then
+if [[ -f "$database" ]]; then
   log 'Taking pre-migration SQLite backup'
   dump="$ROOT/dumps/$(date -u +%Y%m%dT%H%M%S)-$sha.sqlite"
   sqlite3 "$database" ".backup '${dump//\'/\'\'}'"
