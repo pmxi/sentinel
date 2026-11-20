@@ -18,6 +18,20 @@ type Entry = { key: QueryKey; before: unknown; after: unknown };
 type ReadOperation = { version: number; read: boolean; pending: boolean; failed: boolean };
 type ReadHistory = { before: boolean; operations: ReadOperation[] };
 const families = new Set(["messages", "message", "thread", "search"]);
+function equal(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) return true;
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+  if (Array.isArray(left) !== Array.isArray(right)) return false;
+  const keys = Object.keys(left);
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every(
+      (key) =>
+        Object.hasOwn(right, key) &&
+        equal((left as Record<string, unknown>)[key], (right as Record<string, unknown>)[key]),
+    )
+  );
+}
 const versions = new WeakMap<
   QueryClient,
   { next: number; fields: Map<string, Map<string, number>>; reads: Map<string, ReadHistory> }
@@ -104,7 +118,7 @@ function inverse(current: unknown, before: unknown, after: unknown, field?: stri
   if (Array.isArray(before) && Array.isArray(after) && Array.isArray(current)) {
     const rows = [...before, ...after];
     if (!rows.every((item) => item && typeof item.id === "string"))
-      return JSON.stringify(current) === JSON.stringify(after) ? before : current;
+      return equal(current, after) ? before : current;
     const identity = (item: Record<string, unknown>) =>
       typeof item.messageCount === "number" ? item.threadId : item.id;
     const result = current.flatMap((item) => {
@@ -330,7 +344,7 @@ function apply(client: QueryClient, change: Change): Entry[] {
                 .slice(0, 75),
       };
     }
-    if (after === before || JSON.stringify(before) === JSON.stringify(after)) continue;
+    if (equal(before, after)) continue;
     void client.cancelQueries({ queryKey: key, exact: true });
     client.setQueryData(key, after);
     entries.push({ key, before, after });
