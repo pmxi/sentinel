@@ -37,7 +37,7 @@ def main():
         shutil.copy(SOURCE, work / "deploy" / "deploy.sh")
         calls = base / "calls"
         for name, body in {
-            "pnpm": 'printf "pnpm %s\\n" "$*" >> "$TEST_CALLS"\n',
+            "pnpm": 'printf "pnpm %s\\n" "$*" >> "$TEST_CALLS"\nif [[ "$*" == "--filter @sent/core db:migrate" ]]; then\n  [[ "$MIGRATIONS_PATH" == "$PWD/packages/core/src/db/migrations" ]]\n  printf "release migrations\\n" >> "$TEST_CALLS"\nfi\n',
             "pg_dump": '[[ "$PGPASSWORD" == "fake@password" && "$PGSSLMODE" == verify-full && "$PGSSLROOTCERT" == /fake/root.crt && "$PGSSLCERT" == /fake/client.crt && "$PGSSLKEY" == /fake/client.key ]]\nprintf "dump\\n" >> "$TEST_CALLS"\nfor arg; do case "$arg" in --file=*) printf fake > "${arg#--file=}";; esac; done\n',
             "systemctl": 'printf "systemctl %s\\n" "$*" >> "$TEST_CALLS"\n',
         }.items():
@@ -79,7 +79,7 @@ def main():
                    SENT_DEPLOY_ENV=str(env_file), SENT_DEPLOY_LEGACY=str(legacy),
                    SENT_DEPLOY_TOOLS=str(tools.parent), SENT_DEPLOY_HEALTH=url + "/health",
                    SENT_DEPLOY_CI_URL=url + "/ci", SENT_DEPLOY_TIMEOUT="1", SENT_DEPLOY_INTERVAL="0.1",
-                   TEST_CALLS=str(calls))
+                   TEST_CALLS=str(calls), MIGRATIONS_PATH=str(legacy / "migrations"))
 
         def commit():
             run("git", "-C", str(work), "add", "deploy/deploy.sh")
@@ -115,6 +115,7 @@ def main():
             assert (root / "bin" / "deploy.sh").exists()
             assert len(list((root / "dumps").glob("*.dump"))) == 1
             assert calls.read_text().index("dump") < calls.read_text().index("db:migrate")
+            assert "release migrations" in calls.read_text()
             print("PASS success deploy (legacy bootstrap, dump before migrate, degraded health, self-update)")
             state["sync"] = True
             second = commit()
