@@ -375,6 +375,82 @@ describe.skipIf(!databaseUrl)("mail views and send checkpoints in PostgreSQL", (
     });
   });
 
+  it.each(["archive", "delete"] as const)(
+    "applies grouped %s only within the view and restores every message",
+    async (action) => {
+      const members = await Promise.all([8, 9, 10].map((hour) => message("group", hour)));
+      const archived = await message("group", 11, { archived: true });
+      const deleted = await message("group", 12, { deleted: true });
+      const otherTier = await message("group", 13);
+      await repository.setTierOverride(otherTier.id, 3);
+      const threadId = (await repository.getMessage(members[0]?.id ?? ""))?.threadId ?? "";
+      const receipt = await repository.enqueueThreadAction(
+        threadId,
+        { action, view: "l1", accountId },
+        new Date(Date.now() + 5000).toISOString(),
+      );
+      const rows = (await getPool().query("select * from mutation_outbox")).rows;
+      expect(rows).toHaveLength(3);
+      expect(rows.every((row) => row.payload.groupId === receipt)).toBe(true);
+      expect(new Set(rows.map((row) => row.payload.undoUntil)).size).toBe(1);
+      expect(await repository.claimMutations()).toEqual([]);
+      expect((await repository.listMessages({ view: "l1", limit: 50 })).messages).toEqual([]);
+      expect((await repository.listMessages({ view: "l1", limit: 50 })).messages).toEqual([]);
+      expect(await messageState(archived.id)).toMatchObject({
+        archived: true,
+        deleted: false,
+      });
+      expect(await messageState(deleted.id)).toMatchObject({
+        deleted: true,
+        archived: false,
+      });
+      expect(await messageState(otherTier.id)).toMatchObject({
+        archived: false,
+        deleted: false,
+      });
+      await repository.undoMutation(receipt);
+      expect((await getPool().query("select * from mutation_outbox")).rows).toEqual([]);
+      expect(await repository.claimMutations()).toEqual([]);
+      for (const member of members)
+        expect(await messageState(member.id)).toMatchObject({
+          archived: false,
+          deleted: false,
+        });
+      expect((await repository.listMessages({ view: "l1", limit: 50 })).messages).toHaveLength(1);
+    },
+  );
+
+  it("handles trash deletion, pending duplicates, expired undo, and missing threads", async () => {
+    const source = await message("trash-group", 8, { deleted: true });
+    await message("trash-group", 9, { deleted: true });
+    const threadId = (await repository.getMessage(source.id))?.threadId ?? "";
+    const receipt = await repository.enqueueThreadAction(
+      threadId,
+      { action: "delete", view: "trash" },
+      new Date(Date.now() + 5000).toISOString(),
+    );
+    await expect(
+      repository.enqueueThreadAction(threadId, { action: "delete", view: "trash" }),
+    ).rejects.toThrow("already pending");
+    expect((await getPool().query("select * from mutation_outbox")).rows).toHaveLength(2);
+    await repository.undoMutation(receipt);
+    expect((await messageState(source.id)).deleted).toBe(true);
+    const expired = await repository.enqueueThreadAction(
+      threadId,
+      { action: "delete", view: "trash" },
+      new Date(Date.now() - 1000).toISOString(),
+    );
+    await expect(repository.undoMutation(expired)).rejects.toThrow("Undo window expired");
+    await expect(
+      repository.enqueueThreadAction(randomUUID(), { action: "archive", view: "l1" }),
+    ).rejects.toThrow("Message not found");
+  });
+
+  async function messageState(id: string) {
+    return (await getPool().query("select archived,deleted from messages where id=$1", [id]))
+      .rows[0];
+  }
+
   async function enqueueDraft() {
     const reply = await message("reply", 8);
     const forward = await message("forward", 9);

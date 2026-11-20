@@ -16,6 +16,27 @@ import type { PoolClient, QueryResultRow } from "pg";
 import type { NormalizedMessage, StoredAccount } from "../providers/types.ts";
 import { getPool } from "./client.ts";
 
+function messageViewConditions(input: { view: string; accountId?: string }, params: unknown[]) {
+  const conditions = ["not m.tombstone"];
+  const push = (value: unknown) => {
+    params.push(value);
+    return `$${params.length}`;
+  };
+  if (input.accountId) conditions.push(`m.account_id=${push(input.accountId)}`);
+  const effectiveTier = "coalesce(c.manual_tier,c.model_tier)";
+  if (["l1", "l2", "l3", "unclassified"].includes(input.view))
+    conditions.push("not m.archived", "m.direction='inbound'");
+  if (input.view === "l1") conditions.push(`(${effectiveTier}=1 or c.message_id is null)`);
+  else if (input.view === "l2") conditions.push(`${effectiveTier}=2`);
+  else if (input.view === "l3") conditions.push(`${effectiveTier}=3`);
+  else if (input.view === "unclassified") conditions.push("c.message_id is null");
+  else if (input.view === "sent") conditions.push("m.direction='outbound' and not m.deleted");
+  else if (input.view === "trash") conditions.push("m.deleted");
+  else conditions.push("not m.deleted");
+  if (!["trash"].includes(input.view)) conditions.push("not m.deleted");
+  return conditions;
+}
+
 type AccountRow = QueryResultRow & {
   id: string;
   provider: Provider;
@@ -375,23 +396,11 @@ export class MailRepository {
     limit: number;
   }): Promise<MessageListResponse> {
     const params: unknown[] = [];
-    const conditions = ["not m.tombstone"];
+    const conditions = messageViewConditions(input, params);
     const push = (value: unknown) => {
       params.push(value);
       return `$${params.length}`;
     };
-    if (input.accountId) conditions.push(`m.account_id=${push(input.accountId)}`);
-    const effectiveTier = "coalesce(c.manual_tier,c.model_tier)";
-    if (["l1", "l2", "l3", "unclassified"].includes(input.view))
-      conditions.push("not m.archived", "m.direction='inbound'");
-    if (input.view === "l1") conditions.push(`(${effectiveTier}=1 or c.message_id is null)`);
-    else if (input.view === "l2") conditions.push(`${effectiveTier}=2`);
-    else if (input.view === "l3") conditions.push(`${effectiveTier}=3`);
-    else if (input.view === "unclassified") conditions.push("c.message_id is null");
-    else if (input.view === "sent") conditions.push("m.direction='outbound' and not m.deleted");
-    else if (input.view === "trash") conditions.push("m.deleted");
-    else conditions.push("not m.deleted");
-    if (!["trash"].includes(input.view)) conditions.push("not m.deleted");
     let cursorCondition = "";
     if (input.cursor) {
       const cursor = decodeCursor(input.cursor);
@@ -510,6 +519,59 @@ export class MailRepository {
     });
   }
 
+  async enqueueThreadAction(
+    threadId: string,
+    input: { action: "archive" | "delete"; view: string; accountId?: string },
+    undoUntil: string | null = null,
+  ): Promise<string> {
+    return transaction(async (client) => {
+      const params: unknown[] = [threadId];
+      const conditions = messageViewConditions(input, params);
+      const messages = (
+        await client.query(
+          `select m.id,m.account_id,m.archived,m.deleted from messages m
+        left join classifications c on c.message_id=m.id
+        where m.thread_id=$1 and ${conditions.join(" and ")} order by m.id for update of m`,
+          params,
+        )
+      ).rows;
+      if (!messages.length) throw new Error("Message not found");
+      const groupId = randomUUID();
+      let inserted = 0;
+      for (const message of messages) {
+        const pending = await client.query(
+          "select id from mutation_outbox where message_id=$1 and action=$2 and status='pending'",
+          [message.id, input.action],
+        );
+        if (pending.rowCount) continue;
+        const id = inserted === 0 ? groupId : randomUUID();
+        await client.query(
+          `insert into mutation_outbox(id,idempotency_key,account_id,message_id,action,payload,next_attempt_at)
+          values($1::uuid,$1::text,$2,$3,$4,$5,coalesce($6::timestamptz,now()))`,
+          [
+            id,
+            message.account_id,
+            message.id,
+            input.action,
+            JSON.stringify({
+              groupId,
+              undoUntil,
+              previous: { archived: message.archived, deleted: message.deleted },
+            }),
+            undoUntil,
+          ],
+        );
+        const field = input.action === "archive" ? "archived" : "deleted";
+        await client.query(`update messages set ${field}=true,updated_at=now() where id=$1`, [
+          message.id,
+        ]);
+        inserted++;
+      }
+      if (!inserted) throw new Error("This action is already pending");
+      return groupId;
+    });
+  }
+
   async createOrUpdateDraft(input: DraftInput): Promise<Draft> {
     const values = [
       input.accountId,
@@ -580,42 +642,44 @@ export class MailRepository {
 
   async undoMutation(id: string): Promise<Draft | null> {
     return transaction(async (client) => {
-      const mutation = (
+      const mutations = (
         await client.query(
-          `select * from mutation_outbox where id=$1 and status='pending'
+          `select * from mutation_outbox where (id=$1 or payload->>'groupId'=$1::text) and status='pending'
         and (payload->>'undoUntil')::timestamptz > clock_timestamp() for update`,
           [id],
         )
-      ).rows[0];
-      if (!mutation) throw new Error("Undo window expired");
+      ).rows;
+      if (!mutations.length) throw new Error("Undo window expired");
       let draft: Draft | null = null;
-      if (mutation.action === "send") {
-        draft = mutation.payload.draft as Draft;
-        await client.query(
-          `insert into drafts(id,account_id,to_addresses,cc_addresses,bcc_addresses,subject,body,
+      for (const mutation of mutations) {
+        if (mutation.action === "send") {
+          draft = mutation.payload.draft as Draft;
+          await client.query(
+            `insert into drafts(id,account_id,to_addresses,cc_addresses,bcc_addresses,subject,body,
           reply_to_message_id,forward_of_message_id) values($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-          [
-            draft.id,
-            draft.accountId,
-            JSON.stringify(draft.to),
-            JSON.stringify(draft.cc),
-            JSON.stringify(draft.bcc),
-            draft.subject,
-            draft.body,
-            draft.replyToMessageId,
-            draft.forwardOfMessageId,
-          ],
-        );
-      } else if (mutation.action === "archive" || mutation.action === "delete") {
-        const field = mutation.action === "archive" ? "archived" : "deleted";
-        await client.query(`update messages set ${field}=$2,updated_at=now() where id=$1`, [
-          mutation.message_id,
-          mutation.payload.previous[field],
-        ]);
-      } else {
-        throw new Error("Undo window expired");
+            [
+              draft.id,
+              draft.accountId,
+              JSON.stringify(draft.to),
+              JSON.stringify(draft.cc),
+              JSON.stringify(draft.bcc),
+              draft.subject,
+              draft.body,
+              draft.replyToMessageId,
+              draft.forwardOfMessageId,
+            ],
+          );
+        } else if (mutation.action === "archive" || mutation.action === "delete") {
+          const field = mutation.action === "archive" ? "archived" : "deleted";
+          await client.query(`update messages set ${field}=$2,updated_at=now() where id=$1`, [
+            mutation.message_id,
+            mutation.payload.previous[field],
+          ]);
+        } else {
+          throw new Error("Undo window expired");
+        }
+        await client.query("delete from mutation_outbox where id=$1", [mutation.id]);
       }
-      await client.query("delete from mutation_outbox where id=$1", [id]);
       return draft;
     });
   }

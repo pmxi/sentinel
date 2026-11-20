@@ -345,6 +345,7 @@ function Reader({
   const queryClient = useQueryClient();
   const compose = useCompose();
   const { view } = useParams();
+  const [routeParams] = useSearchParams();
   const trash = view === "trash";
   const triage = useTriage();
   const [bodyView, setBodyView] = useState<"plain" | "original">("plain");
@@ -418,7 +419,15 @@ function Reader({
     );
   };
   const triageAction = (action: "archive" | "delete") => {
-    if (message) triage.perform(message.id, action, advance, restore, message.threadId);
+    if (message)
+      triage.perform(
+        message.threadId,
+        action,
+        advance,
+        restore,
+        view ?? "all",
+        routeParams.get("account") ?? undefined,
+      );
   };
   const reply = (all = false) => {
     if (message && account)
@@ -541,16 +550,16 @@ function Reader({
           <TierPicker tier={message.tier} onChange={(value) => tier.mutate(value)} />
           <button
             className="icon-button"
-            title="Archive latest message"
-            aria-label="Archive latest message"
+            title="Archive conversation"
+            aria-label="Archive conversation"
             onClick={() => triageAction("archive")}
           >
             <Archive size={18} />
           </button>
           <button
             className="icon-button"
-            title="Delete latest message"
-            aria-label="Delete latest message"
+            title="Delete conversation"
+            aria-label="Delete conversation"
             onClick={() => triageAction("delete")}
           >
             <Trash2 size={18} />
