@@ -99,12 +99,14 @@ describe.skipIf(!databaseUrl)("mail views and send checkpoints in PostgreSQL", (
     });
     expect(second.messages.map((item) => item.id)).toEqual([latestInbound.id]);
     expect(second.messages[0]?.read).toBe(false);
+    expect(second.messages[0]).toMatchObject({ messageCount: 5, unreadCount: 1 });
     const third = await repository.listMessages({
       view: "l1",
       limit: 1,
       cursor: second.nextCursor ?? undefined,
     });
     expect(third.messages.map((item) => item.id)).toEqual([separateAccount.id]);
+    expect(third.messages[0]?.messageCount).toBe(1);
     expect(third.nextCursor).toBeNull();
     const sent = await repository.listMessages({ view: "sent", limit: 50 });
     expect(sent.messages.map((item) => item.id)).toEqual([latestSent.id]);
@@ -112,6 +114,68 @@ describe.skipIf(!databaseUrl)("mail views and send checkpoints in PostgreSQL", (
     expect(filtered.messages).toHaveLength(2);
     const history = await repository.getThread(sent.messages[0]?.threadId ?? "");
     expect(history).toHaveLength(5);
+  });
+
+  it("counts the whole visible conversation and deduplicates participants, excluding trash and tombstones", async () => {
+    await message("offer", 8, {
+      read: false,
+      from: [{ name: "Maya", address: "maya@example.com" }],
+    });
+    const latestInbound = await message("offer", 10, {
+      from: [{ name: "Maya Chen", address: "MAYA@example.com" }],
+    });
+    await message("offer", 11, {
+      direction: "outbound",
+      from: [{ name: "Me", address: "me@example.com" }],
+    });
+    await message("offer", 12, { deleted: true, read: false });
+    await message("offer", 13, { tombstone: true, read: false });
+    const inbox = await repository.listMessages({ view: "l1", limit: 50 });
+    expect(inbox.messages).toHaveLength(1);
+    expect(inbox.messages[0]).toMatchObject({
+      id: latestInbound.id,
+      messageCount: 3,
+      unreadCount: 1,
+      read: false,
+    });
+    expect(inbox.messages[0]?.participants).toEqual([
+      { name: "Maya Chen", address: "MAYA@example.com" },
+      { name: "Me", address: "me@example.com" },
+    ]);
+    const trash = await repository.listMessages({ view: "trash", limit: 50 });
+    expect(trash.messages[0]).toMatchObject({ messageCount: 1, unreadCount: 1 });
+    expect(await repository.getThread(inbox.messages[0]?.threadId ?? "")).toHaveLength(3);
+    expect(await repository.getThread(inbox.messages[0]?.threadId ?? "", true)).toHaveLength(1);
+  });
+
+  it("groups search matches before limiting and preserves account and tier filters", async () => {
+    await message("offer", 8, { read: false });
+    await message("offer", 9);
+    const latest = await message("offer", 10);
+    await message("offer", 11, { direction: "outbound", subject: "Accepted", textBody: "Thanks" });
+    await message("offer", 12, { deleted: true });
+    const other = await message("offer", 7, {}, otherAccountId);
+    const second = await message("another offer", 6);
+    const results = await repository.search({ q: "offer", limit: 2 });
+    expect(results.messages).toHaveLength(2);
+    expect(new Set(results.messages.map((item) => item.threadId)).size).toBe(2);
+    expect(results.messages[0]).toMatchObject({
+      id: latest.id,
+      messageCount: 4,
+      unreadCount: 1,
+      read: false,
+    });
+    const all = await repository.search({ q: "offer", limit: 50 });
+    expect(all.messages.map((item) => item.id)).toEqual([latest.id, other.id, second.id]);
+    const filtered = await repository.search({ q: "offer", accountId, limit: 50 });
+    expect(filtered.messages.map((item) => item.id)).toEqual([latest.id, second.id]);
+    await getPool().query(
+      "insert into classifications(message_id,model_tier,reasoning,model,prompt_version) values($1,3,'test','test','test')",
+      [second.id],
+    );
+    expect(
+      (await repository.search({ q: "offer", tier: 3, limit: 50 })).messages.map((item) => item.id),
+    ).toEqual([second.id]);
   });
 
   it("preserves tier-specific membership when other messages in the conversation have a different tier", async () => {

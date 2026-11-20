@@ -1,4 +1,10 @@
-import type { Account, MessageDetail, MessageSummary, Tier } from "@sent/shared";
+import type {
+  Account,
+  ConversationSummary,
+  MessageDetail,
+  MessageSummary,
+  Tier,
+} from "@sent/shared";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, Flag, Mail, MailOpen, Paperclip, Trash2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -107,7 +113,7 @@ export function SearchResults({ accounts }: { accounts: Account[] }) {
             <h1>Search</h1>
             <p>
               {result.data
-                ? `${q}: ${result.data.messages.length} results (${result.data.mode})`
+                ? `${q} · ${result.data.messages.length} ${result.data.messages.length === 1 ? "conversation" : "conversations"}`
                 : q}
             </p>
           </div>
@@ -149,7 +155,7 @@ function MessageList({
   selectedId,
   onSelect,
 }: {
-  messages: MessageSummary[];
+  messages: ConversationSummary[];
   loading: boolean;
   error?: string;
   selectedId: string | null;
@@ -180,19 +186,40 @@ function MessageList({
     <div className="message-list">
       {messages.map((message) => (
         <button
-          key={message.id}
+          key={message.threadId}
           className={`message-row ${!message.read ? "unread" : ""} ${message.tier === null && message.direction === "inbound" ? "unclassified" : ""} ${selectedId === message.id ? "selected" : ""}`}
           onClick={() => onSelect(message)}
         >
           <span className="message-copy">
             <span className="message-line">
-              <strong>{message.from[0]?.name || message.from[0]?.address || "Unknown"}</strong>
+              <span className="conversation-senders">
+                <strong>
+                  {message.participants
+                    .map((person) =>
+                      person.address.toLowerCase() === message.account.email.toLowerCase()
+                        ? "Me"
+                        : person.name || person.address,
+                    )
+                    .join(", ") || "Unknown"}
+                </strong>
+                {message.messageCount > 1 && (
+                  <span className="conversation-count" title={`${message.messageCount} messages`}>
+                    {message.messageCount}
+                    <span className="visually-hidden"> messages</span>
+                  </span>
+                )}
+              </span>
               <time>{formatListDate(message.receivedAt)}</time>
             </span>
-            <span className="message-subject">{message.subject}</span>
+            <span className="message-subject">
+              {message.subject.replace(/^(?:(?:re|fw|fwd):\s*)+/i, "") || "(No subject)"}
+            </span>
             <span className="message-snippet">{message.snippet}</span>
             <span className="message-meta">
               {message.account.email}
+              {message.unreadCount > 0 && (
+                <span className="conversation-unread">{message.unreadCount} unread</span>
+              )}
               {message.attachmentCount > 0 && (
                 <>
                   <Paperclip size={12} />
@@ -223,38 +250,78 @@ function Reader({
 }) {
   const queryClient = useQueryClient();
   const compose = useCompose();
+  const { view } = useParams();
+  const trash = view === "trash";
   const [bodyView, setBodyView] = useState<"plain" | "original">("plain");
+  const [hasShownFallback, setHasShownFallback] = useState(false);
+  const newestRef = useRef<HTMLElement>(null);
+  const openedMessages = useRef(new Set<string>());
+  const scrolledToNewest = useRef(false);
   const detail = useQuery({
     queryKey: ["message", messageId],
     queryFn: () => sentApi.message(messageId),
   });
   const threadId = detail.data?.threadId;
   const thread = useQuery({
-    queryKey: ["thread", threadId],
-    queryFn: () => sentApi.thread(threadId ?? ""),
+    queryKey: ["thread", threadId, trash],
+    queryFn: () => sentApi.thread(threadId ?? "", trash),
     enabled: Boolean(threadId),
     refetchInterval: 4_000,
   });
+  const orderedMessages = thread.data?.messages ?? (detail.data ? [detail.data] : []);
+  const message = orderedMessages.at(-1);
+  const conversation = orderedMessages.slice(0, -1);
   const { mutate: performAction } = useMutation({
-    mutationFn: (value: string) => sentApi.action(messageId, value),
-    onSuccess: () => {
+    mutationFn: ({ id, action }: { id: string; action: string }) => sentApi.action(id, action),
+    onSuccess: (_result, { id, action }) => {
+      const updateMessage = (item: MessageDetail): MessageDetail => {
+        if (item.id !== id) return item;
+        if (action === "mark_read" || action === "mark_unread")
+          return { ...item, read: action === "mark_read" };
+        if (action === "flag" || action === "unflag")
+          return { ...item, flagged: action === "flag" };
+        return item;
+      };
+      // A successful write must remain visible even when refreshing the thread
+      // fails. Otherwise cached toolbar controls keep acting on stale state.
+      queryClient.setQueriesData<{ messages: MessageDetail[] }>(
+        { queryKey: ["thread", threadId] },
+        (cached) => (cached ? { ...cached, messages: cached.messages.map(updateMessage) } : cached),
+      );
+      queryClient.setQueryData<MessageDetail>(["message", id], (cached) =>
+        cached ? updateMessage(cached) : cached,
+      );
       void queryClient.invalidateQueries({ queryKey: ["messages"] });
-      void queryClient.invalidateQueries({ queryKey: ["message", messageId] });
+      void queryClient.invalidateQueries({ queryKey: ["message"] });
+      void queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
+      void queryClient.invalidateQueries({ queryKey: ["search"] });
     },
   });
   const tier = useMutation({
-    mutationFn: (value: Tier) => sentApi.tier(messageId, value),
+    mutationFn: (value: Tier) => sentApi.tier(message?.id ?? messageId, value),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["messages"] });
       void queryClient.invalidateQueries({ queryKey: ["message", messageId] });
+      void queryClient.invalidateQueries({ queryKey: ["thread", threadId] });
     },
   });
-  const message = detail.data;
-  const conversation = (thread.data?.messages ?? []).filter((item) => item.id !== messageId);
   useEffect(() => {
-    if (message && !message.read) performAction("mark_read");
-  }, [message, performAction]);
-  if (detail.isLoading)
+    if (thread.isError) setHasShownFallback(true);
+    // On a thread failure the selected message is still shown. Mark only what
+    // was displayed, then handle any remaining messages if the thread recovers.
+    const visible = thread.data?.messages ?? (thread.isError && detail.data ? [detail.data] : []);
+    for (const item of visible) {
+      if (openedMessages.current.has(item.id)) continue;
+      openedMessages.current.add(item.id);
+      if (!item.read) performAction({ id: item.id, action: "mark_read" });
+    }
+  }, [thread.data, thread.isError, detail.data, performAction]);
+  useEffect(() => {
+    if (!thread.data || scrolledToNewest.current || !newestRef.current) return;
+    scrolledToNewest.current = true;
+    newestRef.current.scrollIntoView({ block: "nearest" });
+  }, [thread.data]);
+  if (detail.isLoading || (thread.isLoading && !hasShownFallback))
     return (
       <section className="reader">
         <div className="reader-skeleton" />
@@ -272,7 +339,7 @@ function Reader({
   const account = accounts.find((item) => item.id === message.account.id);
   const hasPlainText = [message, ...conversation].some((item) => Boolean(item.plainText?.trim()));
   const doAction = (value: string, shouldClose = false) => {
-    performAction(value);
+    performAction({ id: message.id, action: value });
     if (shouldClose) close();
   };
   return (
@@ -283,10 +350,18 @@ function Reader({
         </button>
         <div className="toolbar-actions">
           <TierPicker tier={message.tier} onChange={(value) => tier.mutate(value)} />
-          <button className="icon-button" title="Archive" onClick={() => doAction("archive", true)}>
+          <button
+            className="icon-button"
+            title="Archive latest message"
+            onClick={() => doAction("archive", true)}
+          >
             <Archive size={18} />
           </button>
-          <button className="icon-button" title="Delete" onClick={() => doAction("delete", true)}>
+          <button
+            className="icon-button"
+            title="Delete latest message"
+            onClick={() => doAction("delete", true)}
+          >
             <Trash2 size={18} />
           </button>
           <button
@@ -306,20 +381,20 @@ function Reader({
         </div>
       </header>
       <article className="message-reader">
-        <dl className="message-headers">
-          <div>
-            <dt>From:</dt>
-            <dd>{message.from[0] ? formatAddress(message.from[0]) : "Unknown sender"}</dd>
-          </div>
-          <div>
-            <dt>To:</dt>
-            <dd>{message.to.map(formatAddress).join(", ") || "me"}</dd>
-          </div>
-          <div>
-            <dt>Subject:</dt>
-            <dd>{message.subject}</dd>
-          </div>
-        </dl>
+        <header className="conversation-heading">
+          <h2>{message.subject.replace(/^(?:(?:re|fw|fwd):\s*)+/i, "") || "(No subject)"}</h2>
+          <p>
+            {orderedMessages.length} {orderedMessages.length === 1 ? "message" : "messages"} ·{" "}
+            {message.account.email}
+          </p>
+        </header>
+        {thread.isError && (
+          <p role="status">
+            {thread.data
+              ? "Couldn’t refresh the conversation. Showing saved messages."
+              : "Couldn’t load the conversation. Showing the selected message."}
+          </p>
+        )}
         {hasPlainText && (
           <nav className="body-view-picker" aria-label="Message body view">
             <button
@@ -338,10 +413,7 @@ function Reader({
         )}
         {conversation.length > 0 && (
           <div className="thread-history">
-            <span className="section-label">
-              {conversation.length} other {conversation.length === 1 ? "message" : "messages"} in
-              this conversation
-            </span>
+            <span className="section-label">Earlier in this conversation</span>
             {conversation.map((item) => (
               <details className="thread-message" key={item.id}>
                 <summary>
@@ -356,38 +428,33 @@ function Reader({
                   view={bodyView}
                   title={`Message from ${item.from[0]?.name || item.from[0]?.address || "sender"}`}
                 />
+                <MessageAttachments message={item} />
               </details>
             ))}
           </div>
         )}
-        <div className="email-body">
-          <MessageBody message={message} view={bodyView} title="Email content" />
-        </div>
-        {message.attachments.length > 0 && (
-          <div className="attachments">
-            <span className="section-label">Attachments</span>
-            <div>
-              {message.attachments.map((item) => (
-                <a
-                  key={item.id}
-                  href={`/api/messages/${message.id}/attachments/${encodeURIComponent(item.id)}`}
-                >
-                  <Paperclip size={15} />
-                  <span>
-                    {item.filename}
-                    <small>{formatBytes(item.size)}</small>
-                  </span>
-                </a>
-              ))}
-            </div>
+        <section className="latest-message" ref={newestRef} aria-label="Latest message">
+          <div className="latest-message-heading">
+            <strong>{message.from[0] ? formatAddress(message.from[0]) : "Unknown sender"}</strong>
+            <time dateTime={message.receivedAt}>
+              {new Date(message.receivedAt).toLocaleString()}
+            </time>
           </div>
-        )}
-        {message.reasoning && (
-          <details className="reasoning">
-            <summary>Why Sent chose L{message.tier}</summary>
-            <p>{message.reasoning}</p>
-          </details>
-        )}
+          <p className="latest-recipients">
+            To: {message.to.map(formatAddress).join(", ") || "me"}
+          </p>
+          {conversation.length > 0 && <span className="latest-label">Latest message</span>}
+          <div className="email-body">
+            <MessageBody message={message} view={bodyView} title="Email content" />
+          </div>
+          <MessageAttachments message={message} />
+          {message.reasoning && (
+            <details className="reasoning">
+              <summary>Why Sent chose L{message.tier}</summary>
+              <p>{message.reasoning}</p>
+            </details>
+          )}
+        </section>
         <div className="reply-actions">
           <button onClick={() => account && compose.openCompose(replySeed(message, account))}>
             Reply
@@ -412,6 +479,33 @@ function Reader({
         </div>
       </article>
     </section>
+  );
+}
+
+export function MessageAttachments({
+  message,
+}: {
+  message: Pick<MessageDetail, "id" | "attachments">;
+}) {
+  if (message.attachments.length === 0) return null;
+  return (
+    <div className="attachments">
+      <span className="section-label">Attachments</span>
+      <div>
+        {message.attachments.map((item) => (
+          <a
+            key={item.id}
+            href={`/api/messages/${message.id}/attachments/${encodeURIComponent(item.id)}`}
+          >
+            <Paperclip size={15} />
+            <span>
+              {item.filename}
+              <small>{formatBytes(item.size)}</small>
+            </span>
+          </a>
+        ))}
+      </div>
+    </div>
   );
 }
 
