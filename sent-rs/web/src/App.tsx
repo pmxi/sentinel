@@ -17,6 +17,9 @@ import { CommandProvider, useCommandPalette, useCommands } from "./commands";
 import { ComposeProvider, useCompose } from "./compose";
 import { InboxPage, SearchResults } from "./InboxPage";
 import { LoginPage } from "./LoginPage";
+import { quietUntil } from "./mail-cache";
+import { createMailboxReplica } from "./replica";
+import { waitForReplicaWipe } from "./replica-session";
 import { Link, NavLink, useLocation, useNavigate } from "./router";
 import {
   forgetShellMetadata,
@@ -99,6 +102,32 @@ export default function App(props: { children?: JSX.Element }) {
   );
 }
 function AuthenticatedApp(props: { children?: JSX.Element }) {
+  const client = useQueryClient();
+  const replica = createMailboxReplica(
+    client,
+    () => quietUntil(client) <= Date.now(),
+    () => client.getQueryState(["session"])?.status === "success",
+  );
+  createEffect(() => {
+    if (!replica) return;
+    document.documentElement.dataset.sentReplica = replica.status().ready ? "ready" : "loading";
+    document.documentElement.dataset.sentReplicaStorage = replica.status().persistent
+      ? "opfs"
+      : "memory";
+    document.documentElement.dataset.sentReplicaSession = replica.id;
+    document.documentElement.dataset.sentReplicaBodies = replica.status().bodiesReady
+      ? "ready"
+      : "syncing";
+  });
+  onCleanup(() => {
+    void replica?.close();
+    if (replica && document.documentElement.dataset.sentReplicaSession === replica.id) {
+      delete document.documentElement.dataset.sentReplica;
+      delete document.documentElement.dataset.sentReplicaStorage;
+      delete document.documentElement.dataset.sentReplicaSession;
+      delete document.documentElement.dataset.sentReplicaBodies;
+    }
+  });
   const metadata = readShellMetadata();
   const accounts = createQuery(() => ({
     queryKey: ["accounts"],
@@ -359,8 +388,8 @@ function SettingsPage(props: { accounts: Account[] }) {
   };
   const logout = createMutation(() => ({
     mutationFn: sentApi.logout,
-    onSuccess: () => {
-      forgetShellMetadata();
+    onSuccess: async () => {
+      await waitForReplicaWipe(forgetShellMetadata());
       queryClient.clear();
       navigate("/");
       window.location.reload();

@@ -16,6 +16,7 @@
   "dependencies": {
     "@sent/shared": "link:../../packages/shared",
     "@solidjs/router": "^0.15.3",
+    "@sqlite.org/sqlite-wasm": "3.54.1-build1",
     "@tanstack/solid-query": "latest",
     "@tanstack/solid-virtual": "^3.13.53",
     "hast-util-to-html": "^9.0.5",

@@ -1,8 +1,9 @@
 import type { ConversationSummary, MessageDetail, MessageSummary } from "@sent/shared";
 import type { QueryClient } from "@tanstack/solid-query";
 import { type Accessor, createEffect, onCleanup, untrack } from "solid-js";
-import { sentApi } from "./api";
 import { prefetchQuietUntil } from "./mail-cache";
+import { messageRead } from "./replica";
+import { recentBody } from "./replica-policy";
 
 export function headerData(item?: MessageSummary): MessageDetail | undefined {
   return (
@@ -29,7 +30,7 @@ export function cachedRow(client: QueryClient, id: string) {
     if (row) return row;
   }
 }
-export function prefetchQueue(client: QueryClient, trash: boolean) {
+export function prefetchQueue(client: QueryClient, _trash: boolean) {
   const queued = new Map<string, { item: MessageSummary; readyAt: number }>();
   let stopped = false,
     running = false;
@@ -54,24 +55,18 @@ export function prefetchQueue(client: QueryClient, trash: boolean) {
     }
     const item = next.item;
     queued.delete(item.id);
+    if (!recentBody(item.receivedAt)) {
+      if (queued.size) timer = setTimeout(() => void pump(), 0);
+      return;
+    }
     running = true;
     const task = { id: item.id, cancelled: false };
     activeItem = task;
     try {
-      active = ["thread", item.threadId, trash];
-      await client.prefetchQuery({
-        queryKey: active,
-        queryFn: ({ signal }) => sentApi.thread(item.threadId, trash, signal),
-        staleTime: 15000,
-      });
-      if (task.cancelled || stopped) return;
-      const thread = client.getQueryData<{ messages: MessageDetail[] }>(active);
-      for (const message of thread?.messages ?? [])
-        client.setQueryData(["message", message.id], message);
       active = ["message", item.id];
       await client.prefetchQuery({
         queryKey: active,
-        queryFn: ({ signal }) => sentApi.message(item.id, signal),
+        queryFn: ({ signal }) => messageRead(client, item.id, signal, true),
         staleTime: 15000,
       });
     } finally {
@@ -96,7 +91,7 @@ export function prefetchQueue(client: QueryClient, trash: boolean) {
   return {
     add(items: MessageSummary[], delay = 120) {
       for (const item of items)
-        if (activeItem?.id !== item.id)
+        if (recentBody(item.receivedAt) && activeItem?.id !== item.id)
           queued.set(item.id, {
             item,
             readyAt: Math.min(queued.get(item.id)?.readyAt ?? Infinity, Date.now() + delay),
@@ -110,7 +105,8 @@ export function prefetchQueue(client: QueryClient, trash: boolean) {
     prioritize(items: MessageSummary[]) {
       queued.clear();
       for (const item of items)
-        if (activeItem?.id !== item.id) queued.set(item.id, { item, readyAt: Date.now() });
+        if (recentBody(item.receivedAt) && activeItem?.id !== item.id)
+          queued.set(item.id, { item, readyAt: Date.now() });
       clearTimeout(timer);
       if (!running) timer = setTimeout(() => void pump(), 0);
     },

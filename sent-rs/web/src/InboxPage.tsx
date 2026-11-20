@@ -30,6 +30,7 @@ import { optimistic, quietUntil } from "./mail-cache";
 import { useMailbox } from "./mailbox";
 import { cachedRow, headerData, usePrefetch } from "./prefetch";
 import { ReaderText } from "./ReaderText";
+import { localBodyPending, messageRead, replicaFor, replicaReady, threadRead } from "./replica";
 import { useLocation, useNavigate, useParams, useSearchParams } from "./router";
 import { nextMessageId, useTriage, visibleConversations } from "./triage";
 
@@ -565,19 +566,29 @@ function Reader(props: {
   const scrolledToNewest = { current: false };
   const detail = createQuery<MessageDetail>(() => ({
     queryKey: ["message", props.messageId],
-    queryFn: ({ signal }) => sentApi.message(props.messageId, signal),
+    networkMode: "always",
+    refetchOnReconnect: (query) => (localBodyPending(query.state.data) ? "always" : true),
+    queryFn: ({ signal }) => messageRead(queryClient, props.messageId, signal),
     placeholderData: headerData(props.summary ?? cachedRow(queryClient, props.messageId)),
   }));
   const threadId = createMemo(() => props.summary?.threadId ?? detail.data?.threadId);
-  const thread = createQuery(() => ({
+  const thread = createQuery<{ messages: MessageDetail[] }>(() => ({
     queryKey: ["thread", threadId(), trash()],
-    queryFn: ({ signal }) => sentApi.thread(threadId() ?? "", trash(), signal),
+    networkMode: "always",
+    refetchOnReconnect: (query) =>
+      query.state.data?.messages.some(localBodyPending) ? "always" : true,
+    queryFn: ({ signal }) => threadRead(queryClient, threadId() ?? "", trash(), signal),
     enabled: Boolean(threadId()),
-    refetchInterval: quietUntil(queryClient) > Date.now() ? false : 4000,
+    refetchInterval:
+      replicaReady(queryClient) || quietUntil(queryClient) > Date.now() ? false : 4000,
   }));
   const orderedMessages = createMemo(
     () => thread.data?.messages ?? (detail.data ? [detail.data] : []),
   );
+  createEffect(() => {
+    if (replicaReady(queryClient))
+      replicaFor(queryClient)?.opened(orderedMessages().map((message) => message.id));
+  });
   const readerLoading = createMemo(
     () =>
       !thread.data &&
@@ -637,7 +648,7 @@ function Reader(props: {
   const reply = (all = false) => {
     const item = message();
     const owner = account();
-    if (item && owner)
+    if (item && owner && !localBodyPending(item))
       compose.openCompose({
         ...replySeed(item, owner, all),
         onSent: props.advance,
@@ -646,7 +657,7 @@ function Reader(props: {
   };
   const forward = () => {
     const item = message();
-    if (!item) return;
+    if (!item || localBodyPending(item)) return;
     compose.openCompose({
       accountId: item.account.id,
       subject: item.subject.toLowerCase().startsWith("fwd:")
@@ -664,6 +675,7 @@ function Reader(props: {
       tier.isPending ||
       (!thread.data && !thread.isError),
   );
+  const cannotQuote = createMemo(() => unavailable() || localBodyPending(message()));
   useCommands("reader", () => [
     {
       id: "archive",
@@ -687,7 +699,7 @@ function Reader(props: {
       group: "Message",
       keys: ["r"],
       run: () => reply(),
-      disabled: unavailable() || !account(),
+      disabled: cannotQuote() || !account(),
     },
     {
       id: "reply-all",
@@ -695,7 +707,7 @@ function Reader(props: {
       group: "Message",
       keys: ["a"],
       run: () => reply(true),
-      disabled: unavailable() || !account(),
+      disabled: cannotQuote() || !account(),
     },
     {
       id: "forward",
@@ -703,7 +715,7 @@ function Reader(props: {
       group: "Message",
       keys: ["f"],
       run: forward,
-      disabled: unavailable(),
+      disabled: cannotQuote(),
     },
     {
       id: "read",
@@ -916,13 +928,13 @@ function Reader(props: {
                 <MessageAttachments message={current()} />
               </section>
               <div class="reply-actions">
-                <button disabled={unavailable()} onClick={() => reply()}>
+                <button disabled={cannotQuote()} onClick={() => reply()}>
                   Reply
                 </button>
-                <button disabled={unavailable()} onClick={() => reply(true)}>
+                <button disabled={cannotQuote()} onClick={() => reply(true)}>
                   Reply all
                 </button>
-                <button disabled={unavailable()} onClick={forward}>
+                <button disabled={cannotQuote()} onClick={forward}>
                   Forward
                 </button>
               </div>
@@ -964,6 +976,12 @@ function MessageBody(props: { message: MessageDetail; view: "plain" | "original"
   return (
     <>
       {(() => {
+        if (localBodyPending(props.message))
+          return (
+            <div class="plain-body" role="status">
+              Loading message…
+            </div>
+          );
         if (props.view === "plain" && props.message.plainText?.trim())
           return <ReaderText text={props.message.plainText} />;
         if (props.message.htmlBody)

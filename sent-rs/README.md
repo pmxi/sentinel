@@ -206,7 +206,7 @@ workspace's `pg` dependency solely to inspect the outbox rows.
 
 `sent-rs/web` ports the React UI without changing `apps/web`. It uses Solid Router,
 Solid Query with the same query keys, 15-second stale time, retry counts, 4-second
-mail/thread polling, and mutation invalidations as React. Router preloading is
+mail/thread polling while the local replica is unavailable, and mutation invalidations as React. Router preloading is
 disabled; ordinary attachment links retain native browser navigation. Solid's
 data reconciliation and keyed rows retain DOM identity across polling (the
 equivalent of React's normal reconciliation, not another API cache). Triage
@@ -237,10 +237,85 @@ check for updates with the worker HTTP cache bypassed. HTML network responses
 remain `no-cache`; `sw.js` is `no-store` and ignores conditional validators so
 even equal-sized builds published within one filesystem timestamp activate.
 
-`localStorage` holds only a last-verified-session marker and account metadata, not
+`localStorage` holds a last-verified-session marker, account metadata and an opaque replica session ID, not
 mail or credentials. It can paint the shell before fresh API responses arrive,
 including offline. Every startup revalidates the session; an API 401, logout, or
 another tab clearing this metadata returns to login and clears private query data.
+
+### Browser mailbox replica
+
+After first paint, a dedicated worker loads the official `@sqlite.org/sqlite-wasm`
+and opens a schema-versioned SQLite database through the OPFS SAH-pool VFS. This
+VFS does not require cross-origin isolation headers. The database belongs to one
+login and survives document reloads; another tab unable to acquire its OPFS lock
+uses an in-memory database. Unavailable OPFS or persistent session storage also
+uses memory; unavailable or failed workers retain the network query path.
+Initialization starts after two seconds and never gates rendering or login.
+
+The first snapshot downloads in the background. Until it is complete, queries
+continue using the existing API. Once ready, every mailbox view, cursor page,
+message and conversation reads SQLite first. One delta request every four seconds
+replaces mailbox/reader polling. Optimistic changes are journaled locally as well
+as sent through existing mutations; failed writes and undo restore local state
+without discarding newer overlapping actions. There is no offline mutation queue.
+Search remains server-side until the separate search step.
+
+New authenticated endpoints, without changing existing endpoint JSON:
+
+- `GET /api/sync/snapshot?limit=2000&cursor=...`: immutable paged headers, account
+  data and detail/thread metadata for all mailbox views, including archived/trash.
+- `GET /api/sync/delta?cursor=...`: upserts and deleted IDs from a consistent
+  inventory. Repeatable-read snapshots plus content fingerprints avoid missed
+  commits from timestamp ordering, catch classification/outbox-only changes and
+  detect hard-deleted records/accounts as well as tombstones. No PostgreSQL
+  migration or shared TS schema change is needed.
+- `GET /api/sync/bodies?ids=...`: background recent-body and on-open older-body reads, at most 16
+  messages and 256 KiB of combined body text per message. Oversized bodies use the
+  existing network reader without persistence. Cached bodies are versioned and
+  retained for the recent window; older, opened bodies use a 32 MiB LRU budget.
+
+Every message's row stays local regardless of age. `RECENT_BODY_DAYS` in
+`web/src/replica-policy.ts` is the single 90-day cutoff setting. Eligible full
+bodies sync in low-priority background batches after the row snapshot is ready.
+Older bodies are fetched only on open, then cached. Recent-body prefetch never
+downloads an older conversation member speculatively. Unopened background bodies
+expire when they age out; explicitly opened bodies can remain in the older LRU.
+Attachments (file contents) and embeddings are never stored in SQLite. Attachment
+metadata/counts remain available for the existing UI. The original per-message
+256 KiB body limit still applies; larger messages retain the network reader path.
+
+Replica schema version 3 stores compact metadata tuples and shares account records.
+Lists scan a chronological filter/order index with an early limit, then batch thread
+counts and senders through a second covering index. Only conversation-summary
+columns cross the worker boundary. Snapshot commit vacuums discarded staging and
+obsolete schema pages before advertising readiness. Full bodies retain all reader
+forms losslessly: the worker gzip-compresses them with `CompressionStream` when
+smaller and restores them before publishing reader data. Equal text/plain forms
+share one stored value; browsers without compression keep ordinary JSON bodies.
+The older-body LRU continues charging uncompressed bytes.
+
+Tradeoff: each delta scans the current header inventory on the server; it is not
+an indexed, durable event log. The server retains 16 bounded cursor generations,
+including at most two full snapshots, with a 15-minute idle lifetime. Restart or
+eviction returns `410 { reset: true }` and triggers a background resnapshot, never
+a silently skipped update. Snapshot and delta payloads contain no message bodies.
+
+Mail is stored in the browser's private OPFS storage, not encrypted by this
+application. Logout/401 revokes the local session, closes/wipes its database and
+notifies other tabs. LocalStorage contains no mail, passwords or bearer tokens.
+Pending shell activation waits for these private database wipes before reloading.
+Sign-out waits up to two seconds before navigating; unfinished cleanup keeps a
+durable revoked identifier. Startup retries orphaned/revoked database deletion
+before opening a replica. Query connectivity gating never blocks SQLite reads,
+and incomplete body placeholders cannot be quoted into reply/forward drafts.
+Pending-body readers refetch on reconnect even while their cached headers are fresh.
+The static-only service worker still never handles `/api/*`.
+
+After release/web builds, check against an isolated, existing local test database:
+
+```sh
+SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_sqlite node sent-rs/web/scripts/replica-check.mjs
+```
 
 After the production web and Rust release builds, run the isolated Playwright
 offline/update/auth check (it resets only the named local `sent_test_*` database):

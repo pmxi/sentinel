@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { replicaId } from "./replica";
 import { holdShellReload, registerShellWorker } from "./service-worker";
 import { forgetShellMetadata } from "./shell-metadata";
 
@@ -7,6 +8,45 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 describe("shell registration", () => {
+  it.each([1, 2])(
+    "does not reload a revoked session until its private replica is wiped (%s revocations)",
+    async (revocations) => {
+      const events = new EventTarget();
+      let finish!: () => void;
+      const deleting = new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      const worker = {
+        controller: {} as object,
+        addEventListener: events.addEventListener.bind(events),
+        removeEventListener: events.removeEventListener.bind(events),
+        register: vi.fn().mockResolvedValue({ update: vi.fn().mockResolvedValue(undefined) }),
+      };
+      const removeEntry = vi.fn().mockReturnValue(deleting);
+      vi.stubGlobal("navigator", {
+        serviceWorker: worker,
+        storage: { getDirectory: vi.fn().mockResolvedValue({ removeEntry }) },
+      });
+      const reload = vi.spyOn(window.location, "reload").mockImplementation(() => {}),
+        dispose = await registerShellWorker(),
+        release = holdShellReload(async () => {});
+      localStorage.setItem("sent:replica:session:v1", replicaId());
+      try {
+        worker.controller = {};
+        events.dispatchEvent(new Event("controllerchange"));
+        for (let index = 0; index < revocations; index++) forgetShellMetadata();
+        expect(reload).not.toHaveBeenCalled();
+        await vi.waitFor(() => expect(removeEntry).toHaveBeenCalled());
+        expect(reload).not.toHaveBeenCalled();
+        finish();
+        await vi.waitFor(() => expect(reload).toHaveBeenCalledOnce());
+      } finally {
+        finish();
+        release();
+        if (typeof dispose === "function") dispose();
+      }
+    },
+  );
   it("clears revoked-session guards without letting their late failures release a new composer's guard", async () => {
     const events = new EventTarget();
     const worker = {

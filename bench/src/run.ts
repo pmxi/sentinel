@@ -18,7 +18,7 @@ import {
 import { trackNetwork } from "./network.ts";
 import { type Condition, installPaintObserver } from "./paint.ts";
 import { prepareRows } from "./rows.ts";
-import { prepareWarmReload } from "./warm.ts";
+import { prepareWarmMailbox, prepareWarmReload } from "./warm.ts";
 
 const { values } = parseArgs({
   options: {
@@ -178,7 +178,8 @@ try {
           context = await browser.newContext({
             storageState,
             viewport: { width: 1440, height: 1000 },
-            serviceWorkers: action === "warm_reload" ? "allow" : "block",
+            serviceWorkers:
+              action === "warm_reload" || action === "warm_mailbox" ? "allow" : "block",
           });
           const page = await newPage(context, profile);
           if (values.diagnostics) capture = await installDiagnostics(page, selectors);
@@ -189,6 +190,12 @@ try {
           if (action === "cold_start") sample.ms = initial;
           else if (action === "inbox_load") {
             await page.reload({ waitUntil: "domcontentloaded" });
+            sample.ms = await waitPaint(page);
+          } else if (action === "warm_mailbox") {
+            await prepareWarmMailbox(page);
+            const before = await page.locator(selectors.rows).first().innerText();
+            await arm(page, { kind: "list", before }, "click");
+            await page.locator('a[href="/inbox/sent"]').first().click();
             sample.ms = await waitPaint(page);
           } else if (action === "warm_reload") {
             await prepareWarmReload(page);

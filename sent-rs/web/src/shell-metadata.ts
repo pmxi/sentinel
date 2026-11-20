@@ -1,4 +1,5 @@
 import type { Account } from "@sent/shared";
+import { endReplicaSession } from "./replica-session";
 import { clearShellReloadGuards } from "./service-worker";
 
 export const SHELL_METADATA_KEY = "sent:shell:v1";
@@ -55,5 +56,7 @@ export function forgetShellMetadata() {
   try {
     localStorage.removeItem(SHELL_METADATA_KEY);
   } catch {}
-  clearShellReloadGuards();
+  const wipe = endReplicaSession();
+  clearShellReloadGuards(wipe);
+  return wipe;
 }

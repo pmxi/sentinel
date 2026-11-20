@@ -37,6 +37,7 @@ pub struct State {
     logins: Mutex<HashMap<String, (Instant, u32)>>,
     http: reqwest::Client,
     providers: sent_core::providers::Providers,
+    pub(crate) sync_feed: Mutex<crate::sync::Feed>,
 }
 
 impl State {
@@ -48,6 +49,7 @@ impl State {
             logins: Mutex::new(HashMap::new()),
             http: reqwest::Client::new(),
             providers,
+            sync_feed: Mutex::new(crate::sync::Feed::default()),
         }
     }
     fn secret(&self) -> &str {
@@ -250,6 +252,9 @@ pub fn router(state: Shared) -> Router {
             get(|| async { Json(json!({"authenticated":true})) }),
         )
         .route("/api/accounts", get(accounts))
+        .route("/api/sync/snapshot", get(crate::sync::snapshot))
+        .route("/api/sync/delta", get(crate::sync::delta))
+        .route("/api/sync/bodies", get(crate::sync::bodies))
         .route("/api/messages", get(messages))
         .route("/api/messages/{id}", get(message))
         .route("/api/threads/{id}", get(thread))

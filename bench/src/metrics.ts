@@ -14,6 +14,7 @@ export const ACTIONS = [
   "search_rare",
   "search_common",
   "warm_reload",
+  "warm_mailbox",
 ] as const;
 export type Action = (typeof ACTIONS)[number];
 export type Profile = keyof typeof PROFILES;

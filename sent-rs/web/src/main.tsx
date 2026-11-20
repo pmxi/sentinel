@@ -2,7 +2,9 @@ import { Navigate, Route, Router } from "@solidjs/router";
 import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { render } from "solid-js/web";
 import App, { DraftsPage, InboxRoute, SearchRoute, SettingsRoute } from "./App";
+import { prepareReplicaStorage } from "./replica-session";
 import { registerShellWorker } from "./service-worker";
+import { readShellMetadata } from "./shell-metadata";
 import "./index.css";
 
 const queryClient = new QueryClient({
@@ -10,6 +12,7 @@ const queryClient = new QueryClient({
     queries: { refetchOnWindowFocus: false, staleTime: 15000, retry: 1, reconcile: "id" },
   },
 });
+void prepareReplicaStorage(Boolean(readShellMetadata()));
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing root element");
 render(

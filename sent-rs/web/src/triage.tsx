@@ -13,6 +13,7 @@ import {
 } from "solid-js";
 import { sentApi } from "./api";
 import { optimistic } from "./mail-cache";
+import { replicaId } from "./replica";
 
 type Notice = {
   id: string;
@@ -106,7 +107,7 @@ export function TriageProvider(props: { children: JSX.Element }) {
     accountId,
   ) => {
     if (notices().some((notice) => notice.threadId === threadId)) return;
-    const id = crypto.randomUUID();
+    const id = replicaId();
     setNotices((items) => [
       ...items,
       {

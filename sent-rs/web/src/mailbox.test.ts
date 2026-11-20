@@ -1,10 +1,11 @@
 import type { ConversationSummary, MessageListResponse } from "@sent/shared";
-import { QueryClient, QueryClientProvider } from "@tanstack/solid-query";
+import { onlineManager, QueryClient, QueryClientProvider } from "@tanstack/solid-query";
 import { createComponent, createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { sentApi } from "./api";
 import { refreshPages, useMailbox } from "./mailbox";
+import * as replica from "./replica";
 
 const row = (id: string) => ({ id, threadId: id }) as ConversationSummary;
 const page = (ids: string[], nextCursor: string | null = null): MessageListResponse => ({
@@ -13,6 +14,7 @@ const page = (ids: string[], nextCursor: string | null = null): MessageListRespo
 });
 const cleanup: (() => void)[] = [];
 afterEach(() => {
+  onlineManager.setOnline(true);
   for (const dispose of cleanup.splice(0)) dispose();
   vi.restoreAllMocks();
 });
@@ -48,6 +50,13 @@ function mailbox() {
   };
 }
 describe("mailbox pagination", () => {
+  it("executes local reads while the connectivity manager is offline", async () => {
+    onlineManager.setOnline(false);
+    const read = vi.spyOn(replica, "mailboxRead").mockResolvedValue(page(["cached"]));
+    const scope = mailbox();
+    await vi.waitFor(() => expect(scope.result.query.data?.messages[0]?.id).toBe("cached"));
+    expect(read).toHaveBeenCalled();
+  });
   it("refreshes all loaded pages with fresh cursors and deduplicates boundary rows", async () => {
     const load = vi
       .fn()

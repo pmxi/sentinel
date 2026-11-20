@@ -14,6 +14,9 @@ importers:
       '@solidjs/router':
         specifier: ^0.15.3
         version: 0.15.4(solid-js@1.9.19)
+      '@sqlite.org/sqlite-wasm':
+        specifier: 3.54.1-build1
+        version: 3.54.1-build1
       '@tanstack/solid-query':
         specifier: latest
         version: 5.108.0(solid-js@1.9.19)
@@ -350,6 +353,10 @@ packages:
     resolution: {integrity: sha512-WOpgg9a9T638cR+5FGbFi/IV4l2FpmBs1GpIMSPa0Ce9vyJN7Wts+X2PqMf9IYn0zUj2MlSJtm1gp7/HI/n5TQ==}
     peerDependencies:
       solid-js: ^1.8.6
+
+  '@sqlite.org/sqlite-wasm@3.54.1-build1':
+    resolution: {integrity: sha512-foW427VBLJ3G87bsnvQTZCc9zYe0Fq1wH0pz1I6BlKLKXcArIAyTkHtq0iT2llmhcMQt9T/p6l5PpQQh+6O8uQ==}
+    engines: {node: '>=22'}
 
   '@tanstack/query-core@5.108.0':
     resolution: {integrity: sha512-X9zJUtEV/0D2q9pmGS/Bza8S4bNovSBhZOtdhtu0fzsHwizC6C+Eh/q5CX3MQBchsRMrirWVQmv7Fp4OStzV9g==}
@@ -1286,6 +1293,8 @@ snapshots:
   '@solidjs/router@0.15.4(solid-js@1.9.19)':
     dependencies:
       solid-js: 1.9.19
+
+  '@sqlite.org/sqlite-wasm@3.54.1-build1': {}
 
   '@tanstack/query-core@5.108.0': {}
 
