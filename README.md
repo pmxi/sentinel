@@ -479,7 +479,8 @@ Never copy a live SQLite database without using the backup API.
 For local SQLite installations, `scripts/backup.sh` also uses the consistent
 SQLite backup API. Set `SENT_DATABASE_PATH` (default `./data/sent.sqlite`) and
 `SENT_BACKUP_DIR` (default `./backups`); backups are private and retained for
-14 days. The `sqlite3` command-line tool is required. No Compose database
+14 days. Retention applies only to its `sent-script-backup-*.sqlite` files,
+never the source database. The `sqlite3` command-line tool is required. No Compose database
 service is used.
 
 Restore to a **new explicit path**; the script refuses existing targets or

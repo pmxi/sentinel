@@ -30,13 +30,13 @@ class BackupRestoreTests(unittest.TestCase):
             connection.execute("insert into fixture values ('committed')")
             connection.commit()
             self.backups.mkdir()
-            expired = self.backups / "sent-expired.sqlite"
+            expired = self.backups / "sent-script-backup-expired.sqlite"
             expired.touch()
             os.utime(expired, (time.time() - 15 * 86400,) * 2)
             result = self.run_script("backup.sh")
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertFalse(expired.exists())
-            backup, = self.backups.glob("sent-*.sqlite")
+            backup, = self.backups.glob("sent-script-backup-*.sqlite")
             self.assertEqual(backup.stat().st_mode & 0o777, 0o600)
             with sqlite3.connect(backup) as copy:
                 self.assertEqual(copy.execute("select value from fixture").fetchall(), [("committed",)])
@@ -68,6 +68,21 @@ class BackupRestoreTests(unittest.TestCase):
         Path(str(target) + "-wal").touch()
         self.assertNotEqual(self.run_script("restore.sh", self.database, target).returncode, 0)
         self.assertFalse(target.exists())
+
+    def test_retention_preserves_source_and_unrelated_old_databases(self):
+        self.backups.mkdir()
+        source = self.backups / "sent-script-backup-live.sqlite"
+        with sqlite3.connect(source) as connection:
+            connection.execute("create table fixture(value text)")
+        self.database.symlink_to(source)
+        unrelated = self.backups / "sent-unrelated.sqlite"
+        unrelated.touch()
+        for path in (source, unrelated):
+            os.utime(path, (time.time() - 15 * 86400,) * 2)
+        result = self.run_script("backup.sh")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(source.exists())
+        self.assertTrue(unrelated.exists())
 
 
 if __name__ == "__main__":
