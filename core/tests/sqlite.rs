@@ -18,6 +18,51 @@ fn search(q: &str) -> SearchInput {
     }
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn new_databases_directories_and_sidecars_are_private() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let directory = tempfile::tempdir()?;
+    let data = directory.path().join("private/nested");
+    let path = data.join("sent.sqlite");
+    let pool = db::pool(path.to_str().unwrap(), true).await?;
+    sqlx::query("create table fixture(value text)")
+        .execute(&pool)
+        .await?;
+    for dir in [directory.path().join("private"), data.clone()] {
+        assert_eq!(std::fs::metadata(dir)?.permissions().mode() & 0o777, 0o700);
+    }
+    for suffix in ["", "-wal", "-shm"] {
+        assert_eq!(
+            std::fs::metadata(format!("{}{suffix}", path.display()))?
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+    pool.close().await;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o400))?;
+    let _ = db::pool(path.to_str().unwrap(), true).await;
+    assert_eq!(
+        std::fs::metadata(&path)?.permissions().mode() & 0o777,
+        0o400
+    );
+    assert!(
+        db::pool(
+            directory
+                .path()
+                .join("missing-parent-file/child.sqlite")
+                .to_str()
+                .unwrap(),
+            true
+        )
+        .await
+        .is_ok()
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn migrations_handle_empty_directories_and_roll_back_errors() -> Result<()> {
     let directory = tempfile::tempdir()?;

@@ -62,7 +62,26 @@ pub async fn pool(path: &str, test: bool) -> Result<SqlitePool> {
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
     {
-        tokio::fs::create_dir_all(parent).await?;
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(parent)?;
+    }
+    let mut file = std::fs::OpenOptions::new();
+    file.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        file.mode(0o600);
+    }
+    match file.open(path) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => return Err(error.into()),
     }
     let options = SqliteConnectOptions::new()
         .filename(path)
