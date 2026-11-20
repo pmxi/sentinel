@@ -6,6 +6,7 @@ use tokio::net::{TcpListener, TcpStream};
 
 mod app;
 mod auth;
+mod live;
 mod sync;
 mod validation;
 
@@ -23,6 +24,7 @@ async fn main() -> Result<()> {
     let address = format!("{}:{}", config.host, config.port);
     let listener = bind_listener(&address).await?;
     let state = Arc::new(app::State::new(config, Repository(pool)));
+    live::start(state.clone());
     println!("Sent Rust API listening on {address}");
     axum::serve(
         listener,

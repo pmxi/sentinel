@@ -220,11 +220,15 @@ impl Repository {
     }
 
     pub async fn complete_mutation(&self, id: Uuid) -> Result<()> {
-        sqlx::query("update mutation_outbox set status='complete',completed_at=now(),last_error=null where id=$1").bind(id).execute(&self.0).await?;
+        let mut tx = self.0.begin().await?;
+        sqlx::query("update mutation_outbox set status='complete',completed_at=now(),last_error=null where id=$1").bind(id).execute(&mut *tx).await?;
+        crate::live::notify_changed(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
     pub async fn fail_mutation(&self, id: Uuid, error: &str) -> Result<()> {
+        let mut tx = self.0.begin().await?;
         sqlx::query("with failed_mutation as (
           update mutation_outbox set status=case when attempts>=12 or payload ? 'sendAttemptedAt' then 'failed'::mutation_status else 'pending'::mutation_status end,
           next_attempt_at=now() + (least(3600,power(2,attempts)::int) * interval '1 second'),
@@ -235,7 +239,9 @@ impl Repository {
           (select id from messages where id=(draft->>'replyToMessageId')::uuid),
           (select id from messages where id=(draft->>'forwardOfMessageId')::uuid),(draft->>'createdAt')::timestamptz,now()
           from (select payload->'draft' as draft from failed_mutation where action='send' and status='failed' and not (payload ? 'sendAttemptedAt')) restored on conflict(id) do nothing")
-          .bind(id).bind(error.chars().take(2000).collect::<String>()).execute(&self.0).await?;
+          .bind(id).bind(error.chars().take(2000).collect::<String>()).execute(&mut *tx).await?;
+        crate::live::notify_changed(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -247,6 +253,7 @@ impl Repository {
             .bind(id)
             .execute(&mut *tx)
             .await?;
+        crate::live::notify_changed(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -266,12 +273,16 @@ impl Repository {
         sqlx::query("insert into sync_cursors(account_id,cursor,backfill_complete,last_successful_at,updated_at) values($1,$2,$3,now(),now()) on conflict(account_id) do update set cursor=excluded.cursor,backfill_complete=excluded.backfill_complete,last_successful_at=now(),updated_at=now()")
             .bind(id).bind(cursor).bind(backfill_complete).execute(&mut *tx).await?;
         sqlx::query("update accounts set status='active',last_synced_at=now(),last_error=null,updated_at=now() where id=$1").bind(id).execute(&mut *tx).await?;
+        crate::live::notify_changed(&mut *tx).await?;
         tx.commit().await?;
         Ok(())
     }
 
     pub async fn fail_sync(&self, id: Uuid, error: &str, needs_reauth: bool) -> Result<()> {
-        sqlx::query("update accounts set status=$2::text::account_status,last_error=$3,updated_at=now() where id=$1").bind(id).bind(if needs_reauth {"needs_reauth"} else {"error"}).bind(error.chars().take(2000).collect::<String>()).execute(&self.0).await?;
+        let mut tx = self.0.begin().await?;
+        sqlx::query("update accounts set status=$2::text::account_status,last_error=$3,updated_at=now() where id=$1").bind(id).bind(if needs_reauth {"needs_reauth"} else {"error"}).bind(error.chars().take(2000).collect::<String>()).execute(&mut *tx).await?;
+        crate::live::notify_changed(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
     pub async fn list_accounts(&self) -> Result<Value> {
@@ -521,21 +532,27 @@ impl Repository {
         {
             bail!("Invalid request");
         }
+        let mut tx = self.0.begin().await?;
         let row = if let Some(id) = input.id {
             sqlx::query("update drafts set account_id=$1,to_addresses=$2,cc_addresses=$3,bcc_addresses=$4,subject=$5,body=$6,reply_to_message_id=$7,forward_of_message_id=$8,updated_at=now() where id=$9 returning *")
-                .bind(input.account_id).bind(json!(input.to)).bind(json!(input.cc)).bind(json!(input.bcc)).bind(input.subject).bind(input.body).bind(input.reply_to_message_id).bind(input.forward_of_message_id).bind(id).fetch_optional(&self.0).await?.context("Draft not found")?
+                .bind(input.account_id).bind(json!(input.to)).bind(json!(input.cc)).bind(json!(input.bcc)).bind(input.subject).bind(input.body).bind(input.reply_to_message_id).bind(input.forward_of_message_id).bind(id).fetch_optional(&mut *tx).await?.context("Draft not found")?
         } else {
             sqlx::query("insert into drafts(account_id,to_addresses,cc_addresses,bcc_addresses,subject,body,reply_to_message_id,forward_of_message_id) values($1,$2,$3,$4,$5,$6,$7,$8) returning *")
-                .bind(input.account_id).bind(json!(input.to)).bind(json!(input.cc)).bind(json!(input.bcc)).bind(input.subject).bind(input.body).bind(input.reply_to_message_id).bind(input.forward_of_message_id).fetch_one(&self.0).await?
+                .bind(input.account_id).bind(json!(input.to)).bind(json!(input.cc)).bind(json!(input.bcc)).bind(input.subject).bind(input.body).bind(input.reply_to_message_id).bind(input.forward_of_message_id).fetch_one(&mut *tx).await?
         };
+        crate::live::notify_changed(&mut *tx).await?;
+        tx.commit().await?;
         Ok(draft(&row))
     }
 
     pub async fn delete_draft(&self, id: Uuid) -> Result<()> {
+        let mut tx = self.0.begin().await?;
         sqlx::query("delete from drafts where id=$1")
             .bind(id)
-            .execute(&self.0)
+            .execute(&mut *tx)
             .await?;
+        crate::live::notify_changed(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -543,17 +560,20 @@ impl Repository {
         if tier.is_some_and(|t| !(1..=3).contains(&t)) {
             bail!("Invalid request");
         }
+        let mut tx = self.0.begin().await?;
         if let Some(tier) = tier {
             sqlx::query("insert into classifications(message_id,model_tier,manual_tier,reasoning,model,prompt_version) values($1,1,$2,'Manual classification before model result','manual','manual') on conflict(message_id) do update set manual_tier=excluded.manual_tier,updated_at=now()")
-                .bind(id).bind(tier).execute(&self.0).await?;
+                .bind(id).bind(tier).execute(&mut *tx).await?;
         } else {
             sqlx::query(
                 "update classifications set manual_tier=null,updated_at=now() where message_id=$1",
             )
             .bind(id)
-            .execute(&self.0)
+            .execute(&mut *tx)
             .await?;
         }
+        crate::live::notify_changed(&mut *tx).await?;
+        tx.commit().await?;
         Ok(())
     }
 
@@ -595,6 +615,7 @@ impl Repository {
         .bind(message_id)
         .execute(&mut *tx)
         .await?;
+        crate::live::notify_changed(&mut *tx).await?;
         tx.commit().await?;
         Ok(id)
     }
@@ -648,6 +669,7 @@ impl Repository {
         if inserted == 0 {
             bail!("This action is already pending");
         }
+        crate::live::notify_changed(&mut *tx).await?;
         tx.commit().await?;
         Ok(group_id)
     }
@@ -672,6 +694,7 @@ impl Repository {
             .bind(draft_id)
             .execute(&mut *tx)
             .await?;
+        crate::live::notify_changed(&mut *tx).await?;
         tx.commit().await?;
         Ok(id)
     }
@@ -712,6 +735,7 @@ impl Repository {
                 .execute(&mut *tx)
                 .await?;
         }
+        crate::live::notify_changed(&mut *tx).await?;
         tx.commit().await?;
         Ok(result)
     }

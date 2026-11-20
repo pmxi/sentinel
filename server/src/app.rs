@@ -38,6 +38,7 @@ pub struct State {
     http: reqwest::Client,
     providers: sent_core::providers::Providers,
     pub(crate) sync_feed: Mutex<crate::sync::Feed>,
+    pub(crate) live: crate::live::Hub,
 }
 
 impl State {
@@ -50,9 +51,10 @@ impl State {
             http: reqwest::Client::new(),
             providers,
             sync_feed: Mutex::new(crate::sync::Feed::default()),
+            live: crate::live::Hub::default(),
         }
     }
-    fn secret(&self) -> &str {
+    pub(crate) fn secret(&self) -> &str {
         self.config
             .session_secret
             .as_deref()
@@ -252,6 +254,7 @@ pub fn router(state: Shared) -> Router {
             get(|| async { Json(json!({"authenticated":true})) }),
         )
         .route("/api/accounts", get(accounts))
+        .route("/api/live", get(crate::live::upgrade))
         .route("/api/sync/snapshot", get(crate::sync::snapshot))
         .route("/api/sync/delta", get(crate::sync::delta))
         .route("/api/sync/bodies", get(crate::sync::bodies))
@@ -332,22 +335,9 @@ async fn protect(
         let public = path == "/api/health"
             || path == "/api/auth/login"
             || (path.starts_with("/api/oauth/") && path.ends_with("/callback"));
-        let token = request
-            .headers()
-            .get(header::AUTHORIZATION)
-            .and_then(|h| h.to_str().ok())
-            .and_then(|h| h.strip_prefix("Bearer "))
-            .or_else(|| {
-                request
-                    .headers()
-                    .get(header::COOKIE)
-                    .and_then(|h| h.to_str().ok())
-                    .and_then(|h| {
-                        h.split(';')
-                            .find_map(|part| part.trim().strip_prefix("sent_session="))
-                    })
-            });
-        if !public && !token.is_some_and(|t| auth::verify_session(t, state.secret())) {
+        let session = auth::token(request.headers())
+            .and_then(|token| auth::session_info(token, state.secret()));
+        if !public && !session.is_some_and(|session| state.live.valid(&session)) {
             return error(StatusCode::UNAUTHORIZED, "Authentication required");
         }
         if !["GET", "HEAD", "OPTIONS"].contains(&request.method().as_str())
@@ -460,7 +450,17 @@ async fn login(
         .into_response())
 }
 
-async fn logout(ExtractState(state): ExtractState<Shared>) -> Response {
+async fn logout(ExtractState(state): ExtractState<Shared>, headers: HeaderMap) -> Response {
+    if let Some(session) =
+        auth::token(&headers).and_then(|token| auth::session_info(token, state.secret()))
+    {
+        state.live.revoke(session.key.clone(), session.expires);
+        if let Err(error) =
+            sent_core::live::notify_logout(&state.repository.0, &session.key, session.expires).await
+        {
+            eprintln!("Live logout notification failed: {error}");
+        }
+    }
     (
         [(header::SET_COOKIE, state.cookie(None))],
         Json(json!({"ok":true})),

@@ -489,3 +489,62 @@ The server and worker apply pending SQL migrations from `migrations/` at startup
 - Generated reader text supports basic Markdown, including descriptive hyperlinks. Raw HTML, images, and unsafe link schemes are disabled in this view; the original email is always available.
 - The model selects short link references; Sent inserts the original URL definitions afterward so long signed links are not recopied by the model.
 - The mutation outbox first records an action in PostgreSQL, updates Sent optimistically, and then retries the provider write until it succeeds or surfaces as failed.
+
+## Live mailbox updates
+
+`/api/live` is a same-origin, session-cookie-authenticated WebSocket. Set
+`SENT_PUBLIC_URL` to the exact public origin, including the scheme and any
+non-default port. Requests without that Origin or a valid cookie are rejected;
+HTTP bearer tokens alone cannot open a socket. Logout closes the session's
+sockets, including other tabs, and expiry closes them without waiting for a
+subsequent API request. Logout revocations are kept in memory until JWT expiry
+and broadcast to other server processes; this does not add a persistent session
+table to the existing stateless authentication system.
+
+Rust ingest/sync, classification, outbox results and API writes call `pg_notify`
+in their committing transaction. There are no migrations or triggers. Each
+server process holds one reconnecting LISTEN connection, coalesces bursts for
+50 ms and reads a committed inventory once per batch. It fans out a shared-cursor
+delta when it fits (32 upserts, 512 removals and 64 KiB), otherwise a cursor hint.
+The replayable HTTP delta feed remains authoritative: a cursor mismatch or
+expired generation causes catch-up or a background resnapshot, not skipped rows.
+
+Push and polling are serialized before applying SQLite/cache updates. While the
+socket is healthy, safety polling runs every 60 seconds; a blocked, unavailable
+or silent socket restores four-second polling without an application error.
+Reconnect uses jittered exponential backoff, and online/visible transitions
+catch up immediately. Network-only clients invalidate queries on push too.
+Both paths respect pending optimistic writes. Heartbeats run every 20 seconds
+with a 45-second idle deadline. The server caps connections at eight per session
+and 128 total, incoming frames at 16 KiB/32 messages per second, and write buffers
+at 128 KiB. Sends time out after five seconds; latest-only notification queues
+bound slow-client backpressure. Losing LISTEN closes sockets so clients poll
+until the single connection recovers.
+
+For nginx, forward the upgrade explicitly (the ordinary HTTP location can stay
+unchanged):
+
+```nginx
+location = /api/live {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+    proxy_read_timeout 75s;
+}
+```
+
+Use the external HTTPS origin for `SENT_PUBLIC_URL` when nginx terminates TLS.
+If Upgrade is not forwarded, the UI keeps using four-second HTTP delta polling.
+After release/web builds, the isolated live check exercises push, two-tab
+archive, authentication, expiry/logout, reconnect, connection limits, LISTEN
+recovery, workerless operation and an Upgrade-stripping reverse proxy:
+
+```sh
+SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_live node web/scripts/live-check.mjs
+```
+
+It resets only the named local `sent_test_*` database and terminates only its own
+LISTEN connection to simulate disconnect/recovery, not the shared Postgres server.
+Screenshots and logs are saved under `~/live-check/`.

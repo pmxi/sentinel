@@ -97,7 +97,6 @@ impl Feed {
         Ok(self.generations.back_mut().expect("generation"))
     }
     fn insert(&mut self, inventory: ReplicaInventory, snapshot: bool) -> Uuid {
-        let id = Uuid::new_v4();
         let hashes = Arc::new(
             inventory
                 .messages
@@ -110,12 +109,25 @@ impl Feed {
                 })
                 .collect(),
         );
+        self.record(
+            hashes,
+            inventory.accounts,
+            snapshot.then(|| Arc::new(inventory.messages)),
+        )
+    }
+    fn record(
+        &mut self,
+        hashes: Arc<HashMap<String, String>>,
+        accounts: Vec<Value>,
+        snapshot: Option<Arc<Vec<Value>>>,
+    ) -> Uuid {
+        let id = Uuid::new_v4();
         self.generations.push_back(Generation {
             id,
             touched: Instant::now(),
             hashes,
-            snapshot: snapshot.then(|| Arc::new(inventory.messages)),
-            accounts: inventory.accounts,
+            snapshot,
+            accounts,
         });
         while self.generations.len() > 16 {
             self.generations.pop_front();
@@ -134,6 +146,84 @@ impl Feed {
             }
         }
         id
+    }
+    pub(crate) fn publish(&mut self, inventory: &ReplicaInventory) -> String {
+        let hashes = Arc::new(
+            inventory
+                .messages
+                .iter()
+                .map(|row| {
+                    (
+                        row["id"].as_str().expect("message id").to_owned(),
+                        replica_fingerprint(row),
+                    )
+                })
+                .collect(),
+        );
+        let id = self.record(hashes, inventory.accounts.clone(), None);
+        encode(id, None)
+    }
+    pub(crate) fn live_delta(
+        &mut self,
+        from: &str,
+        to: &str,
+        inventory: &ReplicaInventory,
+    ) -> Result<String, ()> {
+        let before = self
+            .find(decode(from, false).map_err(|_| ())?.generation)
+            .map_err(|_| ())?
+            .hashes
+            .clone();
+        let current = self
+            .find(decode(to, false).map_err(|_| ())?.generation)
+            .map_err(|_| ())?
+            .hashes
+            .clone();
+        let upserts: Vec<_> = inventory
+            .messages
+            .iter()
+            .filter(|row| {
+                let id = row["id"].as_str().expect("message id");
+                before.get(id) != current.get(id)
+            })
+            .take(33)
+            .collect();
+        let mut deletions: Vec<_> = before
+            .keys()
+            .filter(|id| !current.contains_key(*id))
+            .take(513)
+            .collect();
+        if upserts.len() > 32 || deletions.len() > 512 {
+            return Err(());
+        }
+        deletions.sort();
+        #[derive(Serialize)]
+        struct Delta<'a> {
+            upserts: Vec<&'a Value>,
+            deletions: Vec<&'a String>,
+            accounts: &'a Vec<Value>,
+            cursor: &'a str,
+        }
+        #[derive(Serialize)]
+        struct Push<'a> {
+            #[serde(rename = "type")]
+            kind: &'static str,
+            from: &'a str,
+            delta: Delta<'a>,
+        }
+        let value = Push {
+            kind: "delta",
+            from,
+            delta: Delta {
+                upserts,
+                deletions,
+                accounts: &inventory.accounts,
+                cursor: to,
+            },
+        };
+        let mut output = BoundedJson(Vec::new());
+        serde_json::to_writer(&mut output, &value).map_err(|_| ())?;
+        String::from_utf8(output.0).map_err(|_| ())
     }
     fn page(&mut self, cursor: Cursor, limit: usize) -> Result<Value, Fault> {
         let entry = self.find(cursor.generation)?;
@@ -182,6 +272,19 @@ impl Feed {
         Ok(
             json!({"upserts":upserts,"deletions":deletions,"accounts":accounts,"cursor":encode(id,None)}),
         )
+    }
+}
+struct BoundedJson(Vec<u8>);
+impl std::io::Write for BoundedJson {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > (64 * 1024_usize).saturating_sub(self.0.len()) {
+            return Err(std::io::Error::other("Live delta too large"));
+        }
+        self.0.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
     }
 }
 fn internal(error: anyhow::Error) -> Response {
@@ -284,6 +387,49 @@ mod tests {
     }
     fn row(id: &str, value: bool) -> Value {
         json!({"id":id,"read":value})
+    }
+    #[test]
+    fn live_deltas_share_a_cursor_and_match_the_authoritative_feed() {
+        let mut feed = Feed::default();
+        let first = feed.insert(inventory(vec![row("a", false), row("b", false)]), true);
+        let from = encode(first, None);
+        let changed = inventory(vec![row("a", true), row("c", false)]);
+        let to = feed.publish(&changed);
+        let pushed: Value =
+            serde_json::from_str(&feed.live_delta(&from, &to, &changed).unwrap()).unwrap();
+        assert_eq!(pushed["from"], from);
+        assert_eq!(pushed["delta"]["cursor"], to);
+        let http = feed
+            .delta(
+                decode(&from, false).unwrap_or_else(|_| panic!()),
+                inventory(vec![row("a", true), row("c", false)]),
+            )
+            .unwrap_or_else(|_| panic!());
+        assert_eq!(pushed["delta"]["upserts"], http["upserts"]);
+        assert_eq!(pushed["delta"]["deletions"], http["deletions"]);
+        let unchanged: Value =
+            serde_json::from_str(&feed.live_delta(&to, &to, &changed).unwrap()).unwrap();
+        assert_eq!(unchanged["delta"]["upserts"], json!([]));
+        assert!(feed.live_delta("invalid", &to, &changed).is_err());
+    }
+    #[test]
+    fn large_deltas_fall_back_to_hints_before_allocating_unbounded_frames() {
+        let mut feed = Feed::default();
+        let first = feed.insert(inventory(vec![]), true);
+        let from = encode(first, None);
+        let many = inventory(
+            (0..33)
+                .map(|index| row(&index.to_string(), false))
+                .collect(),
+        );
+        let to = feed.publish(&many);
+        assert!(feed.live_delta(&from, &to, &many).is_err());
+        let huge = inventory(vec![json!({"id":"huge","subject":"x".repeat(65536)})]);
+        let to = feed.publish(&huge);
+        assert!(feed.live_delta(&from, &to, &huge).is_err());
+        let empty = inventory(vec![]);
+        let to = feed.publish(&empty);
+        assert!(feed.live_delta(&from, &to, &empty).is_ok());
     }
     #[test]
     fn immutable_pages_and_replayable_deltas_cover_upserts_deletions_and_undo() {
