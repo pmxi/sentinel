@@ -24,7 +24,7 @@ async fn main() -> Result<()> {
     let address = format!("{}:{}", config.host, config.port);
     let listener = bind_listener(&address).await?;
     let state = Arc::new(app::State::new(config, Repository(pool)));
-    live::start(state.clone());
+    live::start(state.clone()).await?;
     println!("Sent Rust API listening on {address}");
     axum::serve(
         listener,

@@ -104,7 +104,15 @@ async fn coalesce(changed: &Notify) {
     let _ = tokio::time::timeout(Duration::ZERO, changed.notified()).await;
 }
 
-pub fn start(state: Arc<State>) {
+pub async fn start(state: Arc<State>) -> Result<(), sqlx::Error> {
+    let revocations: Vec<(String, i64)> = sqlx::query_as(
+        "select session,expires from sent_live_revocations where expires>strftime('%s','now')",
+    )
+    .fetch_all(&state.repository.0)
+    .await?;
+    for (key, expires) in revocations {
+        state.live.revoke(key, expires);
+    }
     let publisher = state.clone();
     tokio::spawn(async move {
         loop {
@@ -169,6 +177,7 @@ pub fn start(state: Arc<State>) {
             backoff = (backoff * 2).min(30);
         }
     });
+    Ok(())
 }
 
 fn origin_allowed(headers: &HeaderMap, public_url: &str) -> bool {
@@ -496,7 +505,15 @@ mod tests {
             sent_core::repository::Repository(pool),
         ));
         let mut updates = state.live.updates.subscribe();
-        start(state.clone());
+        let logged_out = auth::Session {
+            key: "persisted-logout-before-restart".into(),
+            expires: Utc::now().timestamp() + 60,
+        };
+        sent_core::live::notify_logout(&state.repository.0, &logged_out.key, logged_out.expires)
+            .await
+            .unwrap();
+        start(state.clone()).await.unwrap();
+        assert!(!state.live.valid(&logged_out));
         tokio::time::timeout(Duration::from_secs(3), updates.changed())
             .await
             .unwrap()
@@ -542,5 +559,22 @@ mod tests {
         })
         .await
         .unwrap();
+    }
+
+    #[tokio::test]
+    async fn startup_fails_when_revocations_cannot_be_loaded() {
+        let directory = tempfile::tempdir().unwrap();
+        let pool = sent_core::db::pool(
+            directory.path().join("unmigrated.sqlite").to_str().unwrap(),
+            true,
+        )
+        .await
+        .unwrap();
+        let state = Arc::new(State::new(
+            sent_core::config::Config::from_env().unwrap(),
+            sent_core::repository::Repository(pool),
+        ));
+        assert!(start(state.clone()).await.is_err());
+        assert!(!state.live.available.load(Ordering::Acquire));
     }
 }
