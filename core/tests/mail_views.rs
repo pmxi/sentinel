@@ -163,7 +163,7 @@ async fn scheduled_labels_are_excluded_from_lists_counts_and_replica() -> Result
     ] {
         let message = sent_core::normalize::gmail_message(
             &json!({"id":id,"threadId":thread,"internalDate":"1893456000000","labelIds":labels,
-                "payload":{"headers":[{"name":"From","value":"scheduled@example.test"}]}}),
+                "payload":{"headers":[{"name":"From","value":"scheduled@example.test"},{"name":"Subject","value":"scheduledneedle"}]}}),
             "owner@example.test",
         )?;
         scheduled_ids.push(f.repo.upsert_message(f.owner, &message).await?.0);
@@ -202,6 +202,39 @@ async fn scheduled_labels_are_excluded_from_lists_counts_and_replica() -> Result
             .len(),
         1
     );
+
+    assert!(ids(&f.search("scheduledneedle", 10, None, None).await?).is_empty());
+    assert_eq!(
+        ids(&f.search("group", 10, None, None).await?),
+        vec![ordinary]
+    );
+    assert_eq!(
+        ids(&f.search("-nomatch", 10, None, None).await?),
+        vec![ordinary]
+    );
+    let embedding = vec![1.0; 3072];
+    for id in [ordinary, scheduled_ids[0], scheduled_ids[1]] {
+        f.repo
+            .save_embedding(id, &embedding, "fixture", "hash")
+            .await?;
+    }
+    let results = f
+        .repo
+        .search(
+            &SearchInput {
+                q: "nomatch".into(),
+                account_id: None,
+                tier: None,
+                after: None,
+                before: None,
+                has_attachment: None,
+                limit: Some(10),
+            },
+            Some(embedding),
+        )
+        .await?;
+    assert_eq!(ids(&results), vec![ordinary]);
+    assert_eq!(results["messages"][0]["messageCount"], 1);
 
     let sent = sent_core::normalize::gmail_message(
         &json!({"id":"scheduled-only","threadId":"scheduled-only","internalDate":"1893456000000","labelIds":["SENT"]}),

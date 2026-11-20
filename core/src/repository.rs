@@ -636,7 +636,9 @@ impl Repository {
         {
             bail!("Invalid request");
         }
-        let filter = "not m.tombstone and not m.deleted and (?2 is null or m.account_id=?2) and (?3 is null or coalesce(c.manual_tier,c.model_tier)=?3) and (?4 is null or m.received_at >= ?4) and (?5 is null or m.received_at < ?5) and (?6 is null or (json_array_length(m.attachments)>0)=?6)";
+        let filter = format!(
+            "{VISIBLE} and not m.deleted and (?2 is null or m.account_id=?2) and (?3 is null or coalesce(c.manual_tier,c.model_tier)=?3) and (?4 is null or m.received_at >= ?4) and (?5 is null or m.received_at < ?5) and (?6 is null or (json_array_length(m.attachments)>0)=?6)"
+        );
         let (query, exclusions) = fts_query(&input.q);
         let lexical = format!("with exclusion_matches as materialized (
             select exclusions.key group_id,messages_search.rowid message_rowid
