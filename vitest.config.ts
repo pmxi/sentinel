@@ -4,7 +4,7 @@ export default defineConfig({
   oxc: { jsx: { runtime: "automatic" } },
   test: {
     coverage: { reporter: ["text", "json-summary"] },
-    include: ["**/*.test.ts"],
+    include: ["apps/**/*.test.ts", "packages/**/*.test.ts"],
     passWithNoTests: false,
   },
 });

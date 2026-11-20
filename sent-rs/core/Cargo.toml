@@ -1,0 +1,28 @@
+[package]
+name = "sent-core"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+aes-gcm.workspace = true
+base64.workspace = true
+chrono.workspace = true
+dotenvy.workspace = true
+rand.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+ammonia = "4"
+html2text = "0.14"
+mailparse = "0.16"
+regex = "1"
+sha2 = "0.10"
+lettre = { version = "0.11", default-features = false, features = ["builder"] }
+
+[dev-dependencies]
+wiremock = "0.6"
