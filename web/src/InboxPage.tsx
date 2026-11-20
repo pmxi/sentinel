@@ -569,7 +569,7 @@ function MessageList(props: {
                             )}
                             <time>{formatListDate(message.receivedAt)}</time>
                             {message.tier === null && message.direction === "inbound" && (
-                              <span>Sorting…</span>
+                              <span class="visually-hidden">Sorting…</span>
                             )}
                             {message.syncPending && <span>Syncing…</span>}
                           </span>

@@ -664,11 +664,11 @@ kbd {
 .message-row:hover {
   background: #f6f6f6;
 }
-.message-row:focus {
+.message-row:focus:not(:focus-visible) {
   outline: none;
 }
 .message-row:focus-visible {
-  outline: 2px solid #777;
+  outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
 .message-row.selected {
@@ -1865,7 +1865,7 @@ kbd {
     display: none;
   }
 }
-button:focus-visible,
+button:not(.message-row):focus-visible,
 a:focus-visible,
 select:focus-visible {
   outline: 2px solid var(--accent);
