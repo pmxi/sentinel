@@ -139,6 +139,7 @@ export function CommandProvider({ children }: { children: ReactNode }) {
 function CommandPalette({ commands, close }: { commands: Command[]; close(): void }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const search = useRef<HTMLInputElement>(null);
+  const origin = useRef<HTMLElement | null>(null);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const groups = ["Message", "Mail", "Navigation"] as const;
@@ -150,20 +151,30 @@ function CommandPalette({ commands, close }: { commands: Command[]; close(): voi
   const selected = available[active] ?? available[0];
   useEffect(() => {
     const element = dialog.current;
+    origin.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     element?.showModal();
     // Let showModal remember the originating control before focusing search.
     search.current?.focus();
-    return () => element?.close();
+    return () => {
+      if (element?.open) {
+        element.close();
+        origin.current?.focus();
+      }
+    };
   }, []);
   useEffect(() => {
     if (selected)
       document.getElementById(`command-${selected.id}`)?.scrollIntoView({ block: "nearest" });
   }, [selected]);
+  const dismiss = () => {
+    dialog.current?.close();
+    origin.current?.focus();
+    close();
+  };
   const execute = (command: Command) => {
     if (command.disabled) return;
-    // Native dialog close restores focus before an action focuses search/composer.
-    dialog.current?.close();
-    close();
+    // Restore focus before an action deliberately focuses search/composer.
+    dismiss();
     command.run();
   };
   return (
@@ -171,11 +182,13 @@ function CommandPalette({ commands, close }: { commands: Command[]; close(): voi
       ref={dialog}
       className="command-palette"
       aria-labelledby="command-title"
-      onCancel={close}
+      onCancel={(event) => {
+        event.preventDefault();
+        dismiss();
+      }}
       onClick={(event) => {
         if (event.target === event.currentTarget) {
-          dialog.current?.close();
-          close();
+          dismiss();
         }
       }}
       onKeyDown={(event) => {
@@ -200,13 +213,7 @@ function CommandPalette({ commands, close }: { commands: Command[]; close(): voi
         <header className="command-heading">
           <CommandIcon size={16} />
           <h2 id="command-title">Commands & shortcuts</h2>
-          <button
-            onClick={() => {
-              dialog.current?.close();
-              close();
-            }}
-            aria-label="Close command palette"
-          >
+          <button onClick={dismiss} aria-label="Close command palette">
             <kbd>Esc</kbd>
           </button>
         </header>
