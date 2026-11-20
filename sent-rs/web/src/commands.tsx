@@ -195,12 +195,7 @@ function CommandPalette(props: { commands: Command[]; close(): void }) {
   const [active, setActive] = createSignal(0);
   const groups = createMemo(() => ["Message", "Mail", "Navigation"] as const);
   const results = createMemo<Command[]>(() => [
-    ...filterCommands(
-      [...props.commands].sort(
-        (left, right) => groups().indexOf(left.group) - groups().indexOf(right.group),
-      ),
-      query(),
-    ),
+    ...filterCommands(props.commands, query()),
     ...(mail.data?.messages ?? []).map((row) => ({
       id: `mail-${row.threadId}`,
       label: row.subject,
@@ -210,7 +205,15 @@ function CommandPalette(props: { commands: Command[]; close(): void }) {
         navigate(`/search?q=${encodeURIComponent(query())}&message=${encodeURIComponent(row.id)}`),
     })),
   ]);
-  const available = createMemo(() => results().filter((command) => !command.disabled));
+  const grouped = createMemo(() =>
+    groups().map((group) => ({
+      group,
+      items: results().filter((command) => command.group === group),
+    })),
+  );
+  const available = createMemo(() =>
+    grouped().flatMap(({ items }) => items.filter((command) => !command.disabled)),
+  );
   const selected = createMemo(() => available()[active()] ?? available()[0]);
   const restoreFocus = () => {
     // Restore the editing caret only after removal from the modal top layer.
@@ -326,8 +329,7 @@ function CommandPalette(props: { commands: Command[]; close(): void }) {
               />
             </div>
             <div id="command-results" class="command-results" role="listbox" aria-label="Commands">
-              {(["Message", "Mail", "Navigation"] as const).map((group) => {
-                const items = results().filter((command) => command.group === group);
+              {grouped().map(({ group, items }) => {
                 return (
                   items.length > 0 && (
                     <fieldset aria-label={group}>
