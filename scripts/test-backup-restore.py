@@ -115,6 +115,8 @@ class BackupRestoreTests(unittest.TestCase):
                             'SENT_DATABASE_PATH=${SENT_BACKUP_TEST_DIRECTORY}/configured.sqlite\n'
                             'SENT_DATABASE_PATH=missing-duplicate.sqlite\n')
         check("dotenv", {"SENT_DATABASE_PATH": None, "SENT_BACKUP_TEST_DIRECTORY": None}, nested)
+        env_file.write_text(f'PORT=invalid\nSENT_FAKE_PROVIDERS=invalid\nSENT_DATABASE_PATH="{configured}"\n')
+        check("dotenv", {"SENT_DATABASE_PATH": None}, nested)
         env_file.write_text('SENT_DATABASE_PATH="missing.sqlite"\n')
         self.assertNotEqual(self.run_script("backup.sh", config={"SENT_DATABASE_PATH": None}, cwd=self.root).returncode, 0)
         self.assertNotEqual(self.run_script("backup.sh", config={"SENT_DATABASE_PATH": ""}, cwd=self.root).returncode, 0)

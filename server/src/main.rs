@@ -12,7 +12,7 @@ mod validation;
 
 fn main() -> Result<()> {
     if std::env::args().nth(1).as_deref() == Some("--print-database-path") {
-        println!("{}", Config::from_env()?.database_path);
+        println!("{}", sent_core::config::database_path_from_env());
         return Ok(());
     }
     run()
