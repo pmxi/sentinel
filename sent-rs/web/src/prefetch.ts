@@ -30,7 +30,7 @@ export function cachedRow(client: QueryClient, id: string) {
   }
 }
 export function prefetchQueue(client: QueryClient, trash: boolean) {
-  const queued = new Map<string, MessageSummary>();
+  const queued = new Map<string, { item: MessageSummary; readyAt: number }>();
   let stopped = false,
     running = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -41,14 +41,18 @@ export function prefetchQueue(client: QueryClient, trash: boolean) {
     if (stopped || running || !queued.size) return;
     if (
       prefetchQuietUntil(client) > Date.now() ||
-      client.isMutating() ||
       client.isFetching({ predicate: (query) => query.getObserversCount() > 0 })
     ) {
       timer = setTimeout(() => void pump(), 150);
       return;
     }
-    const item = queued.values().next().value;
-    if (!item) return;
+    const next = queued.values().next().value;
+    if (!next) return;
+    if (next.readyAt > Date.now()) {
+      timer = setTimeout(() => void pump(), next.readyAt - Date.now());
+      return;
+    }
+    const item = next.item;
     queued.delete(item.id);
     running = true;
     const task = { id: item.id, cancelled: false };
@@ -77,14 +81,38 @@ export function prefetchQueue(client: QueryClient, trash: boolean) {
       if (!stopped) timer = setTimeout(() => void pump(), 50);
     }
   };
+  const unsubscribe = client.getQueryCache().subscribe((event) => {
+    if (
+      event.type === "updated" &&
+      event.action.type === "success" &&
+      !stopped &&
+      !running &&
+      queued.size
+    ) {
+      clearTimeout(timer);
+      timer = setTimeout(() => void pump(), 0);
+    }
+  });
   return {
     add(items: MessageSummary[], delay = 120) {
-      for (const item of items) queued.set(item.id, item);
+      for (const item of items)
+        if (activeItem?.id !== item.id)
+          queued.set(item.id, {
+            item,
+            readyAt: Math.min(queued.get(item.id)?.readyAt ?? Infinity, Date.now() + delay),
+          });
       if (!timer && !running)
         timer = setTimeout(() => {
           timer = undefined;
           void pump();
         }, delay);
+    },
+    prioritize(items: MessageSummary[]) {
+      queued.clear();
+      for (const item of items)
+        if (activeItem?.id !== item.id) queued.set(item.id, { item, readyAt: Date.now() });
+      clearTimeout(timer);
+      if (!running) timer = setTimeout(() => void pump(), 0);
     },
     foreground(id: string) {
       queued.delete(id);
@@ -101,6 +129,7 @@ export function prefetchQueue(client: QueryClient, trash: boolean) {
     },
     stop() {
       stopped = true;
+      unsubscribe();
       clearTimeout(timer);
       if (active) void client.cancelQueries({ queryKey: active, exact: true });
     },
@@ -129,9 +158,10 @@ export function usePrefetch(
         queue.foreground(id);
         const index = items.findIndex((item) => item.id === id);
         if (index >= 0)
-          queue.add(
-            items.slice(Math.max(0, index - 1), index + 4).filter((item) => item.id !== id),
-          );
+          queue.prioritize([
+            ...items.slice(index + 1, index + 4),
+            ...items.slice(Math.max(0, index - 1), index),
+          ]);
       }
     });
   });

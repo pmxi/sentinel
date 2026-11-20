@@ -176,6 +176,22 @@ describe("optimistic mailbox transactions", () => {
   });
 });
 describe("bounded prefetch", () => {
+  it("prioritizes selected neighbors over the delayed initial rows", async () => {
+    const client = fixture();
+    client.clear();
+    const body = headerData(row) as NonNullable<ReturnType<typeof headerData>>;
+    const thread = vi.spyOn(sentApi, "thread").mockResolvedValue({ messages: [body] });
+    vi.spyOn(sentApi, "message").mockResolvedValue(
+      headerData(row) as NonNullable<ReturnType<typeof headerData>>,
+    );
+    const queue = prefetchQueue(client, false);
+    queue.add([{ ...row, id: "old", threadId: "old-thread" }]);
+    queue.prioritize([row]);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(thread).toHaveBeenCalledWith("thread", false, expect.anything());
+    expect(thread).toHaveBeenCalledTimes(1);
+    queue.stop();
+  });
   it("seeds header fields without fabricating a body", () => {
     expect(headerData(row)).toMatchObject({ id: "one", threadId: "thread", textBody: "" });
     expect(headerData()).toBeUndefined();

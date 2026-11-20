@@ -58,7 +58,12 @@ function reconcile(client: QueryClient, keys: QueryKey[]) {
     if (value.pending) return;
     const keys = [...value.keys.values()];
     value.keys.clear();
-    for (const queryKey of keys) void client.invalidateQueries({ queryKey, exact: true });
+    for (const queryKey of keys)
+      void client.invalidateQueries({
+        queryKey,
+        exact: true,
+        refetchType: ["messages", "search"].includes(String(queryKey[0])) ? "active" : "none",
+      });
   }, 1500);
 }
 export function inView(item: Mail, view = "all") {
@@ -371,8 +376,8 @@ export function optimistic(client: QueryClient, change: Change) {
     revisions.fields.set(item.id, owned);
   }
   value.until = Date.now() + 1500;
-  value.prefetchUntil =
-    Date.now() + (change.action === "archive" || change.action === "delete" ? 1500 : 100);
+  if (change.action === "archive" || change.action === "delete")
+    value.prefetchUntil = Date.now() + 1500;
   const entries = apply(client, change);
   let settled = false;
   const finish = (keys: QueryKey[] = []) => {
