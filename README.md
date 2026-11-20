@@ -509,6 +509,13 @@ delta when it fits (32 upserts, 512 removals and 64 KiB), otherwise a cursor hin
 The replayable HTTP delta feed remains authoritative: a cursor mismatch or
 expired generation causes catch-up or a background resnapshot, not skipped rows.
 
+Repeated inventories memoize the existing body SHA-256 using PostgreSQL tuple
+MVCC versions, transaction epoch and server start time. The cache contains at
+most 65,536 digests per process, not body text. Body hashes and HTTP JSON remain
+unchanged; even SQL edits that omit `updated_at` invalidate a cached digest.
+LISTEN reconnect clears the memo, and inventories publish in database-read order.
+The first inventory after a cold start/reconnect still hashes the full body corpus.
+
 Push and polling are serialized before applying SQLite/cache updates. While the
 socket is healthy, safety polling runs every 60 seconds; a blocked, unavailable
 or silent socket restores four-second polling without an application error.

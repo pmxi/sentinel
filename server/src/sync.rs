@@ -307,7 +307,7 @@ pub async fn snapshot(
             Err(error) => return error.into_response(),
         },
         None => {
-            let inventory = match state.repository.replica_inventory(None, false).await {
+            let (inventory, _snapshot_guard) = match state.inventory(None, false).await {
                 Ok(value) => value,
                 Err(error) => return internal(error),
             };
@@ -342,7 +342,7 @@ pub async fn delta(
     if let Err(error) = state.sync_feed.lock().unwrap().find(cursor.generation) {
         return error.into_response();
     }
-    let inventory = match state.repository.replica_inventory(None, false).await {
+    let (inventory, _snapshot_guard) = match state.inventory(None, false).await {
         Ok(value) => value,
         Err(error) => return internal(error),
     };
@@ -368,8 +368,8 @@ pub async fn bodies(
     if ids.is_empty() || ids.len() > 16 {
         return Fault::Invalid.into_response();
     }
-    match state.repository.replica_inventory(Some(&ids), true).await {
-        Ok(inventory) => {
+    match state.inventory(Some(&ids), true).await {
+        Ok((inventory, _snapshot_guard)) => {
             Json(json!({"messages":inventory.messages,"maxBodyBytes":262144})).into_response()
         }
         Err(error) => internal(error),

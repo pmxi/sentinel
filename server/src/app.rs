@@ -39,6 +39,7 @@ pub struct State {
     providers: sent_core::providers::Providers,
     pub(crate) sync_feed: Mutex<crate::sync::Feed>,
     pub(crate) live: crate::live::Hub,
+    inventory_cache: tokio::sync::Mutex<sent_core::repository::BodyVersionCache>,
 }
 
 impl State {
@@ -52,6 +53,7 @@ impl State {
             providers,
             sync_feed: Mutex::new(crate::sync::Feed::default()),
             live: crate::live::Hub::default(),
+            inventory_cache: tokio::sync::Mutex::default(),
         }
     }
     pub(crate) fn secret(&self) -> &str {
@@ -59,6 +61,25 @@ impl State {
             .session_secret
             .as_deref()
             .expect("validated session secret")
+    }
+    // Keep the guard until this snapshot has been published to the feed.
+    pub(crate) async fn inventory(
+        &self,
+        ids: Option<&[Uuid]>,
+        bodies: bool,
+    ) -> anyhow::Result<(
+        sent_core::repository::ReplicaInventory,
+        tokio::sync::MutexGuard<'_, sent_core::repository::BodyVersionCache>,
+    )> {
+        let mut cache = self.inventory_cache.lock().await;
+        let inventory = self
+            .repository
+            .replica_inventory_cached(ids, bodies, &mut cache)
+            .await?;
+        Ok((inventory, cache))
+    }
+    pub(crate) async fn clear_inventory_cache(&self) {
+        self.inventory_cache.lock().await.clear();
     }
     fn cookie(&self, token: Option<&str>) -> String {
         let secure = if self.config.public_url.starts_with("https:") {

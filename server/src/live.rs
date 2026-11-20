@@ -115,8 +115,8 @@ pub fn start(state: Arc<State>) {
             {
                 continue;
             }
-            match publisher.repository.replica_inventory(None, false).await {
-                Ok(inventory) => {
+            match publisher.inventory(None, false).await {
+                Ok((inventory, _snapshot_guard)) => {
                     let cursor = publisher.sync_feed.lock().unwrap().publish(&inventory);
                     if publisher.live.available.load(Ordering::Acquire)
                         && publisher.live.updates.receiver_count() > 0
@@ -141,6 +141,7 @@ pub fn start(state: Arc<State>) {
                 let mut listener = PgListener::connect_with(&state.repository.0).await?;
                 listener.listen(CHANNEL).await?;
                 listener.eager_reconnect(false);
+                state.clear_inventory_cache().await;
                 state.live.availability(true);
                 state.live.changed.notify_one();
                 backoff = 1;
