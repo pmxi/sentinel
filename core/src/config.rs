@@ -23,7 +23,6 @@ pub struct Config {
     pub fake_providers: bool,
     pub web_dist_path: PathBuf,
     pub migrations_path: PathBuf,
-    pub log_level: String,
     pub node_env: String,
 }
 
@@ -84,7 +83,6 @@ impl Config {
             migrations_path: optional("MIGRATIONS_PATH")
                 .map(PathBuf::from)
                 .unwrap_or_else(|| root.join("migrations")),
-            log_level: value("LOG_LEVEL", "info"),
             node_env: value("NODE_ENV", "development"),
         })
     }

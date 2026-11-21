@@ -563,11 +563,6 @@ async fn logout(ExtractState(state): ExtractState<Shared>, headers: HeaderMap) -
             );
         }
         state.live.revoke(session.key.clone(), session.expires);
-        if let Err(error) =
-            sent_core::live::notify_logout(&state.repository.0, &session.key, session.expires).await
-        {
-            eprintln!("Live logout notification failed: {error}");
-        }
     }
     (
         [(header::SET_COOKIE, state.cookie(None))],

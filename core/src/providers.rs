@@ -2,6 +2,7 @@ use crate::db::Uuid;
 use crate::{
     config::Config,
     crypto::{decrypt_secret, encrypt_secret},
+    ingest::StoredAccount,
 };
 use anyhow::{Context, Result, bail, ensure};
 use base64::{
@@ -12,6 +13,7 @@ use base64::{
     },
 };
 use chrono::Utc;
+use reqwest::Method;
 use serde_json::{Value, json};
 use sqlx::{Row, SqlitePool};
 
@@ -19,7 +21,40 @@ mod delivery;
 mod gmail;
 mod microsoft;
 pub use delivery::{OutgoingAttachment, OutgoingMessage};
-use gmail::response_json;
+async fn response_json(response: reqwest::Response) -> Result<Value> {
+    let status = response.status();
+    let text = response.text().await?;
+    ensure!(
+        status.is_success(),
+        "Provider HTTP {}: {}",
+        status.as_u16(),
+        text.chars().take(500).collect::<String>()
+    );
+    if text.is_empty() {
+        Ok(Value::Null)
+    } else {
+        Ok(serde_json::from_str(&text)?)
+    }
+}
+
+fn encode_segment(id: &str) -> String {
+    id.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}
+
+async fn request_json(mut request: reqwest::RequestBuilder, body: Option<Value>) -> Result<Value> {
+    if let Some(body) = body {
+        request = request.json(&body);
+    }
+    response_json(request.send().await?).await
+}
 
 #[derive(Clone)]
 pub struct Endpoints {
@@ -64,6 +99,125 @@ pub struct Attachment {
 }
 
 impl Providers {
+    async fn api(
+        &self,
+        token: &str,
+        method: Method,
+        url: &str,
+        body: Option<Value>,
+    ) -> Result<Value> {
+        request_json(self.http.request(method, url).bearer_auth(token), body).await
+    }
+
+    async fn graph_api(
+        &self,
+        token: &str,
+        method: Method,
+        url: &str,
+        body: Option<Value>,
+    ) -> Result<Value> {
+        request_json(
+            self.http
+                .request(method, url)
+                .bearer_auth(token)
+                .header("Prefer", "IdType=\"ImmutableId\""),
+            body,
+        )
+        .await
+    }
+
+    pub async fn sync(&self, account: &StoredAccount, cursor: Option<&str>) -> Result<SyncPage> {
+        if self.config.fake_providers {
+            return Ok(SyncPage {
+                messages: vec![],
+                deleted_provider_message_ids: vec![],
+                next_cursor: cursor.map(str::to_owned),
+                backfill_complete: true,
+            });
+        }
+        let token = self
+            .access_token(
+                account.id,
+                &account.provider,
+                &account.encrypted_credentials,
+            )
+            .await?;
+        if account.provider == "gmail" {
+            self.gmail_sync(&token, account, cursor).await
+        } else {
+            self.microsoft_sync(&token, account, cursor).await
+        }
+    }
+
+    pub async fn apply_action(
+        &self,
+        account: &StoredAccount,
+        id: &str,
+        action: &str,
+    ) -> Result<()> {
+        if self.config.fake_providers {
+            return Ok(());
+        }
+        let token = self
+            .access_token(
+                account.id,
+                &account.provider,
+                &account.encrypted_credentials,
+            )
+            .await?;
+        if account.provider == "gmail" {
+            let body = match action {
+                "mark_read" => json!({"removeLabelIds":["UNREAD"]}),
+                "mark_unread" => json!({"addLabelIds":["UNREAD"]}),
+                "flag" => json!({"addLabelIds":["STARRED"]}),
+                "unflag" => json!({"removeLabelIds":["STARRED"]}),
+                "archive" => json!({"removeLabelIds":["INBOX"]}),
+                "delete" => json!({"addLabelIds":["TRASH"]}),
+                _ => bail!("Invalid action"),
+            };
+            self.api(
+                &token,
+                Method::POST,
+                &format!(
+                    "{}/users/me/messages/{}/modify",
+                    self.endpoints.gmail,
+                    encode_segment(id)
+                ),
+                Some(body),
+            )
+            .await?;
+        } else {
+            let url = format!(
+                "{}/me/messages/{}",
+                self.endpoints.graph,
+                encode_segment(id)
+            );
+            let (method, url, body) = match action {
+                "delete" => (Method::DELETE, url, None),
+                "archive" => (
+                    Method::POST,
+                    format!("{url}/move"),
+                    Some(json!({"destinationId":"archive"})),
+                ),
+                "mark_read" | "mark_unread" => (
+                    Method::PATCH,
+                    url,
+                    Some(json!({"isRead":action=="mark_read"})),
+                ),
+                "flag" | "unflag" => (
+                    Method::PATCH,
+                    url,
+                    Some(
+                        json!({"flag":{"flagStatus":if action=="flag"{"flagged"}else{"notFlagged"}}}),
+                    ),
+                ),
+                _ => bail!("Invalid action"),
+            };
+            self.graph_api(&token, method, &url, body).await?;
+        }
+        Ok(())
+    }
+
     pub fn new(config: Config, pool: SqlitePool) -> Self {
         let endpoints = Endpoints::production(&config.microsoft_tenant_id);
         Self::with_endpoints(config, pool, endpoints)

@@ -281,6 +281,53 @@ async fn microsoft_delta_snapshots_hydration_and_sent_identity() {
 }
 
 #[tokio::test]
+async fn microsoft_rejects_unsupported_and_malformed_cursors_without_requests() {
+    let server = MockServer::start().await;
+    let provider = providers(&server, config());
+    let account = account("microsoft");
+    for version in [0, 2, 255] {
+        let mut state = cursor(&server);
+        state["version"] = json!(version);
+        let error = provider
+            .sync(&account, Some(&state.to_string()))
+            .await
+            .err()
+            .unwrap();
+        assert!(
+            error
+                .to_string()
+                .contains("Unsupported Microsoft cursor version")
+        );
+    }
+    assert!(provider.sync(&account, Some("")).await.is_err());
+    assert!(provider.sync(&account, Some("{}")).await.is_err());
+    assert!(server.received_requests().await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn immutable_ids_header_is_only_sent_to_graph() {
+    let server = MockServer::start().await;
+    let provider = providers(&server, config());
+    for (provider_name, endpoint) in [
+        ("gmail", "/users/me/messages/message/modify"),
+        ("microsoft", "/me/messages/message"),
+    ] {
+        Mock::given(path(endpoint))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+        provider
+            .apply_action(&account(provider_name), "message", "mark_read")
+            .await
+            .unwrap();
+    }
+    let requests = server.received_requests().await.unwrap();
+    assert!(!requests[0].headers.contains_key("Prefer"));
+    assert_eq!(requests[1].headers["Prefer"], "IdType=\"ImmutableId\"");
+}
+
+#[tokio::test]
 async fn microsoft_folder_backfill_and_page_continuation() {
     let server = MockServer::start().await;
     let provider = providers(&server, config());

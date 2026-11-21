@@ -1,3 +1,0 @@
-name: sent
-# SQLite runs inside the Rust processes; no database service is needed.
-services: {}

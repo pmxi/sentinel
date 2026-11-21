@@ -257,9 +257,7 @@ and incomplete body placeholders cannot be quoted into reply/forward drafts.
 Pending-body readers refetch on reconnect even while their cached headers are fresh.
 The static-only service worker still never handles `/api/*`.
 
-The legacy browser integration launchers `web/scripts/replica-check.mjs` and
-`pnpm --dir web sw:check` still provision Postgres. They have not yet been ported
-to the server's SQLite setup; use the Rust database tests for this migration.
+Use the Rust database tests to verify the server's SQLite setup.
 
 #### On-device search
 
@@ -558,8 +556,9 @@ subsequent API request. Logout revocations are kept in memory until JWT expiry
 and shared through an expiry-pruned SQLite revocation table. Only opaque session
 keys and expiry times are stored, not cookies or credentials.
 
-Rust ingest/sync, classification, outbox results and API writes keep their
-transactional `live::notify_changed` calls. Each server holds a dedicated SQLite
+Rust ingest/sync, classification, outbox results and API writes record incremental
+changes in `sent_live_changes` within their mutation transactions. Account changes
+can request a full inventory through `live::notify_changed`. Each server holds a dedicated SQLite
 connection and polls `PRAGMA data_version` every 150 ms, so commits by the separate
 worker process also wake connected clients. Rolled-back transactions do not
 signal. The server reconnects on database errors, coalesces bursts for
@@ -605,15 +604,3 @@ location = /api/live {
 
 Use the external HTTPS origin for `SENT_PUBLIC_URL` when nginx terminates TLS.
 If Upgrade is not forwarded, the UI keeps using four-second HTTP delta polling.
-After release/web builds, the isolated live check exercises push, two-tab
-archive, authentication, expiry/logout, reconnect, connection limits, database
-recovery, workerless operation and an Upgrade-stripping reverse proxy:
-
-```sh
-# This legacy launcher still requires PostgreSQL and is not SQLite-compatible:
-SENT_TEST_DATABASE_URL=postgres://sent:sent-local-only@localhost:5433/sent_test_live node web/scripts/live-check.mjs
-```
-
-The unchanged legacy launcher resets only the named local `sent_test_*` database and terminates only its own
-LISTEN connection to simulate disconnect/recovery, not the shared Postgres server.
-Screenshots and logs are saved under `~/live-check/`.

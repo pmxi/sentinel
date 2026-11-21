@@ -31,6 +31,7 @@ struct Job {
     key: Key,
     attempt: u8,
     next_at: DateTime<Utc>,
+    // Kept for rollback compatibility with older workers.
     created_at: DateTime<Utc>,
 }
 
@@ -341,6 +342,15 @@ mod tests {
             id: message
         }));
         let saved = serde_json::to_value(jobs.values().collect::<Vec<_>>()).unwrap();
+        for job in saved.as_array().unwrap() {
+            assert!(
+                job["created_at"]
+                    .as_str()
+                    .unwrap()
+                    .parse::<DateTime<Utc>>()
+                    .is_ok()
+            );
+        }
         let restored: Vec<Job> = serde_json::from_value(saved).unwrap();
         assert_eq!(restored.len(), 2);
         for job in restored {

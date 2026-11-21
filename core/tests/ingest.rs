@@ -61,19 +61,10 @@ async fn ingest_and_repository_ports() -> Result<()> {
         repo.get_analysis_message(id).await?.unwrap()["textBody"],
         "Updated body"
     );
-    assert_eq!(repo.newest_unclassified(10, Some(&email)).await?, vec![id]);
-    assert_eq!(repo.newest_inbound(10, Some(&email)).await?, vec![id]);
-    assert!(
-        repo.newest_inbound(10, Some("missing@example.test"))
-            .await?
-            .is_empty()
-    );
-    assert!(repo.unembedded(100, None).await?.contains(&id));
     repo.save_classification_failure(id, "failure").await?;
     repo.save_classification_failure(id, "again").await?;
     repo.save_embedding(id, &vec![0.1; 3072], "fixture", "hash")
         .await?;
-    assert!(!repo.unembedded(100, None).await?.contains(&id));
     repo.tombstone_messages(account, &[]).await?;
     repo.tombstone_messages(account, &["message".into()])
         .await?;

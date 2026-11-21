@@ -141,7 +141,7 @@ def main():
             release = root / "releases" / first
             assert (release / "bin" / "sent-server").exists() and (release / "bin" / "sent-worker").exists()
             assert (release / "runtime.env").read_text() == (
-                f"WEB_DIST_PATH={release}/web/dist\nMIGRATIONS_PATH={release}/migrations\n")
+                f"WEB_DIST_PATH={release}/web/dist\nMIGRATIONS_PATH={release}/migrations\nSENT_DATABASE_PATH={root}/data/sent.sqlite\n")
             assert (root / "bin" / "sent-run").exists() and (units / "sent-server.service").exists()
             print("PASS success deploy (legacy bootstrap, Rust build, dump before migrating restart, degraded health, self-update)")
             state["sync"] = True
@@ -239,7 +239,7 @@ def main():
             print("PASS successful first SQLite deploy imports again and installs/enables nightly backups")
             deploy(0, "rollback")
             assert (root / "current").resolve().name == f"{seventh}-rust"
-            assert "SENT_DATABASE_PATH" not in (root / "current" / "runtime.env").read_text()
+            assert f"SENT_DATABASE_PATH={root}/data/sent.sqlite\n" in (root / "current" / "runtime.env").read_text()
             deploy(0, "rollback")
             assert (root / "current").resolve().name == first_sqlite
             for service in ("server", "worker"):
@@ -265,6 +265,23 @@ def main():
             assert len(list((root / "dumps").glob("*.sqlite"))) == 1
             assert (root / "current").resolve().name == later_sqlite
             print("PASS later SQLite deployment uses consistent SQLite backup, no pg_dump or import")
+            (work / "server" / "src" / "bin" / "sent-import-postgres.rs").unlink()
+            without_importer = commit()
+            start = len(calls.read_text())
+            deploy()
+            operations = calls.read_text()[start:]
+            assert "sqlite-backup" in operations and "dump\n" not in operations and "import\n" not in operations
+            assert (root / "current").resolve().name == without_importer
+            assert not (root / "current" / "bin" / "sent-import-postgres").exists()
+            assert f"SENT_DATABASE_PATH={root}/data/sent.sqlite\n" in (root / "current" / "runtime.env").read_text()
+            run("bash", str(SOURCE.parent / "sent-run"), "server", env=env)
+            runtime = root / "current" / "runtime.env"
+            saved_runtime = runtime.read_text()
+            runtime.write_text("WEB_DIST_PATH=/unused\nMIGRATIONS_PATH=/unused\n")
+            incomplete = subprocess.run(["bash", str(SOURCE.parent / "sent-run"), "server"], env=env, capture_output=True)
+            assert incomplete.returncode != 0 and b"cutover is incomplete" in incomplete.stderr
+            runtime.write_text(saved_runtime)
+            print("PASS deployer deploys importer-free Rust release using SQLite backup and shared database runtime path; launcher still guards missing path")
             backup_root = base / "nightly"
             (backup_root / "data").mkdir(parents=True)
             (backup_root / "backups").mkdir()

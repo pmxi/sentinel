@@ -1,8 +1,5 @@
 use anyhow::Result;
-use sent_core::{
-    db,
-    live::{notify_changed, notify_logout},
-};
+use sent_core::{db, live::revoke_session};
 
 #[tokio::test]
 async fn durable_revocations_are_scoped_and_expire_without_affecting_worker_health() -> Result<()> {
@@ -52,7 +49,7 @@ async fn durable_revocations_are_scoped_and_expire_without_affecting_worker_heal
 }
 
 #[tokio::test]
-async fn notifications_follow_commit_and_rollback_and_never_contain_credentials() -> Result<()> {
+async fn data_version_follows_app_commits_and_rollback_and_revocations() -> Result<()> {
     let directory = tempfile::tempdir()?;
     let path = directory.path().join("live.sqlite");
     let pool = db::pool(path.to_str().unwrap(), true).await?;
@@ -67,8 +64,9 @@ async fn notifications_follow_commit_and_rollback_and_never_contain_credentials(
         .fetch_one(&mut *listener)
         .await?;
     let mut tx = pool.begin().await?;
-    notify_changed(&mut *tx).await?;
-    notify_changed(&mut *tx).await?;
+    sqlx::query("insert into worker_state(name) values('fixture')")
+        .execute(&mut *tx)
+        .await?;
     let during: i64 = sqlx::query_scalar("pragma data_version")
         .fetch_one(&mut *listener)
         .await?;
@@ -79,13 +77,15 @@ async fn notifications_follow_commit_and_rollback_and_never_contain_credentials(
         .await?;
     assert_ne!(initial, committed);
     let mut tx = pool.begin().await?;
-    notify_changed(&mut *tx).await?;
+    sqlx::query("delete from worker_state where name='fixture'")
+        .execute(&mut *tx)
+        .await?;
     tx.rollback().await?;
     let rolled_back: i64 = sqlx::query_scalar("pragma data_version")
         .fetch_one(&mut *listener)
         .await?;
     assert_eq!(committed, rolled_back);
-    notify_logout(
+    revoke_session(
         &pool,
         "opaque-session-id",
         chrono::Utc::now().timestamp() + 60,

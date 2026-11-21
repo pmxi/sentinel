@@ -534,7 +534,7 @@ mod tests {
             key: "persisted-logout-before-restart".into(),
             expires: Utc::now().timestamp() + 60,
         };
-        sent_core::live::notify_logout(&state.repository.0, &logged_out.key, logged_out.expires)
+        sent_core::live::revoke_session(&state.repository.0, &logged_out.key, logged_out.expires)
             .await
             .unwrap();
         start(state.clone()).await.unwrap();
@@ -575,7 +575,7 @@ mod tests {
             key: "opaque-fixture-session".into(),
             expires: Utc::now().timestamp() + 60,
         };
-        sent_core::live::notify_logout(&worker.0, &session.key, session.expires)
+        sent_core::live::revoke_session(&worker.0, &session.key, session.expires)
             .await
             .unwrap();
         tokio::time::timeout(Duration::from_secs(3), async {
@@ -644,10 +644,6 @@ mod tests {
         let writer = sent_core::db::pool(path.to_str().unwrap(), true)
             .await
             .unwrap();
-        let signal: i64 = sqlx::query_scalar("select revision from sent_live_signal")
-            .fetch_one(&writer)
-            .await
-            .unwrap();
         let mut tx = writer.begin().await.unwrap();
         sqlx::raw_sql(FIXTURE).execute(&mut *tx).await.unwrap();
         tx.commit().await.unwrap();
@@ -702,12 +698,5 @@ mod tests {
             .await
             .unwrap();
         assert!(next(&mut updates).await.1.messages.is_empty());
-        assert_eq!(
-            sqlx::query_scalar::<_, i64>("select revision from sent_live_signal")
-                .fetch_one(&writer)
-                .await
-                .unwrap(),
-            signal
-        );
     }
 }

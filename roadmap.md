@@ -7,6 +7,4 @@
 - [ ] Proxy remote email images to reduce sender tracking and protect the user's IP address.
 - [ ] Add installable PWA behavior and L1 notifications.
 - [ ] Add semantic indexing for attachment contents.
-- [x] Add Microsoft Graph upload sessions for attachments of 3 MB or larger (within Sent's 20 MB total limit).
-- [x] Enable sending from Purdue after its tenant approves delegated `Mail.Send`.
 - [ ] Extract richer actions and deadlines if the simpler tier classification proves insufficient.
