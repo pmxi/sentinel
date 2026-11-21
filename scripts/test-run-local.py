@@ -50,7 +50,7 @@ class LocalRunnerArguments(unittest.TestCase):
                     self.assertIn("Error:", result.stderr)
 
     def test_refuses_shared_or_non_benchmark_databases(self):
-        for database in ["sent", "postgres", "production", "sent_benchmark;drop", "sent_benchmark_" + "x" * 64]:
+        for database in ["sent", "production", "sent_benchmark;drop", "sent_benchmark_" + "x" * 64]:
             with self.subTest(database=database):
                 result = self.run_script(database=database)
                 self.assertNotEqual(result.returncode, 0)
