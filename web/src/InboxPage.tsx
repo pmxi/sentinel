@@ -193,7 +193,7 @@ export function InboxPage(props: { accounts: Account[] }) {
 }
 export function SearchResults(props: { accounts: Account[] }) {
   const client = useQueryClient();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const q = createMemo(() => params().get("q") ?? "");
   const sort = createMemo<SearchSort>(() =>
     params().get("sort") === "relevance" ? "relevance" : "newest",
