@@ -255,6 +255,28 @@ function press(key: string) {
   return event;
 }
 
+it("opens mobile navigation as a dialog and closes it on the current route link", async () => {
+  const matchMedia = window.matchMedia.bind(window);
+  const mobile = matchMedia("(max-width: 900px)");
+  vi.spyOn(mobile, "matches", "get").mockReturnValue(true);
+  vi.spyOn(window, "matchMedia").mockImplementation((query) =>
+    query === mobile.media ? mobile : matchMedia(query),
+  );
+  const container = await reader(true, true, "all");
+  const opener = container.querySelector<HTMLButtonElement>(".mobile-menu");
+  const drawer = container.querySelector<HTMLDialogElement>("dialog.sidebar");
+  if (!opener || !drawer) throw new Error("Missing mobile navigation");
+  const current = drawer.querySelector<HTMLAnchorElement>('a[href="/inbox/all"]');
+  if (!current) throw new Error("Missing All mail link");
+  expect(drawer.open).toBe(false);
+  opener.click();
+  expect(drawer.open).toBe(true);
+  expect(opener.getAttribute("aria-expanded")).toBe("true");
+  current.click();
+  expect(drawer.open).toBe(false);
+  expect(opener.getAttribute("aria-expanded")).toBe("false");
+});
+
 describe("mail list presentation", () => {
   it.each(["button", "submit"])("clears applied search results via %s", async (method) => {
     const item = { ...message, read: true };
