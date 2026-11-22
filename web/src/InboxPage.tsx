@@ -45,7 +45,14 @@ import { ReaderText } from "./ReaderText";
 import { localBodyPending, messageRead, replicaFor, replicaReady, threadRead } from "./replica";
 import { useLocation, useNavigate, useParams, useReaderSelection, useSearchParams } from "./router";
 import { useMailSearch } from "./search";
-import type { Account, ConversationSummary, MessageDetail, MessageSummary, Tier } from "./shared";
+import type {
+  Account,
+  ConversationSummary,
+  MessageDetail,
+  MessageSummary,
+  SearchSort,
+  Tier,
+} from "./shared";
 import { nextMessageId, useTriage, visibleConversations } from "./triage";
 
 function useMessageNavigation<Message extends MessageSummary>(messages: Accessor<Message[]>) {
@@ -188,8 +195,11 @@ export function SearchResults(props: { accounts: Account[] }) {
   const client = useQueryClient();
   const [params] = useSearchParams();
   const q = createMemo(() => params().get("q") ?? "");
+  const sort = createMemo<SearchSort>(() =>
+    params().get("sort") === "relevance" ? "relevance" : "newest",
+  );
   const selectedId = createMemo(() => params().get("message"));
-  const result = useMailSearch(q);
+  const result = useMailSearch(q, sort);
   const navigation = useMessageNavigation(() => result.data?.messages ?? []);
   const prefetch = usePrefetch(
     client,
@@ -211,6 +221,19 @@ export function SearchResults(props: { accounts: Account[] }) {
                     : q()}
                 </p>
               </div>
+              <select
+                aria-label="Sort results"
+                value={sort()}
+                onInput={(event) => {
+                  const next = new URLSearchParams(params());
+                  if (event.currentTarget.value === "relevance") next.set("sort", "relevance");
+                  else next.delete("sort");
+                  setParams(next);
+                }}
+              >
+                <option value="newest">Newest first</option>
+                <option value="relevance">Most relevant</option>
+              </select>
             </header>
             <MessageList
               showImportance

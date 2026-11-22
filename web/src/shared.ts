@@ -141,6 +141,8 @@ export type MessageListResponse = {
   nextCursor: string | null;
 };
 
+export type SearchSort = "newest" | "relevance";
+
 export type SearchResponse = {
   messages: ConversationSummary[];
   mode: "hybrid" | "lexical";

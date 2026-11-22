@@ -4,7 +4,8 @@ use sent_core::db::Uuid;
 use sent_core::{
     db,
     repository::{
-        Classification, DraftInput, ListInput, Repository, SearchInput, ThreadActionInput,
+        Classification, DraftInput, ListInput, Repository, SearchInput, SearchSort,
+        ThreadActionInput,
     },
 };
 use serde_json::{Value, json};
@@ -73,6 +74,7 @@ impl Fixture {
             .search(
                 &SearchInput {
                     q: q.into(),
+                    sort: SearchSort::Relevance,
                     account_id: owner,
                     tier,
                     after: None,
@@ -223,6 +225,7 @@ async fn scheduled_labels_are_excluded_from_lists_counts_and_replica() -> Result
         .search(
             &SearchInput {
                 q: "nomatch".into(),
+                sort: SearchSort::Relevance,
                 account_id: None,
                 tier: None,
                 after: None,
