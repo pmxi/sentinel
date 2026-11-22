@@ -371,7 +371,20 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
                     if (event.key === "Escape") event.currentTarget.blur();
                   }}
                 />
-                <kbd>/</kbd>
+                {query() && (
+                  <button
+                    type="button"
+                    class="search-clear"
+                    aria-label="Clear search"
+                    onClick={() => {
+                      setQuery("");
+                      searchInput.current?.focus();
+                    }}
+                  >
+                    <X size={16} aria-hidden="true" />
+                  </button>
+                )}
+                {!query() && <kbd aria-hidden="true">/</kbd>}
               </form>
               <button
                 class="mobile-compose"
