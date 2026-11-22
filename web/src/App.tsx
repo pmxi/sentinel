@@ -23,6 +23,7 @@ import {
   untrack,
   useContext,
 } from "solid-js";
+import { Dynamic } from "solid-js/web";
 import { ApiError, sentApi } from "./api";
 import { CommandProvider, useCommandPalette, useCommands } from "./commands";
 import { ComposeProvider, useCompose } from "./compose";
@@ -215,7 +216,20 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
       window.removeEventListener("offline", update);
     });
   });
+  const drawerViewport = window.matchMedia("(max-width: 900px)");
+  const [drawerMode, setDrawerMode] = createSignal(drawerViewport.matches);
   const [menuOpen, setMenuOpen] = createSignal(false);
+  let drawer: HTMLDialogElement | undefined;
+  const closeNavigation = () => {
+    drawer?.close();
+    setMenuOpen(false);
+  };
+  const updateDrawerMode = () => {
+    closeNavigation();
+    setDrawerMode(drawerViewport.matches);
+  };
+  drawerViewport.addEventListener("change", updateDrawerMode);
+  onCleanup(() => drawerViewport.removeEventListener("change", updateDrawerMode));
   const [query, setQuery] = createSignal("");
   const location = useLocation();
   const navigate = useNavigate();
@@ -235,7 +249,7 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
       group: "Mail",
       keys: ["c"],
       run: () => {
-        setMenuOpen(false);
+        closeNavigation();
         compose.openCompose();
       },
     },
@@ -245,7 +259,7 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
       group: "Mail",
       keys: ["/"],
       run: () => {
-        setMenuOpen(false);
+        closeNavigation();
         // The phone reader has its own toolbar; reveal search before focusing it.
         if (
           window.matchMedia("(max-width: 700px)").matches &&
@@ -274,7 +288,7 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
   createEffect(() => {
     [location.pathname];
     const cleanup = untrack(() => {
-      if (location.pathname) setMenuOpen(false);
+      if (location.pathname) closeNavigation();
     });
     if (typeof cleanup === "function") onCleanup(cleanup);
   });
@@ -293,7 +307,26 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
     <>
       {
         <div class="app-shell">
-          <aside class={`sidebar ${menuOpen() ? "open" : ""}`}>
+          <Dynamic
+            component={drawerMode() ? "dialog" : "aside"}
+            class="sidebar"
+            id="mail-navigation"
+            aria-label="Mail navigation"
+            ref={(element: HTMLElement) => {
+              drawer = element instanceof HTMLDialogElement ? element : undefined;
+            }}
+            onClose={() => setMenuOpen(drawer?.open ?? false)}
+            onClick={(event: MouseEvent & { currentTarget: HTMLElement }) => {
+              if (!drawer?.open) return;
+              if (event.target instanceof Element && event.target.closest("a[href]")) {
+                closeNavigation();
+              } else if (event.target === drawer) {
+                const { left, right, top, bottom } = drawer.getBoundingClientRect();
+                const { clientX: x, clientY: y } = event;
+                if (x < left || x >= right || y < top || y >= bottom) closeNavigation();
+              }
+            }}
+          >
             <div class="sidebar-brand">
               <Link href="/">
                 <strong>Sent</strong>
@@ -301,7 +334,8 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
               <button
                 class="mobile-close"
                 aria-label="Close navigation"
-                onClick={() => setMenuOpen(false)}
+                autofocus
+                onClick={closeNavigation}
               >
                 <X size={20} />
               </button>
@@ -309,8 +343,8 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
             <button
               class="compose-button"
               onClick={() => {
+                closeNavigation();
                 compose.openCompose();
-                setMenuOpen(false);
               }}
             >
               <PencilLine size={17} aria-hidden="true" />
@@ -326,7 +360,10 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
             <div class="sidebar-bottom">
               <button
                 class="shortcuts-button"
-                onClick={openPalette}
+                onClick={() => {
+                  closeNavigation();
+                  openPalette();
+                }}
                 disabled={compose.isOpen}
                 title="Commands: ⌘K / Ctrl+K. Press ? to browse shortcuts."
                 aria-keyshortcuts="Meta+k Control+k"
@@ -344,21 +381,21 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
                 ))}
               </div>
             </div>
-          </aside>
-          {menuOpen() && (
-            <button
-              class="sidebar-scrim"
-              onClick={() => setMenuOpen(false)}
-              aria-label="Close menu"
-            />
-          )}
+          </Dynamic>
           <main class="app-main">
             <header class="topbar">
               <button
                 class="mobile-menu"
                 aria-label="Open navigation"
                 aria-expanded={menuOpen()}
-                onClick={() => setMenuOpen(true)}
+                aria-controls="mail-navigation"
+                aria-haspopup="dialog"
+                onClick={(event) => {
+                  if (!drawer || drawer.open) return;
+                  event.currentTarget.focus({ preventScroll: true });
+                  drawer.showModal();
+                  setMenuOpen(true);
+                }}
               >
                 <Menu size={21} />
               </button>

@@ -1656,9 +1656,6 @@ kbd {
   cursor: pointer;
 }
 
-.sidebar-scrim {
-  display: none;
-}
 .action-toasts {
   position: fixed;
   z-index: 70;
@@ -1734,12 +1731,16 @@ kbd {
     position: fixed;
     inset: 0 auto 0 0;
     width: 250px;
-    transform: translateX(-105%);
-    transition: transform 0.2s ease;
+    height: 100dvh;
+    max-width: none;
+    max-height: none;
+    margin: 0;
+    border: 0;
+    border-right: 1px solid var(--line);
+    overflow-y: auto;
   }
-  .sidebar.open {
+  .sidebar[open] {
     display: flex;
-    transform: none;
     box-shadow: 18px 0 50px #2021242e;
   }
   .mobile-close,
@@ -1747,12 +1748,7 @@ kbd {
     display: grid;
     place-items: center;
   }
-  .sidebar-scrim {
-    position: fixed;
-    z-index: 15;
-    inset: 0;
-    display: block;
-    border: 0;
+  .sidebar::backdrop {
     background: #20212442;
   }
   .topbar {
@@ -1903,12 +1899,10 @@ kbd {
     margin: -1px -12px -1px 0;
   }
   .sidebar {
-    height: 100dvh;
     width: min(300px, calc(100vw - 48px));
     padding-top: max(20px, env(safe-area-inset-top));
     padding-bottom: max(20px, env(safe-area-inset-bottom));
     padding-left: max(14px, env(safe-area-inset-left));
-    overflow-y: auto;
   }
   .sidebar nav a,
   .sidebar-bottom > a,
