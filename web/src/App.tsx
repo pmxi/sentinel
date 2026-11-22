@@ -384,7 +384,7 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
                     <X size={16} aria-hidden="true" />
                   </button>
                 )}
-                {!query() && <kbd aria-hidden="true">/</kbd>}
+                {!query() && <kbd>/</kbd>}
               </form>
               <button
                 class="mobile-compose"
