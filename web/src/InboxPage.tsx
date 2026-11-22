@@ -195,6 +195,7 @@ export function SearchResults(props: { accounts: Account[] }) {
   const client = useQueryClient();
   const [params, setParams] = useSearchParams();
   const q = createMemo(() => params().get("q") ?? "");
+  const hasQuery = () => Boolean(q().trim());
   const sort = createMemo<SearchSort>(() =>
     params().get("sort") === "relevance" ? "relevance" : "newest",
   );
@@ -213,7 +214,7 @@ export function SearchResults(props: { accounts: Account[] }) {
         <div class={`mail-layout ${selectedId() ? "has-reader" : ""}`}>
           <section class="message-pane">
             <header class="pane-heading">
-              <div>
+              <div class="search-heading-copy">
                 <h1>Search</h1>
                 <p>
                   {result.data
@@ -221,29 +222,35 @@ export function SearchResults(props: { accounts: Account[] }) {
                     : q()}
                 </p>
               </div>
-              <select
-                aria-label="Sort results"
-                value={sort()}
-                onInput={(event) => {
-                  const next = new URLSearchParams(params());
-                  if (event.currentTarget.value === "relevance") next.set("sort", "relevance");
-                  else next.delete("sort");
-                  setParams(next);
-                }}
-              >
-                <option value="newest">Newest first</option>
-                <option value="relevance">Most relevant</option>
-              </select>
+              <Show when={hasQuery()}>
+                <select
+                  aria-label="Sort results"
+                  value={sort()}
+                  onInput={(event) => {
+                    const next = params();
+                    if (event.currentTarget.value === "relevance") next.set("sort", "relevance");
+                    else next.delete("sort");
+                    setParams(next);
+                  }}
+                >
+                  <option value="newest">Newest first</option>
+                  <option value="relevance">Most relevant</option>
+                </select>
+              </Show>
             </header>
             <MessageList
               showImportance
               prefetch={prefetch}
               messages={navigation.visible}
-              loading={Boolean(q().trim()) && result.isPending}
+              loading={hasQuery() && result.isPending}
               error={result.error?.message}
               selectedId={selectedId()}
-              emptyTitle="No matching conversations"
-              emptyDescription="Try a different name, phrase, or email address."
+              emptyTitle={hasQuery() ? "No matching conversations" : "Search your mail"}
+              emptyDescription={
+                hasQuery()
+                  ? "Try a different name, phrase, or email address."
+                  : "Enter a name, phrase, or email address."
+              }
               onSelect={(message) => navigation.select(message.id)}
             />
           </section>

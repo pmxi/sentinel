@@ -278,9 +278,16 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
     });
     if (typeof cleanup === "function") onCleanup(cleanup);
   });
+  const clearSearch = () => {
+    setQuery("");
+    if (location.pathname === "/search" && location.search)
+      navigate("/search", { replace: new URLSearchParams(location.search).has("message") });
+  };
   const submitSearch = (event: SubmitEvent) => {
     event.preventDefault();
-    if (query().trim()) navigate(`/search?q=${encodeURIComponent(query().trim())}`);
+    const text = query().trim();
+    if (text) navigate(`/search?q=${encodeURIComponent(text)}`);
+    else clearSearch();
   };
   return (
     <>
@@ -377,7 +384,7 @@ function Shell(props: { accounts: Account[]; children?: JSX.Element }) {
                     class="search-clear"
                     aria-label="Clear search"
                     onClick={() => {
-                      setQuery("");
+                      clearSearch();
                       searchInput.current?.focus();
                     }}
                   >
