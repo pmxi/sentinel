@@ -143,6 +143,61 @@ describe("local-first search queries", () => {
     await vi.waitFor(() => expect(state.result.data?.mode).toBe("hybrid"));
     expect(state.result.data?.messages.map((r) => r.id)).toEqual(["local", "semantic"]);
   });
+  it("keeps displayed relevance positions while refreshing local and hosted matches", async () => {
+    const original = { ...row("first"), read: false };
+    const updated = { ...original, read: true };
+    const second = row("second");
+    const search = ready(
+      vi.fn().mockResolvedValue({ mode: "lexical", messages: [original, second, row("removed")] }),
+    );
+    let finishRefresh!: (result: SearchResponse) => void;
+    const remote = vi
+      .spyOn(sentApi, "search")
+      .mockResolvedValueOnce({ mode: "hybrid", messages: [row("hosted")] })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishRefresh = resolve;
+          }),
+      );
+    const state = scope();
+    const shown = () => state.result.data?.messages.map((item) => item.id);
+    await vi.waitFor(() => expect(shown()).toEqual(["first", "second", "removed", "hosted"]));
+
+    search.mockResolvedValue({ mode: "lexical", messages: [second, row("new")] });
+    const refresh = state.client.invalidateQueries({ queryKey: ["search"] });
+    await vi.waitFor(() => expect(remote).toHaveBeenCalledTimes(2));
+    expect(shown()).toEqual(["first", "second", "removed", "hosted"]);
+    finishRefresh({ mode: "hybrid", messages: [row("hosted"), updated] });
+    await refresh;
+    await vi.waitFor(() => expect(shown()).toEqual(["first", "second", "hosted", "new"]));
+    expect(state.result.data?.messages[0]?.read).toBe(true);
+  });
+  it("refreshes offline relevance in place and ignores superseded online matches", async () => {
+    const first = row("first");
+    const second = row("second");
+    const search = ready(
+      vi.fn().mockResolvedValue({ mode: "lexical", messages: [first, second, row("removed")] }),
+    );
+    let finishInitial!: (result: SearchResponse) => void;
+    const remote = vi.spyOn(sentApi, "search").mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          finishInitial = resolve;
+        }),
+    );
+    const state = scope();
+    await vi.waitFor(() => expect(remote).toHaveBeenCalledOnce());
+    vi.stubGlobal("navigator", { onLine: false });
+    search.mockResolvedValue({ mode: "lexical", messages: [second, first, row("new")] });
+    await state.client.invalidateQueries({ queryKey: ["search"] });
+    const shown = () => state.result.data?.messages.map((item) => item.id);
+    await vi.waitFor(() => expect(shown()).toEqual(["first", "second", "new"]));
+    finishInitial({ mode: "hybrid", messages: [row("obsolete")] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(shown()).toEqual(["first", "second", "new"]);
+    expect(remote).toHaveBeenCalledOnce();
+  });
   it("searches offline without pausing and never requests remote refinement", async () => {
     vi.stubGlobal("navigator", { onLine: false });
     onlineManager.setOnline(false);
