@@ -327,10 +327,22 @@ function MessageList(props: {
   };
   window.addEventListener("scroll", rememberScroll, { passive: true });
   onCleanup(() => window.removeEventListener("scroll", rememberScroll));
-  createEffect(() => {
+  createEffect((wasReader) => {
     const selected = props.selectedId;
-    if (mobile()) queueMicrotask(() => window.scrollTo(0, selected ? 0 : listScroll));
-  });
+    if (mobile()) {
+      if (selected) {
+        queueMicrotask(() => {
+          if (props.selectedId === selected) window.scrollTo(0, 0);
+        });
+      } else if (wasReader) {
+        const top = listScroll;
+        // On history traversal the browser can restore scroll after popstate.
+        const frame = requestAnimationFrame(() => window.scrollTo(0, top));
+        onCleanup(() => cancelAnimationFrame(frame));
+      }
+    }
+    return Boolean(selected);
+  }, false);
   const positions = createMemo(
     () => new Map(props.messages.map((message, index) => [message.threadId, index])),
   );
