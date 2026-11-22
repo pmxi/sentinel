@@ -21,4 +21,18 @@ describe("local search syntax and stable hybrid refinement", () => {
     expect(refineSearch(local, remote).mode).toBe("hybrid");
     expect(refineSearch(local, { mode: "lexical", messages: [] }).messages).toEqual(local.messages);
   });
+  it("merges newest-first results by received date", () => {
+    const row = (id: string, receivedAt: string) =>
+      ({ id, threadId: id, receivedAt }) as ConversationSummary;
+    const local: SearchResponse = { mode: "lexical", messages: [row("b", "2025-01-02")] };
+    const remote: SearchResponse = {
+      mode: "lexical",
+      messages: [row("a", "2025-01-01"), row("c", "2025-01-03")],
+    };
+    expect(refineSearch(local, remote, "newest").messages.map((m) => m.id)).toEqual([
+      "c",
+      "b",
+      "a",
+    ]);
+  });
 });

@@ -3,6 +3,7 @@ import type { CacheResponse } from "./api";
 import { packBody, unpackDetail } from "./replica-body";
 import { ReplicaStore } from "./replica-store";
 import type { ReplicaChange, ReplicaDelta, ReplicaRow } from "./replica-types";
+import type { SearchSort } from "./shared";
 
 let store: ReplicaStore | undefined;
 let pool: SAHPoolUtil | undefined;
@@ -51,6 +52,9 @@ async function compareSearchStorage(terms: string[]) {
     memory.close();
   }
 }
+function searchSort(value: unknown): SearchSort {
+  return value === "relevance" ? "relevance" : "newest";
+}
 async function dispatch(method: string, args: unknown[]) {
   if (method === "init") {
     const session = String(args[0]);
@@ -85,7 +89,7 @@ async function dispatch(method: string, args: unknown[]) {
     case "list":
       return store.list(args[0] as Parameters<ReplicaStore["list"]>[0]);
     case "search":
-      return store.search(String(args[0]), Number(args[1] ?? 75));
+      return store.search(String(args[0]), Number(args[1] ?? 75), searchSort(args[2]));
     case "detail":
       return unpackDetail(store.detail(String(args[0]), Boolean(args[1])));
     case "thread":
@@ -114,7 +118,7 @@ async function dispatch(method: string, args: unknown[]) {
     case "plans":
       return store.queryPlans(args[0] as Parameters<ReplicaStore["list"]>[0]);
     case "searchPlans":
-      return store.searchPlans(String(args[0]), Number(args[1] ?? 75));
+      return store.searchPlans(String(args[0]), Number(args[1] ?? 75), searchSort(args[2]));
     case "compareSearchStorage":
       return compareSearchStorage(args[0] as string[]);
     case "opened":

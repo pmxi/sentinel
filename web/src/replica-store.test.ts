@@ -189,7 +189,37 @@ describe("real SQLite replica", () => {
       body,
     ]);
     store.bodies([body]);
-    expect(store.search("rankneedle").messages.map((m) => m.id)).toEqual(["subject", "body"]);
+    expect(store.search("rankneedle", 75, "relevance").messages.map((m) => m.id)).toEqual([
+      "subject",
+      "body",
+    ]);
+  });
+  it("orders matches newest first by default and keeps each thread's newest match", () => {
+    const at = (day: number) => new Date(Date.UTC(2025, 0, day)).toISOString();
+    seed([
+      row("old-strong", { subject: "sortneedle sortneedle", sortReceivedAt: at(1) }),
+      row("new-weak", { subject: "Other", sortReceivedAt: at(20) }),
+      row("thread-old", { subject: "sortneedle", threadId: "shared", sortReceivedAt: at(5) }),
+      row("thread-new", { subject: "Re: sortneedle", threadId: "shared", sortReceivedAt: at(10) }),
+    ]);
+    store.bodies([
+      row("new-weak", {
+        subject: "Other",
+        sortReceivedAt: at(20),
+        bodyAvailable: true,
+        textBody: "mentions sortneedle once",
+      }),
+    ]);
+    expect(store.search("sortneedle").messages.map((m) => m.id)).toEqual([
+      "new-weak",
+      "thread-new",
+      "old-strong",
+    ]);
+    expect(store.search("sortneedle", 2).messages.map((m) => m.id)).toEqual([
+      "new-weak",
+      "thread-new",
+    ]);
+    expect(store.search("sortneedle", 75, "relevance").messages[0]?.id).toBe("old-strong");
   });
   it("expands score ties past the initial bound before applying recency", () => {
     seed(
@@ -200,7 +230,7 @@ describe("real SQLite replica", () => {
         }),
       ),
     );
-    const result = store.profileSearch("rankneedle", 20);
+    const result = store.profileSearch("rankneedle", 20, "relevance");
     expect(result.result.messages.map((message) => message.id)).toEqual(
       Array.from({ length: 20 }, (_, index) => `tie-${139 - index}`),
     );

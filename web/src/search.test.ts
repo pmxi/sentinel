@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { sentApi } from "./api";
 import * as replica from "./replica";
 import { useMailSearch } from "./search";
-import type { ConversationSummary, SearchResponse } from "./shared";
+import type { ConversationSummary, SearchResponse, SearchSort } from "./shared";
 
 const row = (id: string) => ({ id, threadId: id, subject: id }) as ConversationSummary;
 const local: SearchResponse = { mode: "lexical", messages: [row("local")] };
@@ -16,12 +16,12 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-function scope() {
+function scope(sort: SearchSort = "relevance") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const [query, setQuery] = createSignal("needle");
   let result!: ReturnType<typeof useMailSearch>;
   function Harness() {
-    result = useMailSearch(query);
+    result = useMailSearch(query, () => sort);
     return null;
   }
   const dispose = render(
@@ -53,6 +53,41 @@ function ready(search = vi.fn().mockResolvedValue(local)) {
   return search;
 }
 describe("local-first search queries", () => {
+  it("defaults to newest-first and merges remote rows by date", async () => {
+    const dated = (id: string, receivedAt: string) =>
+      ({ id, threadId: id, subject: id, receivedAt }) as ConversationSummary;
+    const search = ready(
+      vi.fn().mockResolvedValue({ mode: "lexical", messages: [dated("local", "2025-01-02")] }),
+    );
+    const remote = vi.spyOn(sentApi, "search").mockResolvedValue({
+      mode: "lexical",
+      messages: [dated("older", "2025-01-01"), dated("newer", "2025-01-03")],
+    });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    let result!: ReturnType<typeof useMailSearch>;
+    const dispose = render(
+      () =>
+        createComponent(QueryClientProvider, {
+          client,
+          get children() {
+            return createComponent(() => {
+              result = useMailSearch(() => "needle");
+              return null;
+            }, {});
+          },
+        }),
+      document.createElement("div"),
+    );
+    cleanup.push(() => {
+      dispose();
+      client.clear();
+    });
+    await vi.waitFor(() =>
+      expect(result.data?.messages.map((m) => m.id)).toEqual(["newer", "local", "older"]),
+    );
+    expect(search).toHaveBeenCalledWith("needle", expect.any(Number), "newest");
+    expect(remote.mock.calls[0]?.[0].get("sort")).toBe("newest");
+  });
   it.each(["", "   "])("clears mail immediately for an empty query %j", async (empty) => {
     const search = ready();
     const remote = vi.spyOn(sentApi, "search");
@@ -122,9 +157,9 @@ describe("local-first search queries", () => {
     await vi.waitFor(() => expect(signal?.aborted).toBe(true));
     complete({ mode: "hybrid", messages: [row("obsolete")] });
     await vi.waitFor(() => expect(state.result.data?.messages[0]?.id).toBe("local"));
-    expect(state.client.getQueryData<SearchResponse>(["search", "needle"])?.messages).toEqual(
-      local.messages,
-    );
+    expect(
+      state.client.getQueryData<SearchResponse>(["search", "needle", "relevance"])?.messages,
+    ).toEqual(local.messages);
   });
   it("can refine empty local results with online-only semantic matches", async () => {
     ready(vi.fn().mockResolvedValue({ mode: "lexical", messages: [] }));
@@ -168,7 +203,7 @@ describe("local-first search queries", () => {
     frames.shift()?.(16);
     await vi.waitFor(() => expect(state.result.data?.messages).toEqual(full));
     expect(state.result.data?.messages[0]).toBe(firstPublished);
-    expect(search).toHaveBeenLastCalledWith("needle", 75);
+    expect(search).toHaveBeenLastCalledWith("needle", 75, "relevance");
   });
   it("ignores an in-flight local fill after unmount", async () => {
     const frames: FrameRequestCallback[] = [];
@@ -199,7 +234,7 @@ describe("local-first search queries", () => {
     state.client.clear();
     finish({ mode: "lexical", messages: [row("private-late")] });
     await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(state.client.getQueryData(["search", "needle"])).toBeUndefined();
+    expect(state.client.getQueryData(["search", "needle", "relevance"])).toBeUndefined();
   });
   it("retains the initial page when a local fill fails", async () => {
     vi.stubGlobal("navigator", { onLine: false });

@@ -1,4 +1,4 @@
-import type { SearchResponse } from "./shared";
+import type { ConversationSummary, SearchResponse, SearchSort } from "./shared";
 
 export function ftsQuery(input: string) {
   const words =
@@ -12,12 +12,20 @@ export function ftsQuery(input: string) {
     .join(" AND ");
 }
 
-export function refineSearch(local: SearchResponse, remote: SearchResponse): SearchResponse {
+export function newestFirst(a: ConversationSummary, b: ConversationSummary) {
+  return b.receivedAt.localeCompare(a.receivedAt) || b.id.localeCompare(a.id);
+}
+export function refineSearch(
+  local: SearchResponse,
+  remote: SearchResponse,
+  sort: SearchSort = "relevance",
+): SearchResponse {
   const byThread = new Map(remote.messages.map((row) => [row.threadId, row]));
   const messages = local.messages.map((row) => {
     const updated = byThread.get(row.threadId);
     byThread.delete(row.threadId);
     return updated?.id === row.id ? updated : row;
   });
-  return { mode: remote.mode, messages: [...messages, ...byThread.values()] };
+  const merged = [...messages, ...byThread.values()];
+  return { mode: remote.mode, messages: sort === "newest" ? merged.sort(newestFirst) : merged };
 }
