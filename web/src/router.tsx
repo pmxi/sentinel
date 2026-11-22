@@ -24,26 +24,47 @@ export function useNavigate() {
     },
   ) => navigate(typeof to === "string" ? to : `${to.pathname}?${to.search}`, options);
 }
-type SearchUpdate = URLSearchParams | ((current: URLSearchParams) => URLSearchParams);
+type SearchOptions = { replace?: boolean; state?: unknown };
+function searchHref(location: { pathname: string; hash: string }, params: URLSearchParams) {
+  return `${location.pathname}${params.size ? `?${params}` : ""}${location.hash}`;
+}
 export function useSearchParams(): [
   Accessor<URLSearchParams>,
-  (
-    value: SearchUpdate,
-    options?: {
-      replace?: boolean;
-    },
-  ) => void,
+  (value: URLSearchParams, options?: SearchOptions) => void,
 ] {
   const location = useLocation();
   const navigate = solidNavigate();
   const read = () => new URLSearchParams(location.search);
   return [
     read,
-    (value, options) => {
-      const next = typeof value === "function" ? value(read()) : value;
+    (params, options) => {
       // Query-only transitions retain the current surface. In particular,
       // don't overwrite the mailbox's mobile reader/back scroll restoration.
-      navigate(`${location.pathname}?${next}`, { ...options, scroll: false });
+      navigate(searchHref(location, params), { ...options, scroll: false });
     },
   ];
+}
+
+export function useReaderSelection() {
+  const location = useLocation<{ sentReaderList?: string }>();
+  const navigate = solidNavigate();
+  const [read, write] = useSearchParams();
+  return {
+    select(id: string) {
+      const params = read();
+      const current = params.get("message");
+      if (current === id) return;
+      params.delete("message");
+      const state = current ? location.state : { sentReaderList: searchHref(location, params) };
+      params.set("message", id);
+      write(params, { replace: Boolean(current), state });
+    },
+    close() {
+      const params = read();
+      if (!params.has("message")) return;
+      params.delete("message");
+      if (location.state?.sentReaderList === searchHref(location, params)) navigate(-1);
+      else write(params, { replace: true });
+    },
+  };
 }
