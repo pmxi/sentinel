@@ -194,8 +194,9 @@ function CommandPalette(props: { commands: Command[]; close(): void }) {
   const navigate = useNavigate();
   const [active, setActive] = createSignal(0);
   const groups = ["Message", "Mail", "Navigation"] as const;
+  const matchingCommands = createMemo(() => filterCommands(props.commands, query()));
   const results = createMemo<Command[]>(() => [
-    ...filterCommands(props.commands, query()),
+    ...matchingCommands(),
     ...(mail.data?.messages ?? []).map((row) => ({
       id: `mail-${row.threadId}`,
       label: row.subject,
@@ -207,7 +208,7 @@ function CommandPalette(props: { commands: Command[]; close(): void }) {
   ]);
   const grouped = createMemo(() => {
     const text = query().trim().toLowerCase();
-    const exact = props.commands.find(
+    const exact = matchingCommands().find(
       (command) => !command.disabled && command.label.toLowerCase() === text,
     );
     const order = exact

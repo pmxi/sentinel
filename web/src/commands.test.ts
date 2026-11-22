@@ -29,7 +29,7 @@ function palette(commands: Command[], query = "Match") {
   const container = document.createElement("div");
   document.body.append(container);
   function Harness() {
-    useCommands("test", () => commands);
+    useCommands("test", () => commands.map((command) => ({ ...command })));
     useCommandPalette().openPalette();
     return null;
   }
@@ -93,6 +93,9 @@ it("puts an exact enabled command ahead of mail results", () => {
   const options = [...container.querySelectorAll('[role="option"]')].map((option) => option.id);
   expect(options).toEqual(["command-all-mail", "command-mail-thread"]);
   expect(input.getAttribute("aria-activedescendant")).toBe("command-all-mail");
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+  expect(input.getAttribute("aria-activedescendant")).toBe("command-mail-thread");
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
   input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   expect(run).toHaveBeenCalledOnce();
   expect(navigate).not.toHaveBeenCalled();
