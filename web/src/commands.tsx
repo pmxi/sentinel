@@ -193,7 +193,7 @@ function CommandPalette(props: { commands: Command[]; close(): void }) {
   const mail = useMailSearch(query);
   const navigate = useNavigate();
   const [active, setActive] = createSignal(0);
-  const groups = createMemo(() => ["Message", "Mail", "Navigation"] as const);
+  const groups = ["Message", "Mail", "Navigation"] as const;
   const results = createMemo<Command[]>(() => [
     ...filterCommands(props.commands, query()),
     ...(mail.data?.messages ?? []).map((row) => ({
@@ -205,12 +205,22 @@ function CommandPalette(props: { commands: Command[]; close(): void }) {
         navigate(`/search?q=${encodeURIComponent(query())}&message=${encodeURIComponent(row.id)}`),
     })),
   ]);
-  const grouped = createMemo(() =>
-    groups().map((group) => ({
-      group,
-      items: results().filter((command) => command.group === group),
-    })),
-  );
+  const grouped = createMemo(() => {
+    const text = query().trim().toLowerCase();
+    const exact = props.commands.find(
+      (command) => !command.disabled && command.label.toLowerCase() === text,
+    );
+    const order = exact
+      ? [exact.group, ...groups.filter((group) => group !== exact.group)]
+      : groups;
+    return order.map((group) => {
+      const items = results().filter((command) => command.group === group);
+      return {
+        group,
+        items: exact?.group === group ? [exact, ...items.filter((item) => item !== exact)] : items,
+      };
+    });
+  });
   const available = createMemo(() =>
     grouped().flatMap(({ items }) => items.filter((command) => !command.disabled)),
   );

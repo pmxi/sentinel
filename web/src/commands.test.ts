@@ -24,7 +24,7 @@ afterEach(() => {
   navigate.mockReset();
 });
 
-function palette(commands: Command[]) {
+function palette(commands: Command[], query = "Match") {
   vi.spyOn(HTMLElement.prototype, "scrollIntoView").mockImplementation(() => {});
   const container = document.createElement("div");
   document.body.append(container);
@@ -44,7 +44,7 @@ function palette(commands: Command[]) {
   );
   const input = container.querySelector<HTMLInputElement>("input");
   if (!input) throw Error("Palette missing");
-  input.value = "Match";
+  input.value = query;
   input.dispatchEvent(new Event("input", { bubbles: true }));
   return { container, input };
 }
@@ -79,6 +79,23 @@ it("traverses the rendered grouped order, skips disabled rows and executes the s
   input.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true }));
   input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   expect(navigate).toHaveBeenCalledWith("/search?q=Match&message=message");
+});
+
+it("puts an exact enabled command ahead of mail results", () => {
+  const run = vi.fn();
+  const { container, input } = palette(
+    [
+      { id: "all-mail", label: "Go to All mail", group: "Navigation", keys: [], run },
+      { id: "mail", label: "Search mail", group: "Mail", keys: [], run: vi.fn() },
+    ],
+    " go TO All Mail ",
+  );
+  const options = [...container.querySelectorAll('[role="option"]')].map((option) => option.id);
+  expect(options).toEqual(["command-all-mail", "command-mail-thread"]);
+  expect(input.getAttribute("aria-activedescendant")).toBe("command-all-mail");
+  input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+  expect(run).toHaveBeenCalledOnce();
+  expect(navigate).not.toHaveBeenCalled();
 });
 
 it("has no active option or action for an empty command list", () => {
