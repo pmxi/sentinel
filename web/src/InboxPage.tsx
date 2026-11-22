@@ -162,7 +162,8 @@ export function InboxPage(props: { accounts: Account[] }) {
               loadingMore={mailbox.loadingMore()}
               loadError={mailbox.error()}
               onLoadMore={mailbox.loadMore}
-              error={messages.error?.message}
+              error={messages.data ? undefined : messages.error?.message}
+              onRetry={() => void messages.refetch()}
               selectedId={selectedId()}
               onSelect={(message) => navigation.select(message.id)}
               emptyTitle={route.view === "trash" ? "Nothing in Trash" : "No conversations here"}
@@ -243,7 +244,8 @@ export function SearchResults(props: { accounts: Account[] }) {
               prefetch={prefetch}
               messages={navigation.visible}
               loading={hasQuery() && result.isPending}
-              error={result.error?.message}
+              error={result.data ? undefined : result.error?.message}
+              onRetry={() => void result.refetch()}
               selectedId={selectedId()}
               emptyTitle={hasQuery() ? "No matching conversations" : "Search your mail"}
               emptyDescription={
@@ -277,6 +279,7 @@ function MessageList(props: {
   messages: ConversationSummary[];
   loading: boolean;
   error?: string;
+  onRetry(): void;
   selectedId: string | null;
   onSelect(message: MessageSummary): void;
   hasMore?: boolean;
@@ -504,6 +507,9 @@ function MessageList(props: {
           <div class="empty-list">
             <strong>Couldn’t load mail</strong>
             <span>{props.error}</span>
+            <button type="button" onClick={props.onRetry}>
+              Retry
+            </button>
           </div>
         }
       </Match>
