@@ -43,7 +43,7 @@ import { cachedRow, headerData, usePrefetch } from "./prefetch";
 import { ReaderMenu } from "./ReaderMenu";
 import { ReaderText } from "./ReaderText";
 import { localBodyPending, messageRead, replicaFor, replicaReady, threadRead } from "./replica";
-import { useLocation, useNavigate, useParams, useSearchParams } from "./router";
+import { useLocation, useNavigate, useParams, useReaderSelection, useSearchParams } from "./router";
 import { useMailSearch } from "./search";
 import type { Account, ConversationSummary, MessageDetail, MessageSummary, Tier } from "./shared";
 import { nextMessageId, useTriage, visibleConversations } from "./triage";
@@ -51,7 +51,8 @@ import { nextMessageId, useTriage, visibleConversations } from "./triage";
 function useMessageNavigation<Message extends MessageSummary>(messages: Accessor<Message[]>) {
   const location = useLocation();
   const navigate = useNavigate();
-  const [, setParams] = useSearchParams();
+  const [params, setParams] = useSearchParams();
+  const selection = useReaderSelection();
   const triage = useTriage();
   const snapshot = createMemo(() => {
     const pathname = location.pathname;
@@ -66,22 +67,19 @@ function useMessageNavigation<Message extends MessageSummary>(messages: Accessor
         navigate({ pathname, search: next.toString() });
       },
       advance: (id: string) => {
-        if (window.location.pathname !== pathname) return;
+        if (window.location.pathname !== pathname || params().get("message") !== id) return;
         const nextId = nextMessageId(order, id);
-        setParams(
-          (current) => {
-            if (current.get("message") !== id) return current;
-            const next = new URLSearchParams(current);
-            if (nextId) next.set("message", nextId);
-            else next.delete("message");
-            return next;
-          },
-          { replace: true },
-        );
+        if (nextId) selection.select(nextId);
+        else {
+          const next = params();
+          next.delete("message");
+          setParams(next, { replace: true });
+        }
       },
     };
   });
   return {
+    ...selection,
     get visible() {
       return snapshot().visible;
     },
@@ -120,13 +118,6 @@ export function InboxPage(props: { accounts: Account[] }) {
     selectedId,
     () => route.view === "trash",
   );
-  const select = (message: MessageSummary) => {
-    setParams((current) => {
-      const next = new URLSearchParams(current);
-      next.set("message", message.id);
-      return next;
-    });
-  };
   return (
     <>
       {
@@ -166,7 +157,7 @@ export function InboxPage(props: { accounts: Account[] }) {
               onLoadMore={mailbox.loadMore}
               error={messages.error?.message}
               selectedId={selectedId()}
-              onSelect={select}
+              onSelect={(message) => navigation.select(message.id)}
               emptyTitle={route.view === "trash" ? "Nothing in Trash" : "No conversations here"}
               emptyDescription={
                 route.view === "trash"
@@ -184,11 +175,7 @@ export function InboxPage(props: { accounts: Account[] }) {
                 accounts={props.accounts}
                 advance={navigation.advance.bind(null, id)}
                 restore={navigation.restore.bind(null, id)}
-                close={() => {
-                  const next = new URLSearchParams(params());
-                  next.delete("message");
-                  setParams(next);
-                }}
+                close={navigation.close}
               />
             )}
           </Show>
@@ -199,7 +186,7 @@ export function InboxPage(props: { accounts: Account[] }) {
 }
 export function SearchResults(props: { accounts: Account[] }) {
   const client = useQueryClient();
-  const [params, setParams] = useSearchParams();
+  const [params] = useSearchParams();
   const q = createMemo(() => params().get("q") ?? "");
   const selectedId = createMemo(() => params().get("message"));
   const result = useMailSearch(q);
@@ -234,11 +221,7 @@ export function SearchResults(props: { accounts: Account[] }) {
               selectedId={selectedId()}
               emptyTitle="No matching conversations"
               emptyDescription="Try a different name, phrase, or email address."
-              onSelect={(message) => {
-                const next = new URLSearchParams(params());
-                next.set("message", message.id);
-                setParams(next);
-              }}
+              onSelect={(message) => navigation.select(message.id)}
             />
           </section>
           <Show when={selectedId()} keyed fallback={<EmptyReader />}>
@@ -249,11 +232,7 @@ export function SearchResults(props: { accounts: Account[] }) {
                 accounts={props.accounts}
                 advance={navigation.advance.bind(null, id)}
                 restore={navigation.restore.bind(null, id)}
-                close={() => {
-                  const next = new URLSearchParams(params());
-                  next.delete("message");
-                  setParams(next);
-                }}
+                close={navigation.close}
               />
             )}
           </Show>
@@ -348,10 +327,22 @@ function MessageList(props: {
   };
   window.addEventListener("scroll", rememberScroll, { passive: true });
   onCleanup(() => window.removeEventListener("scroll", rememberScroll));
-  createEffect(() => {
+  createEffect((wasReader) => {
     const selected = props.selectedId;
-    if (mobile()) queueMicrotask(() => window.scrollTo(0, selected ? 0 : listScroll));
-  });
+    if (mobile()) {
+      if (selected) {
+        queueMicrotask(() => {
+          if (props.selectedId === selected) window.scrollTo(0, 0);
+        });
+      } else if (wasReader) {
+        const top = listScroll;
+        // On history traversal the browser can restore scroll after popstate.
+        const frame = requestAnimationFrame(() => window.scrollTo(0, top));
+        onCleanup(() => cancelAnimationFrame(frame));
+      }
+    }
+    return Boolean(selected);
+  }, false);
   const positions = createMemo(
     () => new Map(props.messages.map((message, index) => [message.threadId, index])),
   );
