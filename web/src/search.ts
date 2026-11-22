@@ -44,10 +44,7 @@ export function useMailSearch(query: Accessor<string>) {
     });
   });
   return createQuery<SearchResponse>(() => ({
-    queryKey: [
-      "search",
-      !query().trim() ? "" : client.getQueryData(["search", query()]) ? query() : debounced(),
-    ],
+    queryKey: ["search", query().trim() ? query() : ""],
     networkMode: "always",
     refetchOnReconnect: "always",
     queryFn: async ({ queryKey, signal }) => {
@@ -111,7 +108,6 @@ export function useMailSearch(query: Accessor<string>) {
     enabled:
       Boolean(query().trim()) &&
       (query() === debounced() || Boolean(client.getQueryData(["search", query()]))),
-    placeholderData: (previous) => (query().trim() ? previous : undefined),
     reconcile: "threadId",
   }));
 }

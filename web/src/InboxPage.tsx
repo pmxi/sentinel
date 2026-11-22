@@ -229,7 +229,7 @@ export function SearchResults(props: { accounts: Account[] }) {
               showImportance
               prefetch={prefetch}
               messages={navigation.visible}
-              loading={result.isLoading}
+              loading={Boolean(q().trim()) && result.isPending}
               error={result.error?.message}
               selectedId={selectedId()}
               emptyTitle="No matching conversations"
