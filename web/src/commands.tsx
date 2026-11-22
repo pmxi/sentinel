@@ -360,7 +360,11 @@ function CommandPalette(props: { commands: Command[]; close(): void }) {
                 );
               })}
               {results().length === 0 && (
-                <div class="command-empty">No commands found. Try “compose” or “inbox”.</div>
+                <div class="command-empty" role="status">
+                  {query().trim() && mail.isPending
+                    ? "Searching mail…"
+                    : "No commands found. Try “compose” or “inbox”."}
+                </div>
               )}
             </div>
             <footer class="command-footer">
