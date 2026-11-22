@@ -24,7 +24,9 @@ export function refineSearch(
   const messages = local.messages.map((row) => {
     const updated = byThread.get(row.threadId);
     byThread.delete(row.threadId);
-    return updated?.id === row.id ? updated : row;
+    if (!updated) return row;
+    const newer = sort === "newest" && newestFirst(updated, row) < 0;
+    return updated.id === row.id || newer ? updated : row;
   });
   const merged = [...messages, ...byThread.values()];
   return { mode: remote.mode, messages: sort === "newest" ? merged.sort(newestFirst) : merged };

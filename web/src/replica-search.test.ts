@@ -34,5 +34,12 @@ describe("local search syntax and stable hybrid refinement", () => {
       "b",
       "a",
     ]);
+    const thread = (id: string, receivedAt: string) =>
+      ({ id, threadId: "t", receivedAt }) as ConversationSummary;
+    const older: SearchResponse = { mode: "lexical", messages: [thread("old", "2025-01-01")] };
+    const newer: SearchResponse = { mode: "lexical", messages: [thread("new", "2025-01-05")] };
+    expect(refineSearch(older, newer, "newest").messages.map((m) => m.id)).toEqual(["new"]);
+    expect(refineSearch(newer, older, "newest").messages.map((m) => m.id)).toEqual(["new"]);
+    expect(refineSearch(older, newer).messages.map((m) => m.id)).toEqual(["old"]);
   });
 });
