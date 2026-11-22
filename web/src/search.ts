@@ -3,7 +3,7 @@ import { type Accessor, createEffect, createSignal, onCleanup } from "solid-js";
 import { sentApi } from "./api";
 import { replicaFor, replicaReady } from "./replica";
 import { refineSearch } from "./replica-search";
-import type { SearchResponse } from "./shared";
+import type { SearchResponse, SearchSort } from "./shared";
 
 function afterPaint(run: () => void) {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -18,7 +18,10 @@ function afterPaint(run: () => void) {
   };
 }
 
-export function useMailSearch(query: Accessor<string>) {
+export function useMailSearch(
+  query: Accessor<string>,
+  sort: Accessor<SearchSort> = () => "newest",
+) {
   const client = useQueryClient();
   const [debounced, setDebounced] = createSignal(query());
   let generation = 0;
@@ -44,13 +47,14 @@ export function useMailSearch(query: Accessor<string>) {
     });
   });
   return createQuery<SearchResponse>(() => ({
-    queryKey: ["search", query().trim() ? query() : ""],
+    queryKey: ["search", query().trim() ? query() : "", sort()],
     networkMode: "always",
     refetchOnReconnect: "always",
     queryFn: async ({ queryKey, signal }) => {
       const current = generation;
       const text = String(queryKey[1]);
-      const params = new URLSearchParams({ q: text, limit: "75" });
+      const order = queryKey[2] as SearchSort;
+      const params = new URLSearchParams({ q: text, limit: "75", sort: order });
       const replica = replicaFor(client);
       if (!replicaReady(client) || !replica) return sentApi.search(params, signal);
       let local: SearchResponse;
@@ -58,7 +62,7 @@ export function useMailSearch(query: Accessor<string>) {
       const cached = client.getQueryData<SearchResponse>(queryKey);
       const firstPage = cached && cached.messages.length > visiblePage ? 75 : visiblePage;
       try {
-        local = await replica.search(text, firstPage);
+        local = await replica.search(text, firstPage, order);
       } catch (error) {
         if (navigator.onLine === false) throw error;
         return sentApi.search(params, signal);
@@ -69,10 +73,10 @@ export function useMailSearch(query: Accessor<string>) {
         const cancelPaint = afterPaint(async () => {
           try {
             if (cancelled || current !== generation || signal.aborted) return;
-            const full = await replica.search(text, 75);
+            const full = await replica.search(text, 75, order);
             if (!cancelled && current === generation && !signal.aborted)
               client.setQueryData<SearchResponse>(queryKey, (previous) => ({
-                ...refineSearch(previous ?? local, full),
+                ...refineSearch(previous ?? local, full, order),
                 mode: previous?.mode ?? full.mode,
               }));
           } catch {
@@ -95,7 +99,7 @@ export function useMailSearch(query: Accessor<string>) {
           const remote = await sentApi.search(params, controller.signal);
           if (current === generation && !controller.signal.aborted)
             client.setQueryData<SearchResponse>(queryKey, (previous) =>
-              refineSearch(previous ?? local, remote),
+              refineSearch(previous ?? local, remote, order),
             );
         } catch {
         } finally {
@@ -107,7 +111,7 @@ export function useMailSearch(query: Accessor<string>) {
     },
     enabled:
       Boolean(query().trim()) &&
-      (query() === debounced() || Boolean(client.getQueryData(["search", query()]))),
+      (query() === debounced() || Boolean(client.getQueryData(["search", query(), sort()]))),
     reconcile: "threadId",
   }));
 }

@@ -17,7 +17,7 @@ import {
   type ReplicaPage,
   type ReplicaRow,
 } from "./replica-types";
-import type { Account, MessageDetail, SearchResponse } from "./shared";
+import type { Account, MessageDetail, SearchResponse, SearchSort } from "./shared";
 import { UNAUTHORIZED_EVENT } from "./shell-metadata";
 
 const replicas = new WeakMap<QueryClient, MailboxReplica>();
@@ -325,8 +325,8 @@ export class MailboxReplica {
       limit: Number(params.get("limit") ?? 75),
     });
   }
-  async search(text: string, limit = 75) {
-    return this.call<SearchResponse>("search", text, limit);
+  async search(text: string, limit = 75, sort: SearchSort = "newest") {
+    return this.call<SearchResponse>("search", text, limit, sort);
   }
   private async syncRecentBodies() {
     if (

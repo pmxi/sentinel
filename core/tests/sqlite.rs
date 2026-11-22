@@ -1,7 +1,7 @@
 use anyhow::Result;
 use sent_core::{
     db::{self, Uuid},
-    repository::{Repository, SearchInput},
+    repository::{Repository, SearchInput, SearchSort},
 };
 use serde_json::{Value, json};
 use sqlx::Row;
@@ -9,6 +9,7 @@ use sqlx::Row;
 fn search(q: &str) -> SearchInput {
     SearchInput {
         q: q.into(),
+        sort: SearchSort::Relevance,
         account_id: None,
         tier: None,
         after: None,
@@ -279,4 +280,77 @@ async fn sqlite_schema_search_and_vectors() -> Result<()> {
     assert!(sqlx::query("insert into accounts(id,provider,email,encrypted_credentials) values(?1,'invalid','bad','bad')").bind(Uuid::new_v4()).execute(&pool).await.is_err());
     let _: Value = repo.list_accounts().await?;
     Ok(())
+}
+
+#[tokio::test]
+async fn sqlite_search_sorts_newest_first_by_default() -> Result<()> {
+    let directory = tempfile::tempdir()?;
+    let pool = db::pool(directory.path().join("sent.sqlite").to_str().unwrap(), true).await?;
+    db::migrate(
+        &pool,
+        &std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../migrations"),
+    )
+    .await?;
+    let repo = Repository(pool.clone());
+    let owner = repo
+        .upsert_account("gmail", "sort@example.test", "Fixture", "fake")
+        .await?;
+    let now = chrono::Utc::now();
+    let shared_thread = Uuid::new_v4();
+    let mut ids = Vec::new();
+    for (days, subject, body, thread) in [
+        (
+            30,
+            "Sortneedle sortneedle",
+            "sortneedle sortneedle",
+            Uuid::new_v4(),
+        ),
+        (
+            1,
+            "Other",
+            "a long body that mentions sortneedle once among many other words",
+            Uuid::new_v4(),
+        ),
+        (10, "Sortneedle", "sortneedle", shared_thread),
+        (
+            5,
+            "Re: Sortneedle",
+            "weak reply mentioning sortneedle among many other words",
+            shared_thread,
+        ),
+    ] {
+        let received = db::timestamp(now - chrono::Duration::days(days));
+        sqlx::query("insert or ignore into threads(id,account_id,provider_thread_id,last_message_at) values(?1,?2,?1,?3)").bind(thread).bind(owner).bind(&received).execute(&pool).await?;
+        let id = Uuid::new_v4();
+        sqlx::query("insert into messages(id,thread_id,account_id,provider_message_id,subject,text_body,from_addresses,received_at,direction) values(?1,?2,?3,?1,?4,?5,'[]',?6,'inbound')")
+            .bind(id).bind(thread).bind(owner).bind(subject).bind(body).bind(&received).execute(&pool).await?;
+        ids.push(id.to_string());
+    }
+    let order = |value: Value| {
+        value["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|m| m["id"].as_str().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    let newest = repo
+        .search(
+            &search_sorted("sortneedle", SearchSort::Newest),
+            Some(vec![0.0; 3072]),
+        )
+        .await?;
+    assert_eq!(newest["mode"], "lexical");
+    assert_eq!(
+        order(newest),
+        [ids[1].clone(), ids[3].clone(), ids[0].clone()]
+    );
+    let relevance = order(repo.search(&search("sortneedle"), None).await?);
+    assert_eq!(relevance[0], ids[0]);
+    assert!(relevance.contains(&ids[2]) && !relevance.contains(&ids[3]));
+    Ok(())
+}
+
+fn search_sorted(q: &str, sort: SearchSort) -> SearchInput {
+    SearchInput { sort, ..search(q) }
 }

@@ -12,7 +12,7 @@ import {
   type ReplicaList,
   type ReplicaRow,
 } from "./replica-types";
-import type { ConversationSummary, MailAddress, SearchResponse } from "./shared";
+import type { ConversationSummary, MailAddress, SearchResponse, SearchSort } from "./shared";
 
 const columns =
   "id text primary key, thread_id text not null, account_id text not null, received_at text not null, read integer not null, archived integer not null, deleted integer not null, classified integer not null, tier integer, direction text not null, body_version text not null, from_json text not null, data text not null";
@@ -206,10 +206,32 @@ export class ReplicaStore {
         ],
       );
   }
-  search(text: string, limit = 75): SearchResponse {
+  search(text: string, limit = 75, sort: SearchSort = "newest"): SearchResponse {
     const query = ftsQuery(text);
     if (!query) return { messages: [], mode: "lexical" };
     limit = Math.max(1, Math.min(75, Math.floor(limit) || 75));
+    const page =
+      sort === "newest" ? this.newestMatches(query, limit) : this.rankedMatches(query, limit);
+    const rows = page.length
+      ? this.headers(
+          `select id,thread_id,account_id,received_at,read,archived,deleted,classified,tier,direction,body_version,from_json,json_array(${fields
+            .slice(0, 8)
+            .map((_, index) => `data->'$[${index}]'`)
+            .join(",")}) data from messages where rowid in (${page.map(() => "?").join(",")})`,
+          page.map((row) => row.rowid),
+        )
+      : [];
+    const byId = new Map(rows.map((row) => [row.id, row]));
+    const messages = this.summarize(page.map(({ id }) => byId.get(id) as ReplicaRow));
+    return { messages, mode: "lexical" };
+  }
+  private newestMatches(query: string, limit: number) {
+    return this.rows<{ rowid: number; id: string }>(
+      "select doc rowid,id from (select rowid doc,message_id id,received_at,row_number() over(partition by thread_id order by received_at desc,message_id desc) thread_rank from search_documents where search_documents match ?) where thread_rank=1 order by received_at desc,id desc limit ?",
+      [query, limit],
+    );
+  }
+  private rankedMatches(query: string, limit: number) {
     const sql =
       "select rowid,rank score,message_id id,thread_id,received_at from search_documents where search_documents match ? and rank match 'bm25(8,6,3,2,0.5)' order by rank limit ?";
     type Candidate = {
@@ -252,18 +274,7 @@ export class ReplicaStore {
       )
         break;
     }
-    const rows = page.length
-      ? this.headers(
-          `select id,thread_id,account_id,received_at,read,archived,deleted,classified,tier,direction,body_version,from_json,json_array(${fields
-            .slice(0, 8)
-            .map((_, index) => `data->'$[${index}]'`)
-            .join(",")}) data from messages where rowid in (${page.map(() => "?").join(",")})`,
-          page.map((row) => row.rowid),
-        )
-      : [];
-    const byId = new Map(rows.map((row) => [row.id, row]));
-    const messages = this.summarize(page.map(({ id }) => byId.get(id) as ReplicaRow));
-    return { messages, mode: "lexical" };
+    return page;
   }
   private indexBody(id: string, text: string) {
     const row = this.header(id);
@@ -454,8 +465,8 @@ export class ReplicaStore {
   profileList(input: Parameters<ReplicaStore["list"]>[0]) {
     return this.profileRead(() => this.list(input));
   }
-  profileSearch(text: string, limit = 75) {
-    return this.profileRead(() => this.search(text, limit));
+  profileSearch(text: string, limit = 75, sort: SearchSort = "newest") {
+    return this.profileRead(() => this.search(text, limit, sort));
   }
   private profileRead<T>(read: () => T) {
     const statements: { sql: string; bind: SqlValue[]; ms: number; rows: number }[] = [];
@@ -490,8 +501,8 @@ export class ReplicaStore {
       plan: this.rows(`explain query plan ${statement.sql}`, statement.bind),
     }));
   }
-  searchPlans(text: string, limit = 75) {
-    const { profile } = this.profileSearch(text, limit);
+  searchPlans(text: string, limit = 75, sort: SearchSort = "newest") {
+    const { profile } = this.profileSearch(text, limit, sort);
     return profile.statements.map((statement) => ({
       sql: statement.sql,
       plan: this.rows(`explain query plan ${statement.sql}`, statement.bind),

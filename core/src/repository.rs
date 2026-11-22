@@ -181,10 +181,20 @@ struct Cursor {
     id: Uuid,
 }
 
+#[derive(Deserialize, Default, Clone, Copy, PartialEq, Eq, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum SearchSort {
+    #[default]
+    Newest,
+    Relevance,
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchInput {
     pub q: String,
+    #[serde(default)]
+    pub sort: SearchSort,
     pub account_id: Option<Uuid>,
     pub tier: Option<i32>,
     pub after: Option<DateTime<Utc>>,
@@ -718,6 +728,11 @@ impl Repository {
     }
 
     pub async fn search(&self, input: &SearchInput, embedding: Option<Vec<f64>>) -> Result<Value> {
+        let embedding = embedding.filter(|_| input.sort == SearchSort::Relevance);
+        let order = match input.sort {
+            SearchSort::Newest => "received_at desc,id desc",
+            SearchSort::Relevance => "search_score desc,received_at desc,id desc",
+        };
         let limit = input.limit.unwrap_or(50);
         if input.q.trim().is_empty()
             || input.q.encode_utf16().count() > 500
@@ -753,7 +768,7 @@ impl Repository {
             )
         };
         let sql = format!(
-            "{prefix},ranked as (select *,row_number() over(partition by thread_id order by search_score desc,received_at desc,id desc) thread_rank from matches),page as (select * from ranked where thread_rank=1 order by search_score desc,received_at desc,id desc limit ?7) select page.*,{} from page order by search_score desc,received_at desc,id desc",
+            "{prefix},ranked as (select *,row_number() over(partition by thread_id order by {order}) thread_rank from matches),page as (select * from ranked where thread_rank=1 order by {order} limit ?7) select page.*,{} from page order by {order}",
             metadata(false)
         );
         let query = sqlx::query(&sql)

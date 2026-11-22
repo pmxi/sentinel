@@ -19,7 +19,9 @@ use chrono::{Duration, Utc};
 use sent_core::db::Uuid;
 use sent_core::{
     config::Config,
-    repository::{DraftInput, ListInput, Repository, SearchInput, ThreadActionInput, timestamp},
+    repository::{
+        DraftInput, ListInput, Repository, SearchInput, SearchSort, ThreadActionInput, timestamp,
+    },
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -257,6 +259,10 @@ impl Validated for SearchInput {
                     trim: true,
                     format: None,
                 },
+            ),
+            (
+                "sort",
+                default(Schema::Enum(&["newest", "relevance"]), json!("newest")),
             ),
             ("accountId", optional(uuid())),
             ("tier", optional(Schema::Tier)),
@@ -722,7 +728,9 @@ async fn search(
     ExtractState(state): ExtractState<Shared>,
     ZodQuery(input): ZodQuery<SearchInput>,
 ) -> ApiResult<Json<Value>> {
-    let embedding = if let Some(key) = &state.config.openai_api_key {
+    let embedding = if input.sort == SearchSort::Newest {
+        None
+    } else if let Some(key) = &state.config.openai_api_key {
         let result = state
             .http
             .post("https://api.openai.com/v1/embeddings")
