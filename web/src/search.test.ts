@@ -88,6 +88,34 @@ describe("local-first search queries", () => {
     expect(search).toHaveBeenCalledWith("needle", expect.any(Number), "newest");
     expect(remote.mock.calls[0]?.[0].get("sort")).toBe("newest");
   });
+  it("does not expose the previous query's messages while a new search loads", async () => {
+    const next = { mode: "lexical", messages: [row("new-match")] } satisfies SearchResponse;
+    let finish!: (result: SearchResponse) => void;
+    const search = ready(
+      vi
+        .fn()
+        .mockResolvedValueOnce(local)
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              finish = resolve;
+            }),
+        ),
+    );
+    vi.stubGlobal("navigator", { onLine: false });
+    const state = scope();
+    await vi.waitFor(() => expect(state.result.data).toEqual(local));
+    state.setQuery("different");
+    await vi.waitFor(() => expect(state.result.isPending).toBe(true));
+    expect(state.result.data).toBeUndefined();
+    expect(search).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() =>
+      expect(search).toHaveBeenLastCalledWith("different", expect.any(Number), "relevance"),
+    );
+    expect(state.result.data).toBeUndefined();
+    finish(next);
+    await vi.waitFor(() => expect(state.result.data).toEqual(next));
+  });
   it.each(["", "   "])("clears mail immediately for an empty query %j", async (empty) => {
     const search = ready();
     const remote = vi.spyOn(sentApi, "search");

@@ -47,15 +47,7 @@ export function useMailSearch(
     });
   });
   return createQuery<SearchResponse>(() => ({
-    queryKey: [
-      "search",
-      !query().trim()
-        ? ""
-        : client.getQueryData(["search", query(), sort()])
-          ? query()
-          : debounced(),
-      sort(),
-    ],
+    queryKey: ["search", query().trim() ? query() : "", sort()],
     networkMode: "always",
     refetchOnReconnect: "always",
     queryFn: async ({ queryKey, signal }) => {
@@ -120,7 +112,6 @@ export function useMailSearch(
     enabled:
       Boolean(query().trim()) &&
       (query() === debounced() || Boolean(client.getQueryData(["search", query(), sort()]))),
-    placeholderData: (previous) => (query().trim() ? previous : undefined),
     reconcile: "threadId",
   }));
 }
