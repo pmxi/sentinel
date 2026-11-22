@@ -256,6 +256,54 @@ function press(key: string) {
 }
 
 describe("mail list presentation", () => {
+  it.each(["button", "submit"])("clears applied search results via %s", async (method) => {
+    const item = { ...message, read: true };
+    vi.spyOn(sentApi, "session").mockResolvedValue({ authenticated: true });
+    vi.spyOn(sentApi, "accounts").mockResolvedValue({ accounts: [account] });
+    vi.spyOn(sentApi, "message").mockResolvedValue(item);
+    vi.spyOn(sentApi, "thread").mockResolvedValue({ messages: [item] });
+    vi.spyOn(sentApi, "search").mockResolvedValue({
+      messages: [{ ...item, messageCount: 1, unreadCount: 0, participants: item.from }],
+      mode: "lexical",
+    });
+    const history = createMemoryHistory();
+    const active = "/search?q=invoice&sort=relevance";
+    history.set({ value: active, replace: true, scroll: false });
+    const container = mount(() =>
+      createComponent(MemoryRouter, {
+        history,
+        root: App,
+        get children() {
+          return createComponent(Route, { path: "/search", component: SearchRoute });
+        },
+      }),
+    );
+    await vi.waitFor(() => expect(container.querySelector(".message-row")).not.toBeNull());
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="Search mail"]');
+    if (!input) throw new Error("Missing search input");
+    expect(input.value).toBe("invoice");
+    if (method === "button") {
+      container.querySelector<HTMLButtonElement>('button[aria-label="Clear search"]')?.click();
+      expect(document.activeElement).toBe(input);
+    } else {
+      input.value = "";
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.form?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    }
+    await vi.waitFor(() => expect(history.get()).toBe("/search"));
+    expect(input.value).toBe("");
+    expect(container.querySelector(".message-row")).toBeNull();
+    expect(container.querySelector('[aria-label="Sort results"]')).toBeNull();
+    expect(container.querySelector(".empty-list")?.textContent).toContain("Search your mail");
+    history.back();
+    await vi.waitFor(() => expect(container.querySelector(".message-row")).not.toBeNull());
+    expect(history.get()).toBe(active);
+    expect(input.value).toBe("invoice");
+    expect(container.querySelector<HTMLSelectElement>('[aria-label="Sort results"]')?.value).toBe(
+      "relevance",
+    );
+  });
+
   it("keeps sorting status accessible without a visible label", async () => {
     const container = await reader(true, false, "all", undefined, undefined, () => {
       vi.mocked(sentApi.messages).mockResolvedValue({

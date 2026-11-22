@@ -549,6 +549,18 @@ kbd {
   color: var(--muted);
   font-size: 12px;
 }
+.search-heading-copy {
+  min-width: 0;
+  margin-right: 8px;
+}
+.search-heading-copy p {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.search-heading-copy + select {
+  flex: none;
+}
 .pane-heading select {
   max-width: 130px;
   margin-bottom: 2px;
