@@ -278,6 +278,54 @@ it("opens mobile navigation as a dialog and closes it on the current route link"
 });
 
 describe("mail list presentation", () => {
+  it.each(["inbox", "search"])(
+    "retries a failed %s request without leaving the page",
+    async (page) => {
+      vi.spyOn(sentApi, "session").mockResolvedValue({ authenticated: true });
+      vi.spyOn(sentApi, "accounts").mockResolvedValue({ accounts: [account] });
+      const item = {
+        ...message,
+        read: true,
+        messageCount: 1,
+        unreadCount: 0,
+        participants: message.from,
+      };
+      const response = { messages: [item], nextCursor: null, mode: "lexical" as const };
+      const pending = deferred<typeof response>();
+      const load = vi
+        .spyOn(sentApi, page === "inbox" ? "messages" : "search")
+        .mockRejectedValueOnce(new Error("Temporary connection failure"))
+        .mockReturnValueOnce(pending.promise);
+      const history = createMemoryHistory();
+      const path = page === "inbox" ? "/inbox?account=account" : "/search?q=invoice&sort=relevance";
+      history.set({ value: path, replace: true, scroll: false });
+      const container = mount(() =>
+        createComponent(MemoryRouter, {
+          history,
+          root: App,
+          get children() {
+            return page === "inbox"
+              ? inboxRoutes
+              : createComponent(Route, { path: "/search", component: SearchRoute });
+          },
+        }),
+      );
+      await vi.waitFor(() =>
+        expect(container.querySelector(".empty-list")?.textContent).toContain("Couldn’t load mail"),
+      );
+      const retry = container.querySelector<HTMLButtonElement>(".empty-list button");
+      expect(retry?.textContent).toBe("Retry");
+      retry?.click();
+      await vi.waitFor(() => expect(container.querySelector(".message-loading")).not.toBeNull());
+      pending.resolve(response);
+      await vi.waitFor(() =>
+        expect(container.querySelector(".message-row")?.textContent).toContain(message.subject),
+      );
+      expect(history.get()).toBe(path);
+      expect(load).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it.each(["button", "submit"])("clears applied search results via %s", async (method) => {
     const item = { ...message, read: true };
     vi.spyOn(sentApi, "session").mockResolvedValue({ authenticated: true });
